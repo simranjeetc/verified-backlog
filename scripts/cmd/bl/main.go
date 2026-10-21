@@ -922,7 +922,7 @@ func cmdBrief(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireInFlight(order, it); err != nil {
+	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
 	if it.Claims != "" {
@@ -987,13 +987,20 @@ func verifyFrozen(root string, it *Item) error {
 	return nil
 }
 
-func requireInFlight(order []*Item, it *Item) error {
+// requireInFlight refuses when the item is not the item in flight. The rule argument names the
+// design rule the refusal is reported under: "R35" for `bl run` and `bl round`, the two verbs
+// the design's rule R35 covers. The other paths that hold the lock — brief, checks, claims,
+// rebaseline and second-check — pass no rule, so their refusals keep their unnamed wording.
+func requireInFlight(order []*Item, it *Item, rule string) error {
 	cur, err := pinned(order)
 	if err != nil {
 		return err
 	}
 	if cur == nil || !strings.EqualFold(cur.ID, it.ID) {
-		return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
+		if rule == "" {
+			return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
+		}
+		return refuseRule(rule, "%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
 	}
 	return nil
 }
@@ -1394,7 +1401,7 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireInFlight(order, it); err != nil {
+	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
 	// The state guards come FIRST, before the list is read: the claims freeze the list (R5) and
@@ -1477,7 +1484,7 @@ func cmdRebaseline(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireInFlight(order, it); err != nil {
+	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
 	// R20: the frozen artefacts are what they were — before anything else on this path.
@@ -1540,7 +1547,7 @@ func cmdClaims(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireInFlight(order, it); err != nil {
+	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
 	if it.Checks == "" {
@@ -1610,9 +1617,10 @@ type runFile struct {
 // cmdRun executes every row of the frozen check list under the fixed environment (§2, R21),
 // writes the run file, and records the run event (R7).
 //
-// The order is P3's: R20 (the frozen artefacts are what they were) → R26 (the tree did not
-// move) → R27 (the ledger did not move) → R1 (the list still parses) → R7 (every row ran). A
-// run is refused on the first of these that fails, and no run file is written.
+// The order is P3's: R35 (the item is the one in flight) → R20 (the frozen artefacts are what
+// they were) → R1 (the list still parses) → R7 (every row ran) → R26 (the tree did not move) →
+// R27 (the ledger did not move). A run is refused on the first of these that fails, and no run
+// file is written.
 //
 // R26 and R27 are comparisons, so they are made once the rows have run; the list is parsed
 // before them, because the rows come out of the list and a list that does not parse cannot be
@@ -1625,12 +1633,18 @@ func cmdRun(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	_, byID, err := derive(events)
+	order, byID, err := derive(events)
 	if err != nil {
 		return err
 	}
-	it, err := liveItem(byID, a.pos(0))
+	// R35 (P3): the item must be the one in flight. The check comes FIRST on this path — before
+	// the item's own state (a declined item, a missing check list) and before R20 — so that a run
+	// on an item that is not in flight is refused under R35 and under no other rule.
+	it, err := lookup(byID, a.pos(0))
 	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it, "R35"); err != nil {
 		return err
 	}
 	// R20: the frozen artefacts are what they were. The brief, the check list and the claims are
@@ -3100,7 +3114,7 @@ func cmdSecondCheck(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := requireInFlight(order, it); err != nil {
+	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
 	// R20: the frozen artefacts are what they were.
@@ -3183,12 +3197,10 @@ func cmdRound(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	cur, err := pinned(order)
-	if err != nil {
+	// R35 (P2): the item must be the one in flight. The shared helper is the one `bl run` uses,
+	// so both verbs refuse the same way and name the same rule.
+	if err := requireInFlight(order, it, "R35"); err != nil {
 		return err
-	}
-	if cur == nil || !strings.EqualFold(cur.ID, it.ID) {
-		return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
 	}
 	// R20: the frozen artefacts are what they were when the round was written against.
 	if err := verifyFrozen(root, it); err != nil {

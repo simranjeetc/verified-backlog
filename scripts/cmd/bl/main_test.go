@@ -3338,6 +3338,154 @@ func TestCheckRehashesTheRunFile(t *testing.T) {
 	}
 }
 
+// ── R35: only the item in flight is worked on ────────────────────────────────
+
+// R35: `bl run` refuses an item that is not the item in flight. The refusal names the rule,
+// the call exits 2, and nothing is written: no run file and no ledger event.
+func TestRunRefusesAnItemThatIsNotInFlight(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	// The item is dropped, so it is no longer the item in flight.
+	if code := run([]string{"--root", dir, "drop", "A1", "--reason", "not now"}); code != 0 {
+		t.Fatalf("bl drop: exit %d", code)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, ".backlog", "ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRule(t, call(t, cmdRun, dir, "A1"), "R35")
+	var code int
+	out := captureStderr(t, func() {
+		code = run([]string{"--root", dir, "run", "A1"})
+	})
+	if code != 2 {
+		t.Fatalf("bl run: exit = %d, want 2", code)
+	}
+	want := "bl: refused (R35): A1 is not the item in flight — run `bl open A1`"
+	if !strings.Contains(out, want) {
+		t.Errorf("the refusal must read %q:\n%s", want, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+		t.Error("a refused run must write no run file")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, ".backlog", "ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("a refused run must leave the ledger byte-identical")
+	}
+}
+
+// R35 is the FIRST check on the run path: an item that was never opened, and so has no check
+// list at all, is refused under R35 and not under the missing-list rule.
+func TestRunNamesR35BeforeTheMissingList(t *testing.T) {
+	dir := openItem(t) // A1 is the item in flight.
+	if code := run([]string{"--root", dir, "file", "--id", "A2", "--text", "second"}); code != 0 {
+		t.Fatalf("bl file: exit %d", code)
+	}
+	r := wantRefusal(t, call(t, cmdRun, dir, "A2"))
+	if r.rule != "R35" {
+		t.Fatalf("want a refusal under R35, got %s: %s", r.rule, r.msg)
+	}
+	if strings.Contains(r.msg, "check list") {
+		t.Errorf("the R35 refusal must not name the missing-list rule: %s", r.msg)
+	}
+}
+
+// R35 does not over-refuse: the item that IS in flight still runs, and its run file is written.
+func TestRunForTheItemInFlightStillSucceeds(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); err != nil {
+		t.Fatalf("the run file must be written: %v", err)
+	}
+}
+
+// The round path shares the helper with `bl run`, so its refusal names R35 too.
+func TestRoundRefusalNamesR35(t *testing.T) {
+	dir := t.TempDir()
+	for _, argv := range [][]string{
+		{"init"},
+		{"file", "--id", "A1", "--text", "first"},
+		{"file", "--id", "A2", "--text", "second"},
+		{"open", "A1"},
+	} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	rows := writeFile(t, t.TempDir(), "v.tsv", "id\trow_verdict\tanchor\n")
+	r := wantRefusal(t, call(t, cmdRound, dir, "A2", "--verdict", "PASS", "--rows", rows))
+	if r.rule != "R35" {
+		t.Fatalf("want a refusal under R35, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "is not the item in flight") {
+		t.Errorf("the refusal must say which item is not in flight: %s", r.msg)
+	}
+}
+
+// The design's rule R35 covers `bl run` and `bl round` only. The other paths that hold the lock
+// — brief, checks, claims, rebaseline and second-check — refuse without naming a rule, so the
+// refusal each of those verbs can raise stays as the design has it.
+func TestTheOtherLockHoldingPathsRefuseWithoutNamingARule(t *testing.T) {
+	dir := t.TempDir()
+	for _, argv := range [][]string{
+		{"init"},
+		{"file", "--id", "A1", "--text", "first"},
+	} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: it works\n")
+	list := writeFile(t, t.TempDir(), "checks.tsv", checksHeader+"S1\tbl\tblocking\tB1\ttrue\texit 0\t\t\tok\n")
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	cases := []struct {
+		name string
+		h    func(string, args) error
+		verb string
+		argv []string
+	}{
+		{"brief", cmdBrief, "brief", []string{"A1", "--file", brief}},
+		{"checks", cmdChecks, "checks", []string{"A1", "--file", list}},
+		{"claims", cmdClaims, "claims", []string{"A1", "--file", claims}},
+		{"rebaseline", cmdRebaseline, "rebaseline", []string{"A1", "--file", list, "--reason", "again"}},
+		{"second-check", cmdSecondCheck, "second-check", []string{"A1", "--row", "S1", "--cmd", "echo two", "--expect", "stdout matches ^two"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// The handler refuses with no rule named.
+			r := wantRefusal(t, call(t, c.h, dir, c.argv...))
+			if r.rule != "" {
+				t.Fatalf("the %s refusal must name no rule, got %s: %s", c.name, r.rule, r.msg)
+			}
+			if strings.Contains(r.msg, "R35") {
+				t.Errorf("the %s refusal must not name R35: %s", c.name, r.msg)
+			}
+			if !strings.Contains(r.msg, "is not the item in flight") {
+				t.Errorf("the %s refusal must say what is wrong: %s", c.name, r.msg)
+			}
+			// And the binary prints it without a rule, in the house style.
+			var code int
+			out := captureStderr(t, func() {
+				code = run(append([]string{"--root", dir, c.verb}, c.argv...))
+			})
+			if code != 2 {
+				t.Fatalf("bl %s: exit = %d, want 2", c.name, code)
+			}
+			want := "bl: refused: A1 is not the item in flight — run `bl open A1`"
+			if !strings.Contains(out, want) {
+				t.Errorf("the %s refusal must read %q:\n%s", c.name, want, out)
+			}
+			if strings.Contains(out, "R35") {
+				t.Errorf("the %s refusal must not name R35:\n%s", c.name, out)
+			}
+		})
+	}
+}
+
 // ── I3: the round path, to the design's contract ────────────────────────────
 
 // gitItemWith opens an item in a repository that already holds the given files: the item's
