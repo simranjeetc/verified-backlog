@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -196,15 +198,15 @@ func TestSchemaIsJSON(t *testing.T) {
 		t.Errorf("version = %v", s["version"])
 	}
 	events := s["events"].(map[string]map[string][]string)
-	if len(events) != 13 {
-		t.Errorf("want 13 event kinds, got %d", len(events))
+	if len(events) != 15 {
+		t.Errorf("want 15 event kinds, got %d", len(events))
 	}
 	for _, kind := range []string{"checks", "claims"} {
 		if _, ok := events[kind]; !ok {
 			t.Errorf("schema is missing event kind %q", kind)
 		}
 	}
-	for _, kind := range []string{"brief", "rebaseline", "run"} {
+	for _, kind := range []string{"brief", "rebaseline", "run", "second-check", "misclassified"} {
 		if _, ok := events[kind]; !ok {
 			t.Errorf("schema is missing event kind %q", kind)
 		}
@@ -270,10 +272,10 @@ func TestSchemaListsEveryKind(t *testing.T) {
 			kinds[f[0]] = true
 		}
 	}
-	if len(kinds) != 13 {
-		t.Errorf("want 13 event kinds in the schema output, got %d: %v", len(kinds), kinds)
+	if len(kinds) != 15 {
+		t.Errorf("want 15 event kinds in the schema output, got %d: %v", len(kinds), kinds)
 	}
-	for _, kind := range []string{"brief", "rebaseline", "run"} {
+	for _, kind := range []string{"brief", "rebaseline", "run", "second-check", "misclassified"} {
 		if !kinds[kind] {
 			t.Errorf("the schema output is missing event kind %q", kind)
 		}
@@ -281,7 +283,7 @@ func TestSchemaListsEveryKind(t *testing.T) {
 }
 
 // The schema output reports how many event kinds it lists, so a reader (and a grep) can tell
-// 13 from 12 without counting the lines.
+// 15 from 14 without counting the lines.
 func TestSchemaReportsTheNumberOfEventKinds(t *testing.T) {
 	var err error
 	out := capture(t, func() { err = call(t, cmdSchema, t.TempDir()) })
@@ -944,21 +946,25 @@ func TestRebaselineNeedsAReason(t *testing.T) {
 // A re-baseline is a new premise, not a new item: it resets no count (R19). The code-round cap
 // and the total-round budget both survive it, so a re-baseline cannot buy more rounds.
 func TestRebaselineResetsNoCount(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := gitItem(t)
+	checksOK(t, dir, roundList)
+	// A re-baseline replaces the frozen list with a new premise. The claims freeze the list
+	// (R5), so the re-baseline comes before them — and before every round, because a round
+	// needs a claims event (R6).
+	if err := call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", rebaselinedList), "--reason", "the list's own command was broken"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
 	for i := 0; i < roundCap; i++ {
+		rows := runAndVerdicts(t, dir, "S1\tFAIL\t")
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("round %d: %v", i+1, err)
 		}
 	}
 	// the cap is spent
-	wantRule(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows), "R19")
-
-	// a re-baseline is a new premise: the counts are not
-	if err := call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", rebaselinedList), "--reason", "the list's own command was broken"); err != nil {
-		t.Fatalf("rebaseline: %v", err)
-	}
+	rows := runAndVerdicts(t, dir, "S1\tFAIL\t")
 	wantRule(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows), "R19")
 
 	// the earlier rounds stay in the ledger: a re-baseline is not a way to erase a failure
@@ -1343,6 +1349,19 @@ func evidenceFiles(t *testing.T, dir string) []string {
 	return names
 }
 
+// roundEvidenceFiles lists the evidence files the rounds wrote — the `-r<N>.txt` ones, not the
+// run files, which live in the same directory.
+func roundEvidenceFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	for _, name := range evidenceFiles(t, dir) {
+		if strings.HasPrefix(name, "A1-r") && strings.HasSuffix(name, ".txt") {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // wantBudgetRefusal fails unless err is a refusal under R19 that says the item escalates to a
 // human, and returns it.
 func wantBudgetRefusal(t *testing.T, err error) Refusal {
@@ -1360,14 +1379,14 @@ func wantBudgetRefusal(t *testing.T, err error) Refusal {
 // R19: three code rounds per item, and a fourth is refused under R19. The refusal names the
 // cap, says the item escalates to a human, and writes nothing at all.
 func TestR19TheThirdCodeRoundIsAcceptedAndTheFourthIsRefused(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < roundCap; i++ {
+		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
 	}
+	rows := runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	files := evidenceFiles(t, dir)
 	r := wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
@@ -1386,16 +1405,15 @@ func TestR19TheThirdCodeRoundIsAcceptedAndTheFourthIsRefused(t *testing.T) {
 // R19: three harness rounds per item, and a fourth is refused under R19 — even though the
 // item has spent only four rounds in total.
 func TestR19TheFourthHarnessRoundIsRefused(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < roundCap; i++ {
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"); err != nil {
 			t.Fatalf("harness round %d: %v", i+1, err)
 		}
 	}
 	// a dispute round is a round too, and the budget still has room
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+	rows := runAndVerdicts(t, dir, roundFail...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
 	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"))
@@ -1403,11 +1421,10 @@ func TestR19TheFourthHarnessRoundIsRefused(t *testing.T) {
 
 // R19: three dispute rounds per item, and a fourth is refused under R19.
 func TestR19TheFourthDisputeRoundIsRefused(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < roundCap; i++ {
-		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+		rows := runAndVerdicts(t, dir, roundFail...)
+		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 			t.Fatalf("dispute round %d: %v", i+1, err)
 		}
 	}
@@ -1415,27 +1432,30 @@ func TestR19TheFourthDisputeRoundIsRefused(t *testing.T) {
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"); err != nil {
 		t.Fatalf("harness round: %v", err)
 	}
-	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows))
+	rows := runAndVerdicts(t, dir, roundFail...)
+	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows))
 }
 
 // R19: six rounds in total, of any cause. The seventh is refused under R19 although no cause
 // has spent three rounds.
 func TestR19TheSeventhRoundIsRefused(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	rounds := []struct{ cause string }{
 		{"code"}, {"code"}, {"harness"}, {"harness"}, {"dispute"}, {"dispute"},
 	}
 	for i, r := range rounds {
 		argv := []string{"A1", "--verdict", "FAIL", "--cause", r.cause}
 		if r.cause != "harness" {
-			argv = append(argv, "--rows", rows)
+			argv = append(argv, "--rows", runAndVerdicts(t, dir, roundFail...))
+			if r.cause == "dispute" {
+				argv = append(argv, "--finding", "a new finding")
+			}
 		}
 		if err := call(t, cmdRound, dir, argv...); err != nil {
 			t.Fatalf("round %d (%s): %v", i+1, r.cause, err)
 		}
 	}
+	rows := runAndVerdicts(t, dir, roundFail...)
 	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
 }
 
@@ -1443,10 +1463,9 @@ func TestR19TheSeventhRoundIsRefused(t *testing.T) {
 // The refusal is the state guard's (R18): the item's last round is a PASS, so the only
 // legal next step is the close.
 func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < 2; i++ {
+		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
@@ -1456,10 +1475,12 @@ func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
 			t.Fatalf("harness round %d: %v", i+1, err)
 		}
 	}
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+	rows := runAndVerdicts(t, dir, roundFail...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
 	// the sixth round is a PASS and it is accepted
+	rows = runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
@@ -1486,10 +1507,24 @@ func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
 // R19: the counts are over the item's whole life, so a re-baseline resets none of them — the
 // six-round budget survives two re-baselines.
 func TestR19TheBudgetSurvivesTwoRebaselines(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := gitItem(t)
+	checksOK(t, dir, roundList)
+	// Two re-baselines: each one replaces the frozen list with a new premise. The claims
+	// freeze the list (R5), so they come before the claims — and before every round, because
+	// a round needs a claims event (R6).
 	for i := 0; i < 2; i++ {
+		list := writeFile(t, t.TempDir(), "c.tsv", rebaselinedList)
+		if err := call(t, cmdRebaseline, dir, "A1", "--file", list, "--reason", "the list's own command was broken"); err != nil {
+			t.Fatalf("rebaseline %d: %v", i+1, err)
+		}
+	}
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	// The budget is spent by the rounds that follow the re-baselines: two code rounds, two
+	// harness rounds and two dispute rounds.
+	for i := 0; i < 2; i++ {
+		rows := runAndVerdicts(t, dir, "S1\tFAIL\t")
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
@@ -1500,15 +1535,13 @@ func TestR19TheBudgetSurvivesTwoRebaselines(t *testing.T) {
 		}
 	}
 	for i := 0; i < 2; i++ {
-		list := writeFile(t, t.TempDir(), "c.tsv", rebaselinedList)
-		if err := call(t, cmdRebaseline, dir, "A1", "--file", list, "--reason", "the list's own command was broken"); err != nil {
-			t.Fatalf("rebaseline %d: %v", i+1, err)
-		}
-		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+		rows := runAndVerdicts(t, dir, "S1\tFAIL\t")
+		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 			t.Fatalf("dispute round %d: %v", i+1, err)
 		}
 	}
 	// six rounds are spent, and the seventh is refused whatever the re-baselines did
+	rows := runAndVerdicts(t, dir, "S1\tFAIL\t")
 	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
 }
 
@@ -1516,14 +1549,9 @@ func TestR19TheBudgetSurvivesTwoRebaselines(t *testing.T) {
 // re-baseline is refused — and either way the counts are not reset: the fourth code round is
 // refused under R19.
 func TestR19TheCountsSurviveARebaselineRefusedUnderR5(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
-	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
-		t.Fatalf("claims: %v", err)
-	}
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < roundCap; i++ {
+		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
@@ -1532,19 +1560,20 @@ func TestR19TheCountsSurviveARebaselineRefusedUnderR5(t *testing.T) {
 	wantRule(t, call(t, cmdRebaseline, dir, "A1",
 		"--file", writeFile(t, t.TempDir(), "c.tsv", rebaselinedList), "--reason", "again"), "R5")
 	// and the counts are not reset: the fourth code round is refused under R19
+	rows := runAndVerdicts(t, dir, roundFail...)
 	wantBudgetRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
 }
 
 // R19: a refused round exits 2, writes no event, and leaves the item's state untouched.
 func TestR19ARefusedRoundWritesNothing(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < roundCap; i++ {
+		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
 	}
+	rows := runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	if code := run([]string{"--root", dir, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows}); code != 2 {
 		t.Fatalf("bl round: exit = %d, want 2", code)
@@ -1553,7 +1582,7 @@ func TestR19ARefusedRoundWritesNothing(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("a refused round wrote %d events", len(after)-len(before))
 	}
-	if last := after[len(after)-1]; last.T != "round" {
+	if last := after[len(after)-1]; last.T != "run" {
 		t.Fatalf("a refused round wrote %+v", last)
 	}
 }
@@ -1561,15 +1590,14 @@ func TestR19ARefusedRoundWritesNothing(t *testing.T) {
 // R19: `bl status` shows the round counts — the total and how many of each cause, so the
 // harness and dispute rounds are visible.
 func TestStatusShowsTheHarnessAndDisputeCounts(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < 2; i++ {
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"); err != nil {
 			t.Fatalf("harness round %d: %v", i+1, err)
 		}
 	}
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+	rows := runAndVerdicts(t, dir, roundFail...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
 	want := "rounds: 3 (code 0, harness 2, dispute 1, pass 0)"
@@ -1593,10 +1621,9 @@ func TestStatusShowsTheHarnessAndDisputeCounts(t *testing.T) {
 // R19: `bl status` counts the PASS rounds too — the total is every round of every cause, and a
 // PASS is a round, so it is visible in the budget.
 func TestStatusCountsThePassRounds(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i := 0; i < 3; i++ {
+		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 			t.Fatalf("code round %d: %v", i+1, err)
 		}
@@ -1604,10 +1631,12 @@ func TestStatusCountsThePassRounds(t *testing.T) {
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"); err != nil {
 		t.Fatalf("harness round: %v", err)
 	}
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--rows", rows); err != nil {
+	rows := runAndVerdicts(t, dir, roundFail...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS"); err != nil {
+	rows = runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
 	want := "rounds: 6 (code 3, harness 1, dispute 1, pass 1)"
@@ -1654,22 +1683,25 @@ func TestHarnessRoundIsRecordedWithoutRows(t *testing.T) {
 // whose budget is spent is refused with the already-passed refusal, not with the budget's —
 // and the refusal writes nothing.
 func TestR18TheStateGuardOutranksTheBudget(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
 	for i, cause := range []string{"code", "harness", "dispute", "code", "dispute"} {
 		argv := []string{"A1", "--verdict", "FAIL", "--cause", cause}
 		if cause != "harness" {
-			argv = append(argv, "--rows", rows)
+			argv = append(argv, "--rows", runAndVerdicts(t, dir, roundFail...))
+		}
+		if cause == "dispute" {
+			argv = append(argv, "--finding", "a new finding")
 		}
 		if err := call(t, cmdRound, dir, argv...); err != nil {
 			t.Fatalf("round %d (%s): %v", i+1, cause, err)
 		}
 	}
 	// the sixth round is a PASS
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS"); err != nil {
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	rows = runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
 	if r.rule != "R18" {
@@ -1691,15 +1723,16 @@ func TestR18TheStateGuardOutranksTheBudget(t *testing.T) {
 // the close, whatever is left of the budget (R19). The refusal names R18, says the item
 // already passed, and writes nothing.
 func TestR18ARoundAfterAPassIsRefused(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundFail...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 		t.Fatalf("code round: %v", err)
 	}
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS"); err != nil {
+	rows = runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	rows = runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	files := evidenceFiles(t, dir)
 	// the budget still has four rounds: the state guard is what refuses
@@ -1722,12 +1755,12 @@ func TestR18ARoundAfterAPassIsRefused(t *testing.T) {
 // R18: the refusal is written for a human to read — it names R18, says the item already
 // passed, and the call exits 2.
 func TestR18TheRefusalNamesTheRuleAndExitsTwo(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS"); err != nil {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	rows = runAndVerdicts(t, dir, roundFail...)
 	var code int
 	out := captureStderr(t, func() {
 		code = run([]string{"--root", dir, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows})
@@ -1741,12 +1774,62 @@ func TestR18TheRefusalNamesTheRuleAndExitsTwo(t *testing.T) {
 	}
 }
 
-// R23: a PASS round carries no cause and no finding, so it needs no rows: it may be recorded
-// without any, and then it has no evidence file to hash.
+// R12: a PASS round carries no cause and no finding, so it needs no rows of its own: it may be
+// recorded without any.
+//
+// Under the design the verdict is DERIVED from the rows, so a PASS round needs the design's
+// verdicts file — and a PASS round without one is refused (R6). The round that is recorded
+// without rows is the harness round (R23): the verifier did not run, so there is nothing to
+// record and nothing to hash (proved by TestHarnessRoundIsRecordedWithoutRows).
 func TestAPassRoundIsRecordedWithoutRows(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS"); err != nil {
+	dir := roundItem(t, roundList)
+	// A PASS round without the design's verdicts file is refused, and the refusal names the
+	// rule and the reason.
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "PASS"))
+	if r.rule != "R6" {
+		t.Fatalf("want a refusal under R6, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "verdicts file") {
+		t.Errorf("the refusal must name what is missing: %s", r.msg)
+	}
+	before, _ := readLedger(dir)
+	files := roundEvidenceFiles(t, dir)
+	// The harness round is the one that is recorded without rows: no rows, no rows_sha and
+	// no evidence file.
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness"); err != nil {
+		t.Fatalf("harness round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" || ev.Cause != "harness" {
+		t.Fatalf("round event = %+v", ev)
+	}
+	if ev.Rows != "" || ev.RowsSHA != "" {
+		t.Fatalf("a round recorded without rows carries none: %+v", ev)
+	}
+	if got := roundEvidenceFiles(t, dir); len(got) != len(files) {
+		t.Fatalf("a round recorded without rows wrote an evidence file: %v", got)
+	}
+	// and the ledger still verifies: a round with no rows has no evidence file to check
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before)+1 {
+		t.Fatalf("the ledger holds %d events, want %d", len(after), len(before)+1)
+	}
+}
+
+// R12: a PASS round's verdict is DERIVED from the rows, so it always carries the verdicts file
+// it was derived from and the evidence file that goes with it — and it carries no cause.
+//
+// The round that carries no rows is the harness round (R23): the verifier did not run, so
+// there is nothing to record and nothing to hash. That is proved by
+// TestHarnessRoundIsRecordedWithoutRows.
+func TestAPassRoundIsRecordedWithItsRowsAndNoCause(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
 	events, _ := readLedger(dir)
@@ -1754,27 +1837,14 @@ func TestAPassRoundIsRecordedWithoutRows(t *testing.T) {
 	if ev.T != "round" || ev.Verdict != "PASS" || ev.Cause != "" {
 		t.Fatalf("round event = %+v", ev)
 	}
-	if ev.Rows != "" || ev.RowsSHA != "" {
-		t.Fatalf("a PASS round without rows carries none: %+v", ev)
-	}
-	if files := evidenceFiles(t, dir); len(files) != 0 {
-		t.Fatalf("a PASS round without rows wrote an evidence file: %v", files)
-	}
-	// a PASS written against its evidence still carries it — in another item, because a PASS
-	// ends an item's rounds (R18)
-	dir2 := openItem(t)
-	checksOK(t, dir2, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")
-	if err := call(t, cmdRound, dir2, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
-		t.Fatalf("pass round with rows: %v", err)
-	}
-	events, _ = readLedger(dir2)
-	ev = events[len(events)-1]
 	if ev.Rows == "" || ev.RowsSHA == "" {
-		t.Fatalf("a PASS round with rows carries them: %+v", ev)
+		t.Fatalf("a PASS round carries the rows it was derived from: %+v", ev)
 	}
-	// and the ledger still verifies: a round with no rows has no evidence file to check
-	if err := call(t, cmdCheck, dir2); err != nil {
+	if files := roundEvidenceFiles(t, dir); len(files) != 1 {
+		t.Fatalf("a PASS round wrote one evidence file: %v", files)
+	}
+	// and the ledger still verifies: the evidence file is hashed into the event
+	if err := call(t, cmdCheck, dir); err != nil {
 		t.Fatalf("check: %v", err)
 	}
 }
@@ -2076,7 +2146,7 @@ func TestR24ARoundIsUnaffectedByAnUnrelatedAmendment(t *testing.T) {
 			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 				t.Fatalf("claims: %v", err)
 			}
-			rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")
+			rows := runAndVerdicts(t, dir, "S1\tPASS\t", "S2\tPASS\t")
 			if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 				t.Fatalf("round: %v", err)
 			}
@@ -2473,9 +2543,8 @@ func TestR23AHarnessRoundWithNoRowsOrAnEmptyRowsFileIsAccepted(t *testing.T) {
 // R23: a code round is a verdict about rows, so a rows file with content is still accepted, and
 // the round is recorded with the rows and their hash.
 func TestR23ACodeRoundWithRowsIsStillAccepted(t *testing.T) {
-	dir := openItem(t)
-	checksOK(t, dir, goodList)
-	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundFail...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 		t.Fatalf("code round: %v", err)
 	}
@@ -2487,7 +2556,7 @@ func TestR23ACodeRoundWithRowsIsStillAccepted(t *testing.T) {
 	if ev.Rows == "" || ev.RowsSHA == "" {
 		t.Fatalf("a code round carries its rows: %+v", ev)
 	}
-	if files := evidenceFiles(t, dir); len(files) != 1 {
+	if files := roundEvidenceFiles(t, dir); len(files) != 1 {
 		t.Fatalf("want one evidence file, got %v", files)
 	}
 }
@@ -2644,6 +2713,96 @@ func readRunFile(t *testing.T, dir, name string) (runFile, []byte) {
 		t.Fatalf("run file %s is not JSON: %v", name, err)
 	}
 	return rf, data
+}
+
+// ── the round path ───────────────────────────────────────────────────────────
+
+// roundList is a well-formed list for the round path: a binary row and a judge row, both of
+// which print a known word, so that an output anchor has something to point at.
+const roundList = checksHeader +
+	"S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n" +
+	"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
+
+// The verdicts of the round list: both rows pass, or the binary row fails. A judge row carries
+// an output anchor, and the row's command prints the anchored word.
+var (
+	roundPass = []string{"S1\tPASS\t", "J1\tPASS\t\"two\""}
+	roundFail = []string{"S1\tFAIL\t", "J1\tPASS\t\"two\""}
+)
+
+// gitItem opens an item in a directory that is also a git repository. The round path needs
+// one: the verified tree, the diff and the tree pin are git's.
+func gitItem(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for _, argv := range [][]string{
+		{"init"},
+		{"file", "--id", "A1", "--text", "add a verb; test it"},
+		{"open", "A1"},
+	} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	return dir
+}
+
+// roundItem prepares an item for a round: the list is frozen and the claims are recorded.
+func roundItem(t *testing.T, list string) string {
+	t.Helper()
+	dir := gitItem(t)
+	checksOK(t, dir, list)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	return dir
+}
+
+// latestRunID returns the id of the item's latest run.
+func latestRunID(t *testing.T, dir string) string {
+	t.Helper()
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ""
+	for _, ev := range events {
+		if ev.T == "run" {
+			id = ev.Run
+		}
+	}
+	return id
+}
+
+// writeVerdicts builds a verdicts file (§2) for the item's latest run: the header, the `run` and
+// the `tree` lines, and one line per frozen id.
+func writeVerdicts(t *testing.T, dir string, rows ...string) string {
+	t.Helper()
+	tree, err := verifiedTreeWriting(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("id\trow_verdict\tanchor\n")
+	fmt.Fprintf(&b, "run %s\n", latestRunID(t, dir))
+	fmt.Fprintf(&b, "tree %s\n", tree)
+	for _, r := range rows {
+		b.WriteString(r + "\n")
+	}
+	return writeFile(t, t.TempDir(), "verdicts.tsv", b.String())
+}
+
+// runAndVerdicts runs the frozen list and builds the verdicts file for that run. A round
+// consumes its run, so a sequence of rounds needs a run before each.
+func runAndVerdicts(t *testing.T, dir string, rows ...string) string {
+	t.Helper()
+	if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+		t.Fatalf("run: %v", err)
+	}
+	return writeVerdicts(t, dir, rows...)
 }
 
 // A run over a one-row list writes the run file and records the run event with the file's hash.
@@ -2941,5 +3100,602 @@ func TestCheckRehashesTheRunFile(t *testing.T) {
 	err = call(t, cmdCheck, dir)
 	if !errors.Is(err, errFailed) {
 		t.Fatalf("a tampered run file must fail the check: %v", err)
+	}
+}
+
+// ── I3: the round path, to the design's contract ────────────────────────────
+
+// gitItemWith opens an item in a repository that already holds the given files: the item's
+// before-tree is the tree the item was opened against, so a file written before the open is
+// part of the tree the round's diff is taken against.
+func gitItemWith(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for name, body := range files {
+		writeFile(t, dir, name, body)
+	}
+	for _, argv := range [][]string{
+		{"init"},
+		{"file", "--id", "A1", "--text", "add a verb; test it"},
+		{"open", "A1"},
+	} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	return dir
+}
+
+// A well-formed round over a well-formed run and verdicts file passes, and it writes the
+// evidence file in the design's format (§2): one line per frozen check id, in the order the
+// list was frozen, with the cmd, the exit code, the signalled and timed_out flags, the
+// observed hashes, the excerpt and the row_verdict.
+func TestRoundOverAWellFormedRunAndVerdictsFileWritesTheEvidenceFile(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "PASS" || ev.Cause != "" {
+		t.Fatalf("round event = %+v", ev)
+	}
+	if ev.Run != latestRunID(t, dir) {
+		t.Errorf("the round must name the run it consumed: %+v", ev)
+	}
+	if ev.Tree == "" {
+		t.Errorf("the round must record the tree it verified: %+v", ev)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "evidence", "A1-r1.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("the evidence file has %d lines, want 3 (a header and two rows):\n%s", len(lines), data)
+	}
+	if !strings.HasPrefix(lines[0], "id\tcmd\texit\tsignalled\ttimed_out\tobserved\texcerpt\trow_verdict") {
+		t.Errorf("the evidence file's header = %q", lines[0])
+	}
+	first := regexp.MustCompile(`^S1\techo two\t0\tfalse\tfalse\tstdout sha [0-9a-f]+, stderr sha [0-9a-f]+\t.*\tPASS$`)
+	if !first.MatchString(lines[1]) {
+		t.Errorf("the S1 line = %q", lines[1])
+	}
+	// the judge row carries its anchor in the observed column
+	if !strings.Contains(lines[2], `; anchor "two"`) || !strings.HasSuffix(lines[2], "\tPASS") {
+		t.Errorf("the J1 line = %q", lines[2])
+	}
+	// the event carries the hash of the evidence file
+	if ev.RowsSHA != shaHex(data) {
+		t.Errorf("the event must carry the evidence file's hash: %+v", ev)
+	}
+	// and the ledger still verifies
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+}
+
+// R6: the verdicts file must match the frozen list, the latest run and the current verified
+// tree. Each of these is a refusal, and nothing is written.
+func TestR6TheVerdictsFileMustMatchTheListTheRunAndTheTree(t *testing.T) {
+	cases := []struct {
+		name  string
+		build func(t *testing.T, dir string) string
+	}{
+		{
+			name: "a missing id",
+			build: func(t *testing.T, dir string) string {
+				return writeVerdicts(t, dir, "S1\tPASS\t")
+			},
+		},
+		{
+			name: "an unknown id",
+			build: func(t *testing.T, dir string) string {
+				return writeVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"two\"", "X9\tPASS\t")
+			},
+		},
+		{
+			name: "a stale run",
+			build: func(t *testing.T, dir string) string {
+				// a verdicts file that names the first run ...
+				file := writeVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+				// ... and then a second run, so that the first one is no longer the latest
+				if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+					t.Fatalf("run: %v", err)
+				}
+				return file
+			},
+		},
+		{
+			name: "a wrong tree",
+			build: func(t *testing.T, dir string) string {
+				return writeVerdictsWith(t, dir, "0000000000000000000000000000000000000000",
+					"S1\tPASS\t", "J1\tPASS\t\"two\"")
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := roundItem(t, roundList)
+			if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+				t.Fatalf("run: %v", err)
+			}
+			rows := c.build(t, dir)
+			before, _ := readLedger(dir)
+			files := roundEvidenceFiles(t, dir)
+			r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--rows", rows))
+			if r.rule != "R6" {
+				t.Fatalf("want a refusal under R6, got %s: %s", r.rule, r.msg)
+			}
+			after, _ := readLedger(dir)
+			if len(after) != len(before) {
+				t.Errorf("a refused round wrote %d events", len(after)-len(before))
+			}
+			if got := roundEvidenceFiles(t, dir); len(got) != len(files) {
+				t.Errorf("a refused round wrote an evidence file: %v", got)
+			}
+		})
+	}
+}
+
+// writeVerdictsWith builds a verdicts file that names a tree of its own — a tree that is not
+// the one the round verifies.
+func writeVerdictsWith(t *testing.T, dir, tree string, rows ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("id\trow_verdict\tanchor\n")
+	fmt.Fprintf(&b, "run %s\n", latestRunID(t, dir))
+	fmt.Fprintf(&b, "tree %s\n", tree)
+	for _, r := range rows {
+		b.WriteString(r + "\n")
+	}
+	return writeFile(t, t.TempDir(), "verdicts.tsv", b.String())
+}
+
+// R6: a run that a round has already consumed cannot be consumed again.
+func TestR6ARunThatARoundConsumedCannotBeConsumedAgain(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	before, _ := readLedger(dir)
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R6")
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Errorf("a refused round wrote %d events", len(after)-len(before))
+	}
+}
+
+// R6: the item must have a claims event: the claims are frozen before the round.
+func TestR6AnItemWithNoClaimsCannotHaveARound(t *testing.T) {
+	dir := gitItem(t)
+	checksOK(t, dir, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R6")
+}
+
+// R9: a judge row's anchor is checked in the form it is written in, and a missing or empty
+// anchor is refused.
+func TestR9AJudgeRowWithNoAnchorIsRefused(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R9")
+}
+
+// R9: an output anchor's quoted text must appear in the row's captured stdout or stderr.
+func TestR9AnOutputAnchorThatIsNotInTheOutputIsRefused(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"zzz-not-in-output\"")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R9")
+}
+
+// R9: a source anchor is checked as a source anchor, whatever its quoted text says: the line
+// must lie in a hunk of the round's diff.
+func TestR9ASourceAnchorOutsideEveryHunkIsRefused(t *testing.T) {
+	dir := gitItemWith(t, map[string]string{"f.txt": "one\ntwo\nthree\n"})
+	checksOK(t, dir, roundList)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	// only the first line changes: the hunk covers line 1 alone
+	writeFile(t, dir, "f.txt", "ONE\ntwo\nthree\n")
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"f.txt:2 \"two\"\"")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R9")
+}
+
+// R10: a hunk that no blocking row covers refuses the round.
+func TestR10AnUncoveredHunkIsRefused(t *testing.T) {
+	dir := gitItem(t)
+	// the only blocking row's command does not name the file that changed
+	list := checksHeader + "S1\tbl\tblocking\tB1\techo hi\tstdout matches ^hi\t\t\tdoes not name the changed file\n"
+	checksOK(t, dir, list)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	writeFile(t, dir, "f.txt", "two\n")
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R10")
+}
+
+// R12: the verdict is derived from the blocking rows. A supplied --verdict that differs from
+// the derived one is refused.
+func TestR12ADerivedFailWithASuppliedPassIsRefused(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundFail...)
+	before, _ := readLedger(dir)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows))
+	if r.rule != "R12" {
+		t.Fatalf("want a refusal under R12, got %s: %s", r.rule, r.msg)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Errorf("a refused round wrote %d events", len(after)-len(before))
+	}
+	// and the derived verdict is recorded when --verdict is absent
+	if err := call(t, cmdRound, dir, "A1", "--cause", "code", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" || ev.Cause != "code" {
+		t.Fatalf("round event = %+v", ev)
+	}
+}
+
+// R13: a finding makes the round a dispute: the verdict is FAIL, the cause is dispute, and
+// the finding text is recorded.
+func TestR13AFindingMakesTheRoundADispute(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--finding", "the migration drops a column", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" || ev.Cause != "dispute" {
+		t.Fatalf("round event = %+v", ev)
+	}
+	if !strings.Contains(ev.Finding, "the migration drops a column") {
+		t.Errorf("the round must record the finding text: %+v", ev)
+	}
+}
+
+// R13: a `# finding:` comment line in the verdicts file makes the round a dispute too, and a
+// supplied --cause that conflicts with the derived cause is refused.
+func TestR13AFindingInTheVerdictsFileIsADisputeAndTheCauseIsDerived(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	rows = appendComment(t, rows, "# finding: the migration drops a column v1 reads")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--cause", "code", "--rows", rows), "R23")
+	// the same file without the cause is recorded as a dispute
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.Verdict != "FAIL" || ev.Cause != "dispute" {
+		t.Fatalf("round event = %+v", ev)
+	}
+	if !strings.Contains(ev.Finding, "the migration drops a column") {
+		t.Errorf("the round must record the finding text: %+v", ev)
+	}
+}
+
+// mustTree returns the item's current verified tree.
+func mustTree(t *testing.T, dir string) string {
+	t.Helper()
+	tree, err := verifiedTreeWriting(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+// appendComment adds a comment line to a verdicts file.
+func appendComment(t *testing.T, path, comment string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeFile(t, filepath.Dir(path), "verdicts.tsv", string(data)+comment+"\n")
+}
+
+// R14: an advisory row that fails must already be filed as an item, with the row id as a
+// whole token in the item's text.
+func TestR14AFailingAdvisoryRowMustBeFiled(t *testing.T) {
+	list := checksHeader +
+		"S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n" +
+		"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n" +
+		"V1\tbl\tadvisory\t\techo two\tstdout matches ^zzz\t\t\tadvisory misses\n"
+	dir := roundItem(t, list)
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"two\"", "V1\tFAIL\t")
+	// not filed yet
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--rows", rows))
+	if r.rule != "R14" {
+		t.Fatalf("want a refusal under R14, got %s: %s", r.rule, r.msg)
+	}
+	// filed, but the id is not a whole token
+	if err := call(t, cmdFile, dir, "A1", "--id", "B2", "--text", "V10 xV1 V1."); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R14")
+	// filed with the id as a whole token
+	if err := call(t, cmdFile, dir, "A1", "--id", "B3", "--text", "retry V1 now"); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "PASS" {
+		t.Fatalf("round event = %+v", ev)
+	}
+}
+
+// R16: a second check that disagrees with the judge row's recorded verdict refuses the round.
+func TestR16ASecondCheckThatDisagreesRefusesTheRound(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	// the second judge's command prints two, and expects zzz: it computes FAIL for J1
+	if err := call(t, cmdSecondCheck, dir, "A1", "--row", "J1", "--cmd", "echo two", "--expect", "stdout matches ^zzz"); err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "second-check" || ev.Row != "J1" || ev.Computed != "FAIL" {
+		t.Fatalf("second-check event = %+v", ev)
+	}
+	// the round's verdict says PASS, and the second check says FAIL: the round is refused
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R16")
+	// and the misclassified event is recorded: it is not a round, and it consumes no budget
+	events, _ = readLedger(dir)
+	ev = events[len(events)-1]
+	if ev.T != "misclassified" || ev.Row != "J1" {
+		t.Fatalf("the misclassified event = %+v", ev)
+	}
+}
+
+// R16: a second check that agrees with the row's recorded verdict lets the round stand.
+func TestR16ASecondCheckThatAgreesLetsTheRoundStand(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdSecondCheck, dir, "A1", "--row", "J1", "--cmd", "echo two", "--expect", "stdout matches ^two"); err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "PASS" {
+		t.Fatalf("round event = %+v", ev)
+	}
+}
+
+// ── I3: the scope and the ignored files under it (R28) ───────────────────────
+
+// scopedItem prepares an item whose scope holds an ignored file, and returns the directory.
+// The ignored file is written before the item is opened, so the before-state records its
+// hash.
+func scopedItem(t *testing.T, scopeIgnored string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	writeFile(t, dir, ".gitignore", "build/\n")
+	if err := os.MkdirAll(filepath.Join(dir, "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "build/out.txt", "one\n")
+	open := []string{"open", "A1", "--scope", "build/"}
+	if scopeIgnored != "" {
+		open = append(open, "--scope-ignored", scopeIgnored)
+	}
+	for _, argv := range [][]string{
+		{"init"},
+		{"file", "--id", "A1", "--text", "item"},
+		open,
+	} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	checksOK(t, dir, roundList)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	return dir
+}
+
+// R28: an ignored file under the item's scope may not change, unless the item declared it as
+// one it may write.
+func TestR28AnIgnoredFileUnderTheScopeMayNotChange(t *testing.T) {
+	dir := scopedItem(t, "")
+	// the before-state holds the ignored file and its hash
+	events, _ := readLedger(dir)
+	open := events[1]
+	if open.T != "open" || len(open.Scope) != 1 || open.Scope[0] != "build/" {
+		t.Fatalf("the open event must record the scope: %+v", open)
+	}
+	if open.BeforeTree == "" {
+		t.Errorf("the open event must record the tree the item was opened against: %+v", open)
+	}
+	if len(open.IgnoredBefore) != 1 || !strings.HasPrefix(open.IgnoredBefore[0], "build/out.txt\t") {
+		t.Fatalf("the open event must record the ignored files under the scope: %+v", open)
+	}
+	// the ignored file changes
+	writeFile(t, dir, "build/out.txt", "two\n")
+	rows := runAndVerdicts(t, dir, roundPass...)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--rows", rows))
+	if r.rule != "R28" {
+		t.Fatalf("want a refusal under R28, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "build/out.txt") {
+		t.Errorf("the refusal must name the file: %s", r.msg)
+	}
+}
+
+// R28: a file the item declared as one it may write is not a refusal.
+func TestR28AnIgnoredFileTheItemMayWriteIsAccepted(t *testing.T) {
+	dir := scopedItem(t, "build/out.txt")
+	writeFile(t, dir, "build/out.txt", "two\n")
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "PASS" {
+		t.Fatalf("round event = %+v", ev)
+	}
+}
+
+// ── I3, round 2: a harness round carries no finding ──────────────────────────
+
+// R23: a harness round carries no finding. The verifier did not run, so it found nothing, and
+// a finding is never silently ignored (R13). The refusal writes nothing.
+func TestR23AHarnessRoundWithAFindingIsRefused(t *testing.T) {
+	dir := roundItem(t, roundList)
+	before, _ := readLedger(dir)
+	files := roundEvidenceFiles(t, dir)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--cause", "harness", "--verdict", "FAIL",
+		"--finding", "the migration drops a column"))
+	if r.rule != "R23" {
+		t.Fatalf("want a refusal under R23, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "finding") {
+		t.Errorf("the refusal must name the finding: %s", r.msg)
+	}
+	// the call exits 2 and the message names the rule
+	var code int
+	out := captureStderr(t, func() {
+		code = run([]string{"--root", dir, "round", "A1", "--cause", "harness", "--verdict", "FAIL",
+			"--finding", "the migration drops a column"})
+	})
+	if code != 2 {
+		t.Fatalf("bl round: exit = %d, want 2", code)
+	}
+	if !strings.Contains(out, "refused (R23)") {
+		t.Errorf("the refusal must name R23: %s", out)
+	}
+	// and nothing was written: no event, no evidence file
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused round wrote %d events", len(after)-len(before))
+	}
+	if got := roundEvidenceFiles(t, dir); len(got) != len(files) {
+		t.Fatalf("a refused round wrote an evidence file: %v", got)
+	}
+}
+
+// R23: a harness round whose verdicts file carries a `# finding:` line is refused the same
+// way: a finding on a round that never ran is never silently ignored.
+func TestR23AHarnessRoundWithAFindingInTheVerdictsFileIsRefused(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	rows = appendComment(t, rows, "# finding: the migration drops a column v1 reads")
+	before, _ := readLedger(dir)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--cause", "harness", "--verdict", "FAIL", "--rows", rows))
+	if r.rule != "R23" {
+		t.Fatalf("want a refusal under R23, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "finding") {
+		t.Errorf("the refusal must name the finding: %s", r.msg)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused round wrote %d events", len(after)-len(before))
+	}
+}
+
+// A round that is not a harness round is unaffected: its finding still makes it a dispute
+// under R13.
+func TestR13ANonHarnessRoundStillAcceptsAFinding(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--finding", "the migration drops a column", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" || ev.Cause != "dispute" {
+		t.Fatalf("round event = %+v", ev)
+	}
+	if !strings.Contains(ev.Finding, "the migration drops a column") {
+		t.Errorf("the round must record the finding text: %+v", ev)
+	}
+}
+
+// ── I3, round 2: a nested .git is skipped from the verified tree ─────────────
+
+// A nested `.git` — a submodule's gitfile, or a nested repository — is skipped from the
+// verified tree, the way git skips it: git refuses a tree that holds a .git entry, so hashing
+// one would fail the whole tree. The tree is computed, and the run succeeds.
+func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
+	for _, kind := range []string{"file", "dir"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v: %s", err, out)
+			}
+			sub := filepath.Join(dir, "sub")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "file" {
+				// a submodule's gitfile
+				if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: ../.git/modules/sub\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				// a nested repository
+				if err := os.MkdirAll(filepath.Join(sub, ".git", "refs"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFile(t, dir, "a.txt", "hi\n")
+			// the tree is computed, and it holds no .git entry
+			tree, err := verifiedTreeWriting(dir)
+			if err != nil {
+				t.Fatalf("the verified tree: %v", err)
+			}
+			out, code := git(dir, "ls-tree", "-r", tree)
+			if code != 0 {
+				t.Fatalf("ls-tree: exit %d", code)
+			}
+			if strings.Contains(out, ".git") {
+				t.Errorf("the tree must not hold a .git entry:\n%s", out)
+			}
+			// and the run succeeds: the item is opened, the list is frozen, the claims are
+			// recorded, and the rows run.
+			for _, argv := range [][]string{
+				{"init"},
+				{"file", "--id", "A1", "--text", "item"},
+				{"open", "A1"},
+			} {
+				if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+					t.Fatalf("bl %v: exit %d", argv, code)
+				}
+			}
+			checksOK(t, dir, roundList)
+			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+				t.Fatalf("claims: %v", err)
+			}
+			if err := call(t, cmdRun, dir, "A1"); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			rf, _ := readRunFile(t, dir, "A1-run1.json")
+			if rf.TreeStart == "" || rf.TreeStart != rf.TreeEnd {
+				t.Fatalf("the trees must be present and equal: %+v", rf)
+			}
+		})
 	}
 }

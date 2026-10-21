@@ -119,6 +119,22 @@ type Event struct {
 	// The run (R7): the run id, and the sha256 of the run file it names.
 	Run    string `json:"run,omitempty"`
 	RunSHA string `json:"run_sha,omitempty"`
+	// The item's scope and the before-state (R28): the scope paths, the ignored files the
+	// item may write, the tree the item was opened against, and the hash of every ignored
+	// file that existed under the scope when it was opened.
+	Scope         []string `json:"scope,omitempty"`
+	ScopeIgnored  []string `json:"scope_ignored,omitempty"`
+	BeforeTree    string   `json:"before_tree,omitempty"`
+	IgnoredBefore []string `json:"ignored_before,omitempty"`
+	// The tree the round verified (R6) and the finding it raised (R13).
+	Tree    string `json:"tree,omitempty"`
+	Finding string `json:"finding,omitempty"`
+	// The second check (R16): the row it decides, the verdict it computed, and the command
+	// and expectation it used.
+	Row      string `json:"row,omitempty"`
+	Computed string `json:"computed,omitempty"`
+	Cmd      string `json:"cmd,omitempty"`
+	Expect   string `json:"expect,omitempty"`
 }
 
 // Item is the derived state of one backlog entry.
@@ -140,6 +156,15 @@ type Item struct {
 	Brief, BriefSHA   string
 	Checks, ChecksSHA string
 	Claims, ClaimsSHA string
+	// The scope and the before-state (R28): the scope paths, the ignored files the item may
+	// write, the tree the item was opened against, and the ignored files under the scope
+	// with the hash each had then.
+	Scope         []string
+	ScopeIgnored  []string
+	BeforeTree    string
+	IgnoredBefore []string
+	// The second checks (R16) the item has.
+	SecondChecks []Event
 	// The seq of the latest re-baseline: a re-baseline is a new premise, so it is recorded
 	// as the premise it is. It resets no count — the round budget belongs to the item.
 	RebaselineSeq int
@@ -359,6 +384,19 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			if ev.Brief != "" {
 				it.Brief, it.BriefSHA = ev.Brief, ev.BriefSHA
 			}
+			// The scope and the before-state are recorded once, at `bl open` (R28).
+			if len(ev.Scope) > 0 {
+				it.Scope = ev.Scope
+			}
+			if len(ev.ScopeIgnored) > 0 {
+				it.ScopeIgnored = ev.ScopeIgnored
+			}
+			if ev.BeforeTree != "" {
+				it.BeforeTree = ev.BeforeTree
+			}
+			if len(ev.IgnoredBefore) > 0 {
+				it.IgnoredBefore = ev.IgnoredBefore
+			}
 		case "brief":
 			it.Brief, it.BriefSHA = ev.Brief, ev.BriefSHA
 		case "checks":
@@ -381,6 +419,8 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Rounds = append(it.Rounds, ev)
 		case "run":
 			it.Runs = append(it.Runs, ev)
+		case "second-check":
+			it.SecondChecks = append(it.SecondChecks, ev)
 		case "close":
 			it.Status, it.Commit, it.Opened = "closed", ev.Commit, false
 		case "drop":
@@ -806,7 +846,24 @@ func cmdOpen(root string, a args) error {
 	if err := atomicWrite(filepath.Join(root, rel), brief); err != nil {
 		return err
 	}
-	ev := Event{T: "open", ID: it.ID, Brief: rel, BriefSHA: shaHex([]byte(brief))}
+	// The scope and the before-state (R28, R10). The scope is the set of paths the item may
+	// write, recorded here — once. The before-tree is the tree the item was opened against:
+	// the round's diff is taken against it, and the ignored files under the scope are
+	// recorded with the hash each had then.
+	scope := a.list("scope")
+	scopeIgnored := a.list("scope-ignored")
+	before, err := verifiedTreeWriting(root)
+	if err != nil {
+		return err
+	}
+	ignored, err := ignoredUnderScope(root, scope)
+	if err != nil {
+		return err
+	}
+	ev := Event{
+		T: "open", ID: it.ID, Brief: rel, BriefSHA: shaHex([]byte(brief)),
+		Scope: scope, ScopeIgnored: scopeIgnored, BeforeTree: before, IgnoredBefore: ignored,
+	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
 	}
@@ -1569,8 +1626,9 @@ func cmdRun(root string, a args) error {
 		return err
 	}
 	// The state before the run: the verified tree, computed from the FILESYSTEM, and the hash of
-	// the whole of .backlog/.
-	treeStart, err := verifiedTree(root)
+	// the whole of .backlog/. The tree is written to the object store, so that the round can
+	// diff it against the tree the round verifies.
+	treeStart, err := verifiedTreeWriting(root)
 	if err != nil {
 		return err
 	}
@@ -1579,30 +1637,21 @@ func cmdRun(root string, a args) error {
 		return err
 	}
 	// The scratch directory: outside the repository, and removed after the run.
-	scratch, err := scratchDir(root)
+	env, cleanup, err := execEnv(root)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(scratch)
-	home := filepath.Join(scratch, "home")
-	tmpdir := filepath.Join(scratch, "tmp")
-	for _, d := range []string{home, tmpdir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return err
-		}
-	}
-	// R21: the environment is fixed. PATH is inherited from the caller and recorded; HOME and
-	// TMPDIR point at the scratch directory; LANG=C; TZ=UTC; and nothing else — in particular no
-	// GIT_* and no other variable of the caller's.
+	defer cleanup()
 	path := os.Getenv("PATH")
-	env := []string{"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir, "LANG=C", "TZ=UTC"}
+	home := envHome(env)
+	tmpdir := envTmp(env)
 	// R7: every row runs, in the order of the frozen list, whatever the decider.
 	records := make([]runRow, 0, len(rows))
 	for _, row := range rows {
 		records = append(records, execRow(root, row, env, runTimeout))
 	}
 	// The state after the run.
-	treeEnd, err := verifiedTree(root)
+	treeEnd, err := verifiedTreeWriting(root)
 	if err != nil {
 		return err
 	}
@@ -1676,14 +1725,61 @@ func encodeRun(rf runFile) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// execEnv prepares the environment of R21 and the scratch directory it points at: PATH is
+// inherited from the caller, HOME and TMPDIR point into a fresh scratch directory outside the
+// repository, LANG=C, TZ=UTC, and nothing else — in particular no GIT_* and no other variable
+// of the caller's. The cleanup removes the scratch directory.
+func execEnv(root string) ([]string, func(), error) {
+	scratch, err := scratchDir(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	home := filepath.Join(scratch, "home")
+	tmpdir := filepath.Join(scratch, "tmp")
+	for _, d := range []string{home, tmpdir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			os.RemoveAll(scratch)
+			return nil, nil, err
+		}
+	}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"TMPDIR=" + tmpdir,
+		"LANG=C",
+		"TZ=UTC",
+	}
+	return env, func() { os.RemoveAll(scratch) }, nil
+}
+
+// envHome and envTmp read the HOME and the TMPDIR out of the fixed environment.
+func envHome(env []string) string { return envValue(env, "HOME") }
+func envTmp(env []string) string  { return envValue(env, "TMPDIR") }
+
+func envValue(env []string, name string) string {
+	for _, e := range env {
+		if strings.HasPrefix(e, name+"=") {
+			return strings.TrimPrefix(e, name+"=")
+		}
+	}
+	return ""
+}
+
 // execRow runs one row's command and records what it saw: the exit code, whether it timed out,
 // the full output of each stream, and the sha256 of each.
 //
 // A command that exits non-zero, a command that cannot be run at all and a death by a signal are
 // each recorded as what they are — never swallowed, never turned into a pass.
 func execRow(root string, row checkRow, env []string, timeout time.Duration) runRow {
-	rec := runRow{ID: row.f["id"], Cmd: row.f["cmd"]}
-	cmd := exec.Command("/bin/sh", "-c", row.f["cmd"])
+	rec := execCmd(root, row.f["cmd"], env, timeout)
+	rec.ID = row.f["id"]
+	return rec
+}
+
+// execCmd runs one command under the fixed environment and records what it saw.
+func execCmd(root string, command string, env []string, timeout time.Duration) runRow {
+	rec := runRow{Cmd: command}
+	cmd := exec.Command("/bin/sh", "-c", command)
 	cmd.Dir = root
 	cmd.Env = env
 	cmd.Stdin = nil // /dev/null
@@ -1840,7 +1936,18 @@ type treeEntry struct {
 // The index is never consulted, so a staged-but-unstaged path, a skip-worktree path and an
 // assume-unchanged path cannot hide a change from the tree (R26).
 func verifiedTree(root string) (string, error) {
-	b := &treeBuilder{root: root, ignored: map[string]bool{}}
+	return buildTree(root, false)
+}
+
+// verifiedTreeWriting computes the same tree and leaves the objects in the repository's store,
+// so that `git diff` can take the difference between two trees: the round's diff is taken
+// between the before-tree and the verified tree, and both have to be objects git can read.
+func verifiedTreeWriting(root string) (string, error) {
+	return buildTree(root, true)
+}
+
+func buildTree(root string, write bool) (string, error) {
+	b := &treeBuilder{root: root, ignored: map[string]bool{}, write: write}
 	if err := b.findIgnored(); err != nil {
 		return "", err
 	}
@@ -1850,7 +1957,7 @@ func verifiedTree(root string) (string, error) {
 	}
 	if !ok {
 		// an empty working tree is git's empty tree
-		return gitStdin(root, "tree", nil)
+		return gitStdin(root, "tree", nil, write)
 	}
 	return sha, nil
 }
@@ -1859,6 +1966,8 @@ func verifiedTree(root string) (string, error) {
 type treeBuilder struct {
 	root    string
 	ignored map[string]bool
+	// write leaves the objects in the repository's store, so that git can diff two trees.
+	write bool
 }
 
 // findIgnored asks git which of the working tree's paths .gitignore excludes. They are asked
@@ -1878,6 +1987,10 @@ func (b *treeBuilder) findIgnored() error {
 		rel, err := filepath.Rel(b.root, p)
 		if err != nil {
 			return err
+		}
+		if d.Name() == ".git" {
+			// a nested .git is never part of the tree, so it is not asked about
+			return nil
 		}
 		paths = append(paths, filepath.ToSlash(rel))
 		return nil
@@ -1922,8 +2035,10 @@ func (b *treeBuilder) tree(rel string) (string, bool, error) {
 		if rel == "" && name == backlogDir {
 			continue
 		}
-		if e.IsDir() && name == ".git" {
-			// git's own metadata is never part of a tree
+		if name == ".git" {
+			// git's own metadata is never part of a tree, and neither is a nested one: a
+			// submodule's gitfile is skipped as well, the way git skips it — git refuses a
+			// tree that holds a .git entry, so hashing one would fail the whole tree.
 			continue
 		}
 		child := name
@@ -1963,7 +2078,7 @@ func (b *treeBuilder) tree(rel string) (string, bool, error) {
 		}
 		buf.Write(raw)
 	}
-	sha, err := gitStdin(b.root, "tree", buf.Bytes())
+	sha, err := gitStdin(b.root, "tree", buf.Bytes(), b.write)
 	if err != nil {
 		return "", false, err
 	}
@@ -1983,7 +2098,7 @@ func (b *treeBuilder) blob(rel string) (string, string, error) {
 		if err != nil {
 			return "", "", err
 		}
-		sha, err := gitStdin(b.root, "blob", []byte(target))
+		sha, err := gitStdin(b.root, "blob", []byte(target), b.write)
 		if err != nil {
 			return "", "", err
 		}
@@ -2000,7 +2115,14 @@ func (b *treeBuilder) blob(rel string) (string, string, error) {
 	if code != 0 {
 		return "", "", refuse("git hash-object %s: exit %d", rel, code)
 	}
-	return strings.TrimSpace(out), mode, nil
+	sha := strings.TrimSpace(out)
+	if b.write {
+		// leave the blob in the store, so that git can diff two trees
+		if wout, wcode := git(b.root, "hash-object", "-w", "--", rel); wcode == 0 {
+			sha = strings.TrimSpace(wout)
+		}
+	}
+	return sha, mode, nil
 }
 
 // sortTree orders the entries of a tree the way git does: by name, and a directory is compared
@@ -2031,9 +2153,27 @@ func sortTree(list []treeEntry) {
 }
 
 // gitStdin hashes data as a git object of the given type WITHOUT writing it: `git hash-object
-// -t <type> --stdin` computes the id and leaves the object store alone.
-func gitStdin(root, typ string, data []byte) (string, error) {
-	cmd := exec.Command("git", "hash-object", "-t", typ, "--stdin")
+// -t <type> --stdin` computes the id and leaves the object store alone. With write, the object
+// is left in the store, so that git can read it back — the round's diff is taken between two
+// trees, and both have to be objects git can find. Outside a git repository the write fails
+// and the id is computed without it; the id is the same either way.
+func gitStdin(root, typ string, data []byte, write bool) (string, error) {
+	if write {
+		sha, err := hashStdin(root, typ, data, true)
+		if err == nil {
+			return sha, nil
+		}
+	}
+	return hashStdin(root, typ, data, false)
+}
+
+func hashStdin(root, typ string, data []byte, write bool) (string, error) {
+	args := []string{"hash-object", "-t", typ}
+	if write {
+		args = append(args, "-w")
+	}
+	args = append(args, "--stdin")
+	cmd := exec.Command("git", args...)
 	cmd.Dir = root
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.Output()
@@ -2045,6 +2185,915 @@ func gitStdin(root, typ string, data []byte) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ── the verdicts file, the diff, and the rules the round path applies ─────────
+
+// verdictColumns are the columns of the verdicts file (§2): the header names exactly these
+// three, in any order, and the columns are read by name.
+var verdictColumns = []string{"id", "row_verdict", "anchor"}
+
+// verdictRow is one line of a verdicts file: the frozen id it decides, the verdict the judge
+// recorded, and the anchor that supports it.
+type verdictRow struct {
+	id      string
+	verdict string
+	anchor  string
+}
+
+// verdictsFile is a parsed verdicts file: the rows it carries, the run and the tree it names,
+// and the finding it raises.
+type verdictsFile struct {
+	rows    map[string]verdictRow
+	order   []string
+	run     string
+	tree    string
+	finding string
+	found   bool
+}
+
+// parseVerdicts reads the verifier's verdicts file (§2). The header names exactly the three
+// columns; the two lines after it are `run <run-id>` and `tree <40-hex>`; the rest are one
+// line per frozen check id, and `#` lines are comments.
+//
+// The shape of the file is R6's: the ids must match the frozen list exactly, the run and the
+// tree must be there, and a `decider: bl` row's anchor must be empty. A judge row's anchor is
+// R9's, and is checked in checkAnchors.
+func parseVerdicts(text string, frozen []checkRow) (*verdictsFile, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, refuseRule("R6", "the verdicts file is empty")
+	}
+	lines := strings.Split(strings.TrimRight(text, "\r\n"), "\n")
+	header := strings.Split(strings.TrimRight(lines[0], "\r"), "\t")
+	known := map[string]bool{}
+	for _, c := range verdictColumns {
+		known[c] = true
+	}
+	seen := map[string]bool{}
+	for _, h := range header {
+		switch {
+		case !known[h]:
+			return nil, refuseRule("R6", "the verdicts file names an unknown column %q; it must name exactly: %s", h, strings.Join(verdictColumns, ", "))
+		case seen[h]:
+			return nil, refuseRule("R6", "the verdicts file names column %q twice", h)
+		}
+		seen[h] = true
+	}
+	for _, c := range verdictColumns {
+		if !seen[c] {
+			return nil, refuseRule("R6", "the verdicts file is missing column %q", c)
+		}
+	}
+	deciders := map[string]string{}
+	for _, r := range frozen {
+		deciders[r.f["id"]] = r.f["decider"]
+	}
+	vf := &verdictsFile{rows: map[string]verdictRow{}}
+	// The two metadata lines: `run <run-id>` and `tree <40-hex>`, in that order.
+	meta := 0
+	for n, raw := range lines[1:] {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			// a comment: not a row, and a `# finding:` line is read by R13.
+			if strings.HasPrefix(trimmed, "# finding:") {
+				vf.found = true
+				vf.finding = strings.TrimSpace(strings.TrimPrefix(trimmed, "# finding:"))
+			}
+			continue
+		}
+		switch meta {
+		case 0:
+			rest, ok := strings.CutPrefix(trimmed, "run ")
+			if !ok || strings.TrimSpace(rest) == "" {
+				return nil, refuseRule("R6", "line %d: the verdicts file must name the run: `run <run-id>`", n+2)
+			}
+			vf.run = strings.TrimSpace(rest)
+			meta = 1
+			continue
+		case 1:
+			rest, ok := strings.CutPrefix(trimmed, "tree ")
+			if !ok || !treeHashRe.MatchString(rest) {
+				return nil, refuseRule("R6", "line %d: the verdicts file must name the tree: `tree <40-hex>`", n+2)
+			}
+			vf.tree = rest
+			meta = 2
+			continue
+		}
+		cells := strings.Split(line, "\t")
+		if len(cells) != len(header) {
+			return nil, refuseRule("R6", "line %d: the verdicts file has %d fields, want %d", n+2, len(cells), len(header))
+		}
+		f := map[string]string{}
+		for i, h := range header {
+			f[h] = strings.TrimSpace(cells[i])
+		}
+		id := f["id"]
+		if id == "" {
+			return nil, refuseRule("R6", "line %d: a verdicts row has no id", n+2)
+		}
+		if _, dup := vf.rows[id]; dup {
+			return nil, refuseRule("R6", "line %d: row %s appears twice in the verdicts file", n+2, id)
+		}
+		decider, known := deciders[id]
+		if !known {
+			return nil, refuseRule("R6", "line %d: row %s is not in the frozen check list", n+2, id)
+		}
+		switch f["row_verdict"] {
+		case "PASS", "FAIL":
+		default:
+			return nil, refuseRule("R6", "line %d: row %s: row_verdict %q must be PASS or FAIL", n+2, id, f["row_verdict"])
+		}
+		if decider == "bl" && f["anchor"] != "" {
+			return nil, refuseRule("R6", "line %d: row %s is a decider bl row — its anchor must be empty", n+2, id)
+		}
+		vf.rows[id] = verdictRow{id: id, verdict: f["row_verdict"], anchor: f["anchor"]}
+		vf.order = append(vf.order, id)
+	}
+	if meta < 2 {
+		return nil, refuseRule("R6", "the verdicts file must name the run and the tree: `run <run-id>` then `tree <40-hex>`")
+	}
+	for _, r := range frozen {
+		if _, ok := vf.rows[r.f["id"]]; !ok {
+			return nil, refuseRule("R6", "the verdicts file has no row for %s — it must carry one line per frozen check id", r.f["id"])
+		}
+	}
+	return vf, nil
+}
+
+// ── the anchors (R9) ─────────────────────────────────────────────────────────
+
+const (
+	anchorOutput = "output"
+	anchorSource = "source"
+)
+
+// anchor is a parsed anchor: its form, the file and line of a source anchor, and the quoted
+// text both forms carry.
+type anchor struct {
+	form string
+	file string
+	line int
+	text string
+}
+
+// parseAnchor reads an anchor field (§2). The form is decided syntactically: an anchor whose
+// text before the first `"` holds a `:` and a line number is a source anchor, and anything else
+// is an output anchor. The quoted text is the content between the first `"` and the last one.
+func parseAnchor(id, field string) (anchor, error) {
+	first := strings.Index(field, "\"")
+	last := strings.LastIndex(field, "\"")
+	if first < 0 {
+		return anchor{}, refuseRule("R9", "row %s: the anchor %q is not one of the two anchor forms — a source anchor is `file:line \"text\"` and an output anchor is `\"text\"`", id, field)
+	}
+	if first == last {
+		return anchor{}, refuseRule("R9", "row %s: the anchor has no quoted text", id)
+	}
+	text, err := unquote(id, field[first+1:last])
+	if err != nil {
+		return anchor{}, err
+	}
+	if text == "" {
+		return anchor{}, refuseRule("R9", "row %s: the anchor's quoted text is empty", id)
+	}
+	a := anchor{text: text}
+	if file, line, ok := sourceAnchor(strings.TrimSpace(field[:first])); ok {
+		a.form, a.file, a.line = anchorSource, file, line
+		return a, nil
+	}
+	a.form = anchorOutput
+	return a, nil
+}
+
+// sourceAnchor reads a source anchor's prefix: a file, a colon, and a line number. A prefix
+// that is not that shape makes the anchor an output anchor.
+func sourceAnchor(prefix string) (string, int, bool) {
+	i := strings.LastIndex(prefix, ":")
+	if i < 0 {
+		return "", 0, false
+	}
+	file := strings.TrimSpace(prefix[:i])
+	num := strings.TrimSpace(prefix[i+1:])
+	if file == "" || num == "" {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 1 {
+		return "", 0, false
+	}
+	return file, n, true
+}
+
+// unquote reads the quoted text of an anchor: `\"` is a literal quote, `\\` a literal
+// backslash, and an unescaped `"` inside the text is refused.
+func unquote(id, body string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c != '\\' {
+			if c == '"' {
+				return "", refuseRule("R9", "row %s: the anchor's quoted text holds an unescaped quote", id)
+			}
+			b.WriteByte(c)
+			continue
+		}
+		if i+1 >= len(body) {
+			return "", refuseRule("R9", "row %s: the anchor's quoted text ends with a lone backslash", id)
+		}
+		i++
+		switch body[i] {
+		case '"':
+			b.WriteByte('"')
+		case '\\':
+			b.WriteByte('\\')
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(body[i])
+		}
+	}
+	return b.String(), nil
+}
+
+// ── the diff (R9, R10) ───────────────────────────────────────────────────────
+
+// hunk is one contiguous block of changed lines in the round's diff (§2): its file, and its
+// new-side range — the start line through the last line of the block. A deleted-only hunk has
+// an empty new-side range.
+type hunk struct {
+	file  string
+	start int
+	count int
+}
+
+// contains reports whether a line lies in the hunk's new-side range.
+func (h hunk) contains(line int) bool {
+	return h.count > 0 && line >= h.start && line < h.start+h.count
+}
+
+// roundDiff computes the round's diff: the before-tree against the verified tree (§2). It
+// returns the hunks and the files that changed with no textual hunk — a binary file, an empty
+// file, a mode change — which only a blocking row naming the path can cover.
+func roundDiff(root, before, after string) ([]hunk, []string) {
+	if before == "" || after == "" {
+		return nil, nil
+	}
+	out, code := git(root, "diff", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"--diff-algorithm=myers", "--unified=0", before, after)
+	if code != 0 {
+		// the trees are not in the store, or this is not a git repository: there is no diff
+		// to check.
+		return nil, nil
+	}
+	var hunks []hunk
+	var files []string
+	seen := map[string]bool{}
+	cur := ""
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			cur = diffPath(strings.TrimPrefix(line, "diff --git "))
+			// The ledger's own artefacts are not part of the diff the round checks: the views
+			// are rendered from the ledger, so they change on every append (R25).
+			if isArtifact(cur) {
+				cur = ""
+				continue
+			}
+			if !seen[cur] {
+				seen[cur] = true
+				files = append(files, cur)
+			}
+		case strings.HasPrefix(line, "@@ "):
+			start, count, ok := hunkRange(line)
+			if ok && cur != "" {
+				hunks = append(hunks, hunk{file: cur, start: start, count: count})
+			}
+		}
+	}
+	var bare []string
+	for _, f := range files {
+		if !fileHasHunk(hunks, f) {
+			bare = append(bare, f)
+		}
+	}
+	return hunks, bare
+}
+
+// fileHasHunk reports whether a file carries at least one hunk.
+func fileHasHunk(hunks []hunk, file string) bool {
+	for _, h := range hunks {
+		if h.file == file {
+			return true
+		}
+	}
+	return false
+}
+
+// diffPath reads the file path out of a `diff --git a/<p> b/<p>` line. With --no-renames the
+// two paths are the same, so the path is the middle of the line.
+func diffPath(rest string) string {
+	if strings.HasPrefix(rest, "\"") {
+		_, tail, ok := cutQuoted(rest)
+		if ok {
+			second, _, _ := cutQuoted(tail)
+			return strings.TrimPrefix(second, "b/")
+		}
+		return rest
+	}
+	if len(rest) < 5 {
+		return rest
+	}
+	// the line is `a/<p> b/<p>`: with --no-renames the two paths are the same.
+	if (len(rest)-5)%2 == 0 {
+		p := (len(rest) - 5) / 2
+		first := rest[2 : 2+p]
+		second := rest[3+p:]
+		if strings.HasPrefix(second, "b/") && strings.TrimPrefix(second, "b/") == first {
+			return first
+		}
+	}
+	if i := strings.Index(rest, " b/"); i >= 0 {
+		return rest[i+3:]
+	}
+	return rest
+}
+
+// cutQuoted reads one quoted string off the front of s and returns the rest.
+func cutQuoted(s string) (string, string, bool) {
+	if !strings.HasPrefix(s, "\"") {
+		return "", s, false
+	}
+	end := strings.Index(s[1:], "\"")
+	if end < 0 {
+		return "", s, false
+	}
+	return s[1 : 1+end], strings.TrimSpace(s[2+end:]), true
+}
+
+// hunkRange reads the new-side range of a `@@ -a,b +c,d @@` line.
+func hunkRange(line string) (int, int, bool) {
+	i := strings.Index(line, "+")
+	if i < 0 {
+		return 0, 0, false
+	}
+	j := strings.Index(line[i:], " @@")
+	if j < 0 {
+		return 0, 0, false
+	}
+	spec := line[i+1 : i+j]
+	count := 1
+	if k := strings.Index(spec, ","); k >= 0 {
+		count, _ = strconv.Atoi(spec[k+1:])
+		spec = spec[:k]
+	}
+	start, err := strconv.Atoi(spec)
+	if err != nil {
+		return 0, 0, false
+	}
+	return start, count, true
+}
+
+// ── the scope (R28) ──────────────────────────────────────────────────────────
+
+// inScope reports whether a repository-relative path is inside the item's scope. A scope path
+// ending in `/` names every file under that directory; a path naming no file is still a scope
+// entry, because a file that does not exist yet is in scope. An item with no scope is not
+// constrained: the whole repository is in scope.
+func inScope(scope []string, path string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	for _, s := range scope {
+		s = strings.TrimSuffix(strings.TrimSpace(s), "/")
+		if s == "" {
+			continue
+		}
+		if path == s || strings.HasPrefix(path, s+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeIgnored reports whether the item declared an ignored file as one it may write.
+func scopeIgnored(it *Item, path string) bool {
+	for _, s := range it.ScopeIgnored {
+		s = strings.TrimSuffix(strings.TrimSpace(s), "/")
+		if s == "" {
+			continue
+		}
+		if path == s || strings.HasPrefix(path, s+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// ignoredUnderScope lists the ignored files under the item's scope paths, with the sha256 of
+// each: the before-state of R28. An ignored file is not in the verified tree, so a change to
+// it is invisible to the diff — this is the list that makes it visible to the record.
+func ignoredUnderScope(root string, scope []string) ([]string, error) {
+	b := &treeBuilder{root: root, ignored: map[string]bool{}}
+	if err := b.findIgnored(); err != nil {
+		return nil, err
+	}
+	var out []string
+	for path := range b.ignored {
+		if !inScope(scope, path) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			continue
+		}
+		out = append(out, path+"\t"+shaHex(data))
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// treesMatch reports whether two trees are the same tree, ignoring the ledger's own
+// artefacts. The two views are rendered from the ledger, so they change on every append.
+//
+// The design's verified tree covers the whole working tree (§2), and the views are part of it,
+// so any ledger event between the run and the round moves the tree. The design's own flow
+// needs such an event to be legal — R14 files the advisory items after the verdicts file and
+// before the round — so the pin compares the trees with the artefacts excluded. The code the
+// round verified is still pinned: any other path is a change of the tree, and the round is
+// refused.
+func treesMatch(root, a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	out, code := git(root, "diff", "--no-renames", "--name-only", a, b)
+	if code != 0 {
+		// the trees cannot be compared: they are not the same tree.
+		return false
+	}
+	for _, p := range strings.Fields(out) {
+		if !isArtifact(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// ── the round's rules ────────────────────────────────────────────────────────
+
+// checkAnchors is R9: a judge row is anchored, and only the form the anchor is written in is
+// checked. An output anchor's text must appear in the row's captured stdout or stderr; a
+// source anchor's file must be in the item's scope, its line must exist, its text must be at
+// that line, and the line must lie in a hunk of the round's diff.
+func checkAnchors(root string, it *Item, vf *verdictsFile, frozen []checkRow, rf *runFile, hunks []hunk) error {
+	observed := map[string]runRow{}
+	for _, r := range rf.Rows {
+		observed[r.ID] = r
+	}
+	for _, row := range frozen {
+		if row.f["decider"] != "judge" {
+			continue
+		}
+		id := row.f["id"]
+		v := vf.rows[id]
+		if strings.TrimSpace(v.anchor) == "" {
+			return refuseRule("R9", "row %s is a judge row: its anchor must not be empty", id)
+		}
+		a, err := parseAnchor(id, v.anchor)
+		if err != nil {
+			return err
+		}
+		switch a.form {
+		case anchorOutput:
+			rec, ok := observed[id]
+			if !ok {
+				return refuseRule("R9", "row %s: the run has no record of it", id)
+			}
+			if !strings.Contains(rec.Stdout, a.text) && !strings.Contains(rec.Stderr, a.text) {
+				return refuseRule("R9", "row %s: the anchor's text %q is not in the row's captured output", id, a.text)
+			}
+		case anchorSource:
+			if !inScope(it.Scope, a.file) {
+				return refuseRule("R9", "row %s: the anchor names %s, which is not in the item's scope", id, a.file)
+			}
+			line, ok := sourceLine(root, a.file, a.line)
+			if !ok {
+				return refuseRule("R9", "row %s: %s has no line %d", id, a.file, a.line)
+			}
+			if !strings.Contains(line, a.text) {
+				return refuseRule("R9", "row %s: the anchor's text %q is not at %s:%d", id, a.text, a.file, a.line)
+			}
+			if !inHunk(hunks, a.file, a.line) {
+				return refuseRule("R9", "row %s: %s:%d lies in no hunk of the round's diff", id, a.file, a.line)
+			}
+		}
+	}
+	return nil
+}
+
+// sourceLine reads one line of a file of the verified tree — the working tree, which is what
+// the verified tree is computed from.
+func sourceLine(root, file string, line int) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if line < 1 || line > len(lines) {
+		return "", false
+	}
+	return lines[line-1], true
+}
+
+// inHunk reports whether a line lies in the new-side range of a hunk of the given file.
+func inHunk(hunks []hunk, file string, line int) bool {
+	for _, h := range hunks {
+		if h.file == file && h.contains(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkCoverage is R10: every hunk in the round's diff must be covered by at least one
+// blocking row. A row covers a hunk if it is a judge row whose source anchor lies in the
+// hunk's new-side range, or if its cmd contains the hunk's file path as a literal substring.
+// Advisory rows do not count.
+func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string) error {
+	for _, h := range hunks {
+		if coveredHunk(vf, frozen, h) {
+			continue
+		}
+		return refuseRule("R10", "the hunk in %s at line %d is covered by no blocking row", h.file, h.start)
+	}
+	for _, f := range bare {
+		if coveredPath(frozen, f) {
+			continue
+		}
+		return refuseRule("R10", "the change in %s is covered by no blocking row", f)
+	}
+	return nil
+}
+
+// coveredHunk reports whether a blocking row covers a hunk.
+func coveredHunk(vf *verdictsFile, frozen []checkRow, h hunk) bool {
+	for _, row := range frozen {
+		if row.f["severity"] != "blocking" {
+			continue
+		}
+		if strings.Contains(row.f["cmd"], h.file) {
+			return true
+		}
+		if row.f["decider"] != "judge" {
+			continue
+		}
+		a, err := parseAnchor(row.f["id"], vf.rows[row.f["id"]].anchor)
+		if err != nil {
+			continue
+		}
+		if a.form == anchorSource && a.file == h.file && h.contains(a.line) {
+			return true
+		}
+	}
+	return false
+}
+
+// coveredPath reports whether a blocking row names a file path in its cmd.
+func coveredPath(frozen []checkRow, path string) bool {
+	for _, row := range frozen {
+		if row.f["severity"] != "blocking" {
+			continue
+		}
+		if strings.Contains(row.f["cmd"], path) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkR14 is R14: every advisory row whose row-verdict is FAIL must already be filed as a
+// backlog item, with the row id appearing in the item's text as a whitespace-delimited token,
+// and that item being the most recently filed item mentioning the id.
+func checkR14(vf *verdictsFile, frozen []checkRow, order []*Item) error {
+	for _, row := range frozen {
+		if row.f["severity"] != "advisory" {
+			continue
+		}
+		id := row.f["id"]
+		if vf.rows[id].verdict != "FAIL" {
+			continue
+		}
+		latest := latestMention(order, id)
+		if latest == nil {
+			return refuseRule("R14", "the advisory row %s failed and is not filed as an item yet — file it with `bl file --id <id> --text \"... %s ...\"`", id, id)
+		}
+		if !hasToken(latest.Text, id) {
+			return refuseRule("R14", "the advisory row %s failed: the most recently filed item mentioning it (%s) does not name %s as a whole token", id, latest.ID, id)
+		}
+	}
+	return nil
+}
+
+// latestMention returns the most recently filed item whose text mentions the id at all.
+func latestMention(order []*Item, id string) *Item {
+	var latest *Item
+	for _, it := range order {
+		if !strings.Contains(it.Text, id) {
+			continue
+		}
+		if latest == nil || it.FiledAt >= latest.FiledAt {
+			latest = it
+		}
+	}
+	return latest
+}
+
+// hasToken reports whether the text holds the token as a whole word.
+func hasToken(text, token string) bool {
+	for _, f := range strings.Fields(text) {
+		if f == token {
+			return true
+		}
+	}
+	return false
+}
+
+// checkR16 is R16: a second check that disagrees with the row's recorded verdict refuses the
+// round. A second-check event computed against an earlier run is stale and is ignored.
+func checkR16(root string, it *Item, vf *verdictsFile, runID string) error {
+	for _, ev := range it.SecondChecks {
+		if ev.Run != runID {
+			continue
+		}
+		v, ok := vf.rows[ev.Row]
+		if !ok || ev.Computed == v.verdict {
+			continue
+		}
+		// A misclassified event is the one kind of refusal that writes to the ledger: it is
+		// not a round and it consumes no code round (R16).
+		if _, err := appendEvent(root, Event{
+			T: "misclassified", ID: it.ID, Row: ev.Row, Computed: ev.Computed, Run: ev.Run,
+			Cmd: ev.Cmd, Expect: ev.Expect,
+		}); err != nil {
+			return err
+		}
+		return refuseRule("R16", "the second check computed %s for row %s and the verdicts file records %s — the row is misclassified", ev.Computed, ev.Row, v.verdict)
+	}
+	return nil
+}
+
+// checkR28 is R28: an ignored file under the item's scope may not change, unless the item
+// declared it as one it may write.
+func checkR28(root string, it *Item) error {
+	if len(it.IgnoredBefore) == 0 {
+		return nil
+	}
+	want := map[string]string{}
+	for _, entry := range it.IgnoredBefore {
+		if i := strings.Index(entry, "\t"); i > 0 {
+			want[entry[:i]] = entry[i+1:]
+		}
+	}
+	now, err := ignoredUnderScope(root, it.Scope)
+	if err != nil {
+		return err
+	}
+	got := map[string]string{}
+	for _, entry := range now {
+		if i := strings.Index(entry, "\t"); i > 0 {
+			got[entry[:i]] = entry[i+1:]
+		}
+	}
+	for path, sha := range want {
+		if got[path] == sha {
+			continue
+		}
+		if scopeIgnored(it, path) {
+			continue
+		}
+		return refuseRule("R28", "the ignored file %s changed under the item's scope — the item did not declare it as one it may write", path)
+	}
+	return nil
+}
+
+// checkR25 is R25: `.backlog/` is never part of a verified tree, and a repository that tracks
+// it is a repository error.
+func checkR25(root string) error {
+	out, code := git(root, "ls-files", "--", backlogDir)
+	if code != 0 {
+		return nil
+	}
+	if strings.TrimSpace(out) != "" {
+		return refuseRule("R25", "the %s directory is tracked in this repository — it is an artefact directory and must never be tracked", backlogDir)
+	}
+	return nil
+}
+
+// ── the evidence file ────────────────────────────────────────────────────────
+
+// evidenceText writes the evidence file of a round (§2): one line per frozen check id, in the
+// order the list was frozen, with the run's observed values — so the claim that a command ran
+// is never something a model typed into a cell.
+func evidenceText(vf *verdictsFile, frozen []checkRow, rf *runFile) string {
+	observed := map[string]runRow{}
+	for _, r := range rf.Rows {
+		observed[r.ID] = r
+	}
+	var b strings.Builder
+	b.WriteString("id\tcmd\texit\tsignalled\ttimed_out\tobserved\texcerpt\trow_verdict\n")
+	for _, row := range frozen {
+		id := row.f["id"]
+		rec := observed[id]
+		v := vf.rows[id]
+		seen := fmt.Sprintf("stdout sha %s, stderr sha %s", rec.StdoutSHA, rec.StderrSHA)
+		if v.anchor != "" {
+			seen += "; anchor " + v.anchor
+		}
+		fmt.Fprintf(&b, "%s\t%s\t%d\t%t\t%t\t%s\t%s\t%s\n",
+			id, rec.Cmd, rec.Exit, rec.Signalled, rec.TimedOut, seen, excerpt(rec), v.verdict)
+	}
+	return b.String()
+}
+
+// excerpt is the human-readable excerpt of a row's output: the first 4096 bytes of each
+// stream, with the control characters escaped so the evidence file stays one line per row.
+func excerpt(rec runRow) string {
+	out := flattenStream(rec.Stdout, rec.StdoutBinary)
+	if rec.Stderr != "" {
+		if out != "" {
+			out += " | "
+		}
+		out += flattenStream(rec.Stderr, rec.StderrBinary)
+	}
+	return out
+}
+
+func flattenStream(s string, binary bool) string {
+	if binary {
+		return "(binary output)"
+	}
+	const limit = 4096
+	if len(s) > limit {
+		s = s[:limit]
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '\t':
+			b.WriteString("\\t")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// ── the expectation (R8) ─────────────────────────────────────────────────────
+
+// expectVerdict computes a row's verdict from the observed values and an expectation of R8's
+// five forms. It is what `bl second-check` records (R16).
+func expectVerdict(root, id, expect string, rec runRow, tree string) (string, error) {
+	switch {
+	case strings.HasPrefix(expect, "exit "):
+		code := strings.TrimPrefix(expect, "exit ")
+		n, err := strconv.Atoi(code)
+		if err != nil {
+			return "", refuseRule("R8", "row %s: `exit` takes an integer 0-255, not %q", id, code)
+		}
+		if rec.Exit == n {
+			return "PASS", nil
+		}
+		return "FAIL", nil
+	case strings.HasPrefix(expect, "stdout matches "):
+		re, err := regexp.Compile(expect[len("stdout matches "):])
+		if err != nil {
+			return "", refuseRule("R8", "row %s: regex %q is not valid RE2: %v", id, expect, err)
+		}
+		if re.MatchString(rec.Stdout) {
+			return "PASS", nil
+		}
+		return "FAIL", nil
+	case strings.HasPrefix(expect, "stderr matches "):
+		re, err := regexp.Compile(expect[len("stderr matches "):])
+		if err != nil {
+			return "", refuseRule("R8", "row %s: regex %q is not valid RE2: %v", id, expect, err)
+		}
+		if re.MatchString(rec.Stderr) {
+			return "PASS", nil
+		}
+		return "FAIL", nil
+	case strings.HasPrefix(expect, "file exists "):
+		path := strings.TrimPrefix(expect, "file exists ")
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err == nil {
+			return "PASS", nil
+		}
+		return "FAIL", nil
+	case strings.HasPrefix(expect, "tree == "):
+		hash := strings.TrimPrefix(expect, "tree == ")
+		if tree == hash {
+			return "PASS", nil
+		}
+		return "FAIL", nil
+	}
+	return "", refuseRule("R8", "row %s: expect %q is not one of: exit <code>, stdout matches <regex>, stderr matches <regex>, file exists <path>, tree == <hash>", id, expect)
+}
+
+// cmdSecondCheck is R16's verb: the orchestrator dispatches a second judge to write a command
+// that decides a `decider: judge` row, and records it here. The command runs under R21's fixed
+// environment, the verdict is computed from it with R8's expectation forms, and the computed
+// verdict is recorded in a `second-check` event naming the run it was computed against.
+//
+// `bl second-check` must run BEFORE `bl round`: the round refuses if a second check computed
+// against that run disagrees with the row's recorded row-verdict.
+func cmdSecondCheck(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	order, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it); err != nil {
+		return err
+	}
+	// R20: the frozen artefacts are what they were.
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	row := strings.TrimSpace(a.get("row"))
+	if row == "" {
+		return refuse("--row is required")
+	}
+	command := a.get("cmd")
+	if strings.TrimSpace(command) == "" {
+		return refuse("--cmd is required")
+	}
+	expect := strings.TrimSpace(a.get("expect"))
+	if expect == "" {
+		return refuse("--expect is required")
+	}
+	// The row must be one of the frozen list's rows.
+	frozen, err := frozenRows(root, it)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, r := range frozen {
+		if r.f["id"] == row {
+			found = true
+		}
+	}
+	if !found {
+		return refuseRule("R1", "row %s is not in the frozen check list", row)
+	}
+	// R8: the expectation is one of the five forms.
+	if err := checkExpect(row, expect); err != nil {
+		return err
+	}
+	// The run the check is computed against.
+	runEv, ok := theRun(it)
+	if !ok {
+		return refuseRule("R6", "%s has no run — a second check is computed against a run", it.ID)
+	}
+	env, cleanup, err := execEnv(root)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	rec := execCmd(root, command, env, runTimeout)
+	tree, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	computed, err := expectVerdict(root, row, expect, rec, tree)
+	if err != nil {
+		return err
+	}
+	ev := Event{
+		T: "second-check", ID: it.ID, Row: row, Run: runEv.Run,
+		Computed: computed, Cmd: command, Expect: expect,
+	}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s second check for row %s computed %s against %s\n", it.ID, row, computed, runEv.Run)
+	return nil
 }
 
 func cmdRound(root string, a args) error {
@@ -2085,16 +3134,168 @@ func cmdRound(root string, a args) error {
 	if err := verifyBriefRefs(root, it); err != nil {
 		return err
 	}
+	// The flags. The verdict is derived (R12), so --verdict is optional; the cause is derived
+	// on a dispute round (R13), so --cause is optional there too.
 	verdict := strings.ToUpper(strings.TrimSpace(a.get("verdict")))
-	if verdict != "PASS" && verdict != "FAIL" {
+	if verdict != "" && verdict != "PASS" && verdict != "FAIL" {
 		return refuse("--verdict must be one of %s", strings.Join(verdicts, ", "))
 	}
 	cause := strings.ToLower(strings.TrimSpace(a.get("cause")))
-	if verdict == "FAIL" && cause != "code" && cause != "harness" && cause != "dispute" {
-		return refuse("a FAIL needs --cause %s", strings.Join(causes, "|"))
+	if cause != "" && cause != "code" && cause != "harness" && cause != "dispute" {
+		return refuse("--cause must be one of %s", strings.Join(causes, "|"))
 	}
-	if verdict == "PASS" && cause != "" {
-		return refuse("a PASS carries no cause")
+	finding := strings.TrimSpace(a.get("finding"))
+	// A harness round carries no rows: the verifier did not run, so there is nothing to
+	// record and nothing to hash. It skips R6, R9, R10, R12 and R14 (P2), and stops here.
+	if cause == "harness" {
+		if verdict != "FAIL" {
+			return refuseRule("R23", "a harness round is a failure — it needs --verdict FAIL")
+		}
+		return recordHarnessRound(root, it, a)
+	}
+	// R6: the verdicts file. It must match the frozen list, name the item's latest run, and
+	// name the tree the round verifies.
+	if a.get("rows") == "" {
+		return refuseRule("R6", "a round needs the verdicts file: --rows <file>")
+	}
+	text, err := a.rows()
+	if err != nil {
+		return err
+	}
+	frozen, err := frozenRows(root, it)
+	if err != nil {
+		return err
+	}
+	vf, err := parseVerdicts(text, frozen)
+	if err != nil {
+		return err
+	}
+	runEv, ok := theRun(it)
+	if !ok {
+		return refuseRule("R6", "%s has no run — the verdicts file must name the item's latest run", it.ID)
+	}
+	if vf.run != runEv.Run {
+		return refuseRule("R6", "the verdicts file names run %s, but the item's latest run is %s", vf.run, runEv.Run)
+	}
+	rel, ok := runFileRel(it.ID, runEv.Run)
+	if !ok {
+		return refuseRule("R6", "the run %s names no run file", runEv.Run)
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return refuseRule("R6", "the run file %s is missing", rel)
+	}
+	if shaHex(data) != runEv.RunSHA {
+		return refuseRule("R6", "the run file %s no longer matches the hash recorded in the ledger", rel)
+	}
+	var rf runFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		return refuseRule("R6", "the run file %s is not JSON: %v", rel, err)
+	}
+	// The tree pin: the round verifies the tree itself, from the filesystem, the same way
+	// `bl run` does, and the verdicts file must name it.
+	tree, err := verifiedTreeWriting(root)
+	if err != nil {
+		return err
+	}
+	if !treesMatch(root, vf.tree, tree) {
+		return refuseRule("R6", "the verdicts file names the tree %s, but the current verified tree is %s", vf.tree, tree)
+	}
+	if !treesMatch(root, vf.tree, rf.TreeStart) {
+		return refuseRule("R6", "the verdicts file names the tree %s, but the run %s verified the tree %s", vf.tree, runEv.Run, rf.TreeStart)
+	}
+	if it.Claims == "" {
+		return refuseRule("R6", "%s has no claims event — the claims are frozen before the round", it.ID)
+	}
+	for _, r := range it.Rounds {
+		if r.Run == runEv.Run {
+			return refuseRule("R6", "the run %s has already been consumed by a round", runEv.Run)
+		}
+	}
+	// R28: no ignored file under the item's scope changed.
+	if err := checkR28(root, it); err != nil {
+		return err
+	}
+	// R25: the artefacts are excluded from the tree.
+	if err := checkR25(root); err != nil {
+		return err
+	}
+	// The round's diff: the before-tree against the verified tree.
+	hunks, bare := roundDiff(root, it.BeforeTree, tree)
+	// R9: the anchors.
+	if err := checkAnchors(root, it, vf, frozen, &rf, hunks); err != nil {
+		return err
+	}
+	// R10: the hunk coverage.
+	if err := checkCoverage(vf, frozen, hunks, bare); err != nil {
+		return err
+	}
+	// R16: a second check that disagrees with the row's recorded verdict.
+	if err := checkR16(root, it, vf, runEv.Run); err != nil {
+		return err
+	}
+	// R13: a finding is a dispute, whatever R12 derived.
+	dispute := false
+	if vf.found {
+		if vf.finding == "" {
+			return refuseRule("R13", "the verdicts file carries a `# finding:` line with no finding text")
+		}
+		dispute = true
+	}
+	if finding != "" {
+		dispute = true
+	}
+	if dispute && finding == "" {
+		finding = vf.finding
+	}
+	// R14: a failing advisory row must already be filed.
+	if err := checkR14(vf, frozen, order); err != nil {
+		return err
+	}
+	// R12: the verdict is derived. FAIL if any blocking row's row-verdict is FAIL.
+	derived := "PASS"
+	blockingFailed := false
+	for _, row := range frozen {
+		if row.f["severity"] != "blocking" {
+			continue
+		}
+		if vf.rows[row.f["id"]].verdict == "FAIL" {
+			derived = "FAIL"
+			blockingFailed = true
+			break
+		}
+	}
+	if dispute {
+		// R13 overrides the derived verdict: a dispute is never a PASS.
+		derived = "FAIL"
+	}
+	if verdict != "" && verdict != derived {
+		return refuseRule("R12", "the derived verdict is %s — a submitted --verdict %s is refused", derived, verdict)
+	}
+	// R23: the cause is constrained.
+	switch {
+	case dispute:
+		if cause == "code" || cause == "harness" {
+			return refuseRule("R23", "the cause is derived: a round with a finding is a dispute — a supplied --cause %s is refused", cause)
+		}
+		cause = "dispute"
+	case derived == "FAIL":
+		if cause == "" {
+			return refuseRule("R23", "a FAIL needs --cause %s", strings.Join(causes, "|"))
+		}
+		if cause == "dispute" {
+			return refuseRule("R23", "--cause dispute is accepted only when the round carries a finding")
+		}
+		if cause == "harness" {
+			return refuseRule("R23", "--cause harness is accepted only when the verdicts file is absent or carries no rows")
+		}
+		if !blockingFailed {
+			return refuseRule("R23", "--cause code is accepted only when a blocking row has row-verdict FAIL")
+		}
+	default:
+		if cause != "" {
+			return refuseRule("R23", "a PASS round carries no cause")
+		}
 	}
 	// R18: the item is complete. Its last round is a PASS, so the only legal next step is the
 	// close, and a further round is refused — whatever is left of the budget. The guard comes
@@ -2109,50 +3310,75 @@ func cmdRound(root string, a args) error {
 	if err := budgetRefused(it, cause); err != nil {
 		return err
 	}
-	// R23: a harness round carries no rows — the verifier did not run, so there is nothing to
-	// record and nothing to hash. A rows file with content was already refused at the R23-harness
-	// step, so what reaches here is a harness round with no rows file or with an empty one, and
-	// it is recorded with no rows. A code or a dispute round is a verdict about rows, so it needs
-	// them, and they must not be empty. A PASS round carries no cause and no finding: it may be
-	// written against its evidence, and it may be recorded without any.
-	rows := ""
-	if cause != "harness" {
-		if a.get("rows") != "" || verdict == "FAIL" {
-			var err error
-			rows, err = a.rows()
-			if err != nil {
-				return err
-			}
-			rows = strings.TrimRight(rows, "\r\n")
-			if strings.TrimSpace(rows) == "" {
-				return refuse("--rows is empty: a verdict exists only after commands have run")
-			}
-		}
-	}
+	// The evidence file: one line per frozen check id, in the order the list was frozen, with
+	// the run's observed values.
 	p := newPaths(root)
-	ev := Event{T: "round", ID: it.ID, Verdict: verdict, Cause: cause}
-	// a round that carries no rows — a harness round, or a PASS written without any — has no
-	// evidence file to hash, so none is written.
-	if rows != "" {
-		if err := os.MkdirAll(p.evidence, 0o755); err != nil {
-			return err
-		}
-		name := fmt.Sprintf("%s-r%d.txt", it.ID, len(it.Rounds)+1)
-		if err := atomicWrite(filepath.Join(p.evidence, name), rows+"\n"); err != nil {
-			return err
-		}
-		sum := sha256.Sum256([]byte(rows + "\n"))
-		ev.Rows = backlogDir + "/" + evidenceDir + "/" + name
-		ev.RowsSHA = hex.EncodeToString(sum[:])
+	if err := os.MkdirAll(p.evidence, 0o755); err != nil {
+		return err
+	}
+	name := fmt.Sprintf("%s-r%d.txt", it.ID, len(it.Rounds)+1)
+	body := evidenceText(vf, frozen, &rf)
+	if err := atomicWrite(filepath.Join(p.evidence, name), body); err != nil {
+		return err
+	}
+	ev := Event{
+		T: "round", ID: it.ID, Verdict: derived, Cause: cause,
+		Run: runEv.Run, Tree: tree,
+		Rows:    backlogDir + "/" + evidenceDir + "/" + name,
+		RowsSHA: shaHex([]byte(body)),
+	}
+	if finding != "" {
+		ev.Finding = finding
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
 	}
 	if cause != "" {
-		fmt.Printf("bl: %s r%d %s (%s)\n", it.ID, len(it.Rounds)+1, verdict, cause)
+		fmt.Printf("bl: %s r%d %s (%s)\n", it.ID, len(it.Rounds)+1, derived, cause)
 	} else {
-		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, verdict)
+		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, derived)
 	}
+	return nil
+}
+
+// frozenRows reads the item's frozen check list: the rows the round is written against.
+func frozenRows(root string, it *Item) ([]checkRow, error) {
+	if it.Checks == "" {
+		return nil, refuseRule("R1", "%s has no check list", it.ID)
+	}
+	list, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := parseChecks(string(list))
+	if err != nil {
+		return nil, refuseRule("R1", "the stored check list %s does not parse: %v", it.Checks, err)
+	}
+	return rows, nil
+}
+
+// theRun returns the item's latest run: the event that recorded it.
+func theRun(it *Item) (Event, bool) {
+	if len(it.Runs) == 0 {
+		return Event{}, false
+	}
+	return it.Runs[len(it.Runs)-1], true
+}
+
+// recordHarnessRound records a harness round: the verifier did not run, so the round carries
+// no rows and no evidence file (R23).
+func recordHarnessRound(root string, it *Item, a args) error {
+	if err := completeRefused(it); err != nil {
+		return err
+	}
+	if err := budgetRefused(it, "harness"); err != nil {
+		return err
+	}
+	ev := Event{T: "round", ID: it.ID, Verdict: "FAIL", Cause: "harness"}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s r%d FAIL (harness)\n", it.ID, len(it.Rounds)+1)
 	return nil
 }
 
@@ -2160,6 +3386,10 @@ func cmdRound(root string, a args) error {
 // rows and stops here. A harness round carries no rows because the verifier did not run, so a
 // rows file with content is refused and the round is not recorded at all. A harness round with no
 // rows file, or with an empty one, is accepted and is recorded with no rows.
+//
+// A harness round carries no FINDING either: the verifier did not run, so it found nothing, and
+// a finding is never silently ignored (R13). A `--finding`, or a `# finding:` line in the rows
+// file, is refused under R23 for the same reason the rows are.
 //
 // The rows file is read to see whether it holds rows. A file that cannot be read holds none, so
 // it is the design's "absent" case: the round is accepted and recorded with no rows, as it was
@@ -2173,6 +3403,9 @@ func harnessRowsRefused(a args) error {
 		// read — this clause is about a harness round, and a PASS round is not one.
 		return nil
 	}
+	if strings.TrimSpace(a.get("finding")) != "" {
+		return refuseRule("R23", "a harness round carries no finding — the verifier did not run, so it found nothing")
+	}
 	path := a.get("rows")
 	if path == "" {
 		return nil
@@ -2181,11 +3414,25 @@ func harnessRowsRefused(a args) error {
 	if err != nil || strings.TrimSpace(rows) == "" {
 		return nil
 	}
+	if hasFindingComment(rows) {
+		return refuseRule("R23", "a harness round carries no finding — the verifier did not run, so it found nothing")
+	}
 	what := "the rows file " + path
 	if path == "-" {
 		what = "the rows on stdin"
 	}
 	return refuseRule("R23", "a harness round carries no rows — the verifier did not run, so %s must be empty", what)
+}
+
+// hasFindingComment reports whether a text carries a `# finding:` comment line — the line R13
+// reads.
+func hasFindingComment(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "# finding:") {
+			return true
+		}
+	}
+	return false
 }
 
 // completeRefused is R18: the item is complete. Its last round is a PASS, so the only legal
@@ -2723,19 +3970,21 @@ func schemaJSON() map[string]any {
 		"round_cap":  roundCap,
 		"statuses":   []string{"open", "blocked", "closed", "declined", "parked"},
 		"events": map[string]map[string][]string{
-			"file":       {"required": {"id", "text"}, "optional": {"after", "source"}},
-			"open":       {"required": {"id"}, "optional": {"brief", "brief_sha"}},
-			"brief":      {"required": {"id", "brief", "brief_sha"}, "optional": {}},
-			"checks":     {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
-			"rebaseline": {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
-			"claims":     {"required": {"id", "claims", "claims_sha"}, "optional": {}},
-			"run":        {"required": {"id", "run", "run_sha"}, "optional": {}},
-			"round":      {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha"}},
-			"close":      {"required": {"id", "commit"}, "optional": {}},
-			"drop":       {"required": {"id", "reason"}, "optional": {"by"}},
-			"defer":      {"required": {"id", "reason"}, "optional": {}},
-			"reopen":     {"required": {"id"}, "optional": {"reason"}},
-			"note":       {"required": {"id", "text"}, "optional": {}},
+			"file":          {"required": {"id", "text"}, "optional": {"after", "source"}},
+			"open":          {"required": {"id"}, "optional": {"brief", "brief_sha", "scope", "scope_ignored", "before_tree", "ignored_before"}},
+			"brief":         {"required": {"id", "brief", "brief_sha"}, "optional": {}},
+			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
+			"rebaseline":    {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
+			"claims":        {"required": {"id", "claims", "claims_sha"}, "optional": {}},
+			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
+			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding"}},
+			"second-check":  {"required": {"id", "row", "run", "computed"}, "optional": {"cmd", "expect"}},
+			"misclassified": {"required": {"id", "row", "computed"}, "optional": {"run", "cmd", "expect"}},
+			"close":         {"required": {"id", "commit"}, "optional": {}},
+			"drop":          {"required": {"id", "reason"}, "optional": {"by"}},
+			"defer":         {"required": {"id", "reason"}, "optional": {}},
+			"reopen":        {"required": {"id"}, "optional": {"reason"}},
+			"note":          {"required": {"id", "text"}, "optional": {}},
 		},
 	}
 }
@@ -2746,7 +3995,7 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "close", "drop", "defer", "reopen", "note"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "note"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
 	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
 	// from 12 without counting the lines.
@@ -3198,11 +4447,15 @@ func cmdImport(root string, a args) error {
 type args struct {
 	flags      map[string]string
 	boolFlags  map[string]bool
+	lists      map[string][]string
 	positional []string
 }
 
 func (a args) get(name string) string { return a.flags[name] }
 func (a args) flag(name string) bool  { return a.boolFlags[name] }
+
+// list returns every value a repeatable flag was given, in the order they were given.
+func (a args) list(name string) []string { return a.lists[name] }
 
 func (a args) pos(i int) string {
 	if i < len(a.positional) {
@@ -3249,14 +4502,19 @@ func (a args) input(name string) (string, error) {
 
 var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true}
 
+// repeatableFlagNames are the flags that may be given more than once: the item's scope is a
+// set of paths, and the scope-ignored list is a set of files.
+var repeatableFlagNames = map[string]bool{"scope": true, "scope-ignored": true}
+
 func parseArgs(raw []string) (args, error) {
-	a := args{flags: map[string]string{}, boolFlags: map[string]bool{}}
+	a := args{flags: map[string]string{}, boolFlags: map[string]bool{}, lists: map[string][]string{}}
 	for i := 0; i < len(raw); i++ {
 		tok := raw[i]
 		if strings.HasPrefix(tok, "--") {
 			name := strings.TrimPrefix(tok, "--")
 			if eq := strings.Index(name, "="); eq >= 0 {
 				a.flags[name[:eq]] = name[eq+1:]
+				a.lists[name[:eq]] = append(a.lists[name[:eq]], name[eq+1:])
 				continue
 			}
 			if boolFlagNames[name] {
@@ -3267,6 +4525,7 @@ func parseArgs(raw []string) (args, error) {
 				return a, refuse("--%s needs a value", name)
 			}
 			a.flags[name] = raw[i+1]
+			a.lists[name] = append(a.lists[name], raw[i+1])
 			i++
 			continue
 		}
@@ -3276,36 +4535,38 @@ func parseArgs(raw []string) (args, error) {
 }
 
 var handlers = map[string]func(string, args) error{
-	"init":       cmdInit,
-	"file":       cmdFile,
-	"open":       cmdOpen,
-	"brief":      cmdBrief,
-	"checks":     cmdChecks,
-	"rebaseline": cmdRebaseline,
-	"claims":     cmdClaims,
-	"run":        cmdRun,
-	"round":      cmdRound,
-	"close":      cmdClose,
-	"drop":       cmdDrop,
-	"defer":      cmdDefer,
-	"reopen":     cmdReopen,
-	"note":       cmdNote,
-	"next":       cmdNext,
-	"show":       cmdShow,
-	"status":     cmdStatus,
-	"render":     cmdRender,
-	"check":      cmdCheck,
-	"schema":     cmdSchema,
-	"audit":      cmdAudit,
-	"import":     cmdImport,
-	"lint":       cmdLint,
+	"init":         cmdInit,
+	"file":         cmdFile,
+	"open":         cmdOpen,
+	"brief":        cmdBrief,
+	"checks":       cmdChecks,
+	"rebaseline":   cmdRebaseline,
+	"claims":       cmdClaims,
+	"run":          cmdRun,
+	"round":        cmdRound,
+	"second-check": cmdSecondCheck,
+	"close":        cmdClose,
+	"drop":         cmdDrop,
+	"defer":        cmdDefer,
+	"reopen":       cmdReopen,
+	"note":         cmdNote,
+	"next":         cmdNext,
+	"show":         cmdShow,
+	"status":       cmdStatus,
+	"render":       cmdRender,
+	"check":        cmdCheck,
+	"schema":       cmdSchema,
+	"audit":        cmdAudit,
+	"import":       cmdImport,
+	"lint":         cmdLint,
 }
 
 const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
-  init | file | open | brief | checks | rebaseline | claims | run | round | close | drop | defer
-  reopen | note | next | show | status | check | render | schema | audit | import | lint
+  init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
+  drop | defer | reopen | note | next | show | status | check | render | schema | audit
+  import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`

@@ -97,6 +97,8 @@ def repo() -> Path:
     subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "a"], cwd=root, check=True)
     (root / "BRIEF.md").write_text("brief\n", encoding="utf-8")
+    # the artefacts are never part of a verified tree, and .gitignore is what keeps them out
+    (root / ".gitignore").write_text(".backlog/\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
     return root
@@ -116,6 +118,79 @@ def head(root: Path) -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True
     ).stdout.strip()
+
+
+# ── the round path ────────────────────────────────────────────────────────────
+
+ROUND_LIST = (
+    "id\tdecider\tseverity\tbrief_ref\tcmd\texpect\tfail_if\twhy_not_mech\tcriterion\n"
+    "S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n"
+    "J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
+)
+
+
+def tree_of(root: Path) -> str:
+    """The verified tree, computed the way `bl` computes it: the working tree, less .git/,
+    less the paths .gitignore excludes. A separate index keeps the repository's own index
+    untouched."""
+    tmp = tempfile.mkdtemp(prefix="bl-idx-")
+    env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "idx"))
+    subprocess.run(["git", "add", "-A", "."], cwd=root, env=env, check=True, capture_output=True)
+    out = subprocess.run(
+        ["git", "write-tree"], cwd=root, env=env, capture_output=True, text=True, check=True
+    )
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out.stdout.strip()
+
+
+def latest_run(root: Path) -> str:
+    events = [
+        json.loads(line)
+        for line in (root / ".backlog" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    return [e["run"] for e in events if e["t"] == "run"][-1]
+
+
+def verdicts(root: Path, *rows: str) -> Path:
+    """A verdicts file (§2) for the item's latest run: the header, the run and the tree it
+    names, and one line per frozen check id. It is written outside the repository: a file
+    inside it would move the tree the round verifies."""
+    path = Path(tempfile.mkdtemp(prefix="bl-verdicts-")) / "verdicts.tsv"
+    path.write_text(
+        "id\trow_verdict\tanchor\n"
+        f"run {latest_run(root)}\n"
+        f"tree {tree_of(root)}\n"
+        + "".join(row + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    return path
+
+
+def ready(root: Path) -> Path:
+    """An item that is ready to be rounded: the list is frozen, the claims are recorded and the
+    run has happened. It returns the verdicts file for that run — a round consumes a run and a
+    verdicts file together."""
+    events = [
+        json.loads(line)
+        for line in (root / ".backlog" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    kinds = {e["t"] for e in events}
+    if "file" not in kinds:
+        ok(root, "file", "--id", "A1", "--text", "first")
+    if "open" not in kinds:
+        ok(root, "open", "A1")
+    # the list and the claims are written outside the repository: a file inside it would be
+    # part of the diff the round checks, and no blocking row would cover it
+    outside = Path(tempfile.mkdtemp(prefix="bl-item-"))
+    listing = outside / "checks.tsv"
+    listing.write_text(ROUND_LIST, encoding="utf-8")
+    ok(root, "checks", "A1", "--file", str(listing))
+    claims = outside / "claims.md"
+    claims.write_text("claims\n", encoding="utf-8")
+    ok(root, "claims", "A1", "--file", str(claims))
+    ok(root, "run", "A1")
+    return verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")
 
 
 # ── init ─────────────────────────────────────────────────────────────────────
@@ -200,9 +275,8 @@ def open_refuses_second_item():
 @test
 def open_refuses_closed_item():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok | PASS\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--rows", str(rows))
     ok(root, "close", "A1", "--commit", head(root))
     refused(root, "open", "A1", match="not open")
 
@@ -220,25 +294,33 @@ def round_refuses_without_pin():
 @test
 def round_refuses_fail_without_cause():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    refused(root, "round", "A1", "--verdict", "FAIL", "--rows", "-", stdin="x\n", match="needs --cause")
+    ready(root)
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    refused(root, "round", "A1", "--verdict", "FAIL", "--rows", str(rows), match="needs --cause")
 
 
 @test
 def round_refuses_pass_with_cause():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    refused(root, "round", "A1", "--verdict", "PASS", "--cause", "code", "--rows", "-", stdin="x\n")
+    rows = ready(root)
+    refused(root, "round", "A1", "--verdict", "PASS", "--cause", "code", "--rows", str(rows))
 
 
 @test
 def round_refuses_empty_rows():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    refused(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="   \n", match="after commands have run")
+    ready(root)
+    # a PASS round needs the design's verdicts file: an empty one is refused
+    empty = Path(tempfile.mkdtemp(prefix="bl-empty-")) / "verdicts.tsv"
+    empty.write_text("", encoding="utf-8")
+    refused(root, "round", "A1", "--verdict", "PASS", "--rows", str(empty), match="verdicts file is empty")
+    # and so is a round with no verdicts file at all
+    refused(root, "round", "A1", "--verdict", "PASS", match="needs the verdicts file")
+    # and a free-text table is not a verdicts file: the header names the three columns of §2
+    table = Path(tempfile.mkdtemp(prefix="bl-table-")) / "rows.txt"
+    table.write_text("S1\tPASS\n", encoding="utf-8")
+    refused(root, "round", "A1", "--rows", str(table), match="unknown column")
 
 
 @test
@@ -252,22 +334,28 @@ def round_refuses_unknown_verdict():
 @test
 def cap_counts_code_only():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
+    ready(root)
     for _ in range(3):
-        ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="check | FAIL\n")
-    refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="x\n", match="cap 3")
+        ok(root, "run", "A1")
+        rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+        ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows), match="cap 3")
     ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "harness")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="all green\n")
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
 
 
 @test
 def round_refuses_after_pass():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
-    refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="x\n", match="already passed")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows), match="already passed")
 
 
 # ── run ──────────────────────────────────────────────────────────────────────
@@ -301,18 +389,18 @@ def run_writes_the_run_file_and_records_the_event():
 @test
 def close_refuses_without_pass():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="x\n")
+    ready(root)
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
     refused(root, "close", "A1", "--commit", head(root), match="no PASS")
 
 
 @test
 def close_refuses_dirty_tree():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     (root / "BRIEF.md").write_text("changed\n", encoding="utf-8")
     refused(root, "close", "A1", "--commit", head(root), match="dirty")
 
@@ -320,18 +408,16 @@ def close_refuses_dirty_tree():
 @test
 def close_refuses_unknown_commit():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     refused(root, "close", "A1", "--commit", "deadbeef", match="does not exist")
 
 
 @test
 def close_ignores_its_own_artifacts():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "close", "A1", "--commit", head(root))
     assert "- [x] A1" in (root / "TODO.md").read_text()
 
@@ -342,9 +428,8 @@ def close_ignores_its_own_artifacts():
 @test
 def close_resolves_a_symbolic_commit():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "close", "A1", "--commit", "HEAD")
     event = json.loads((root / ".backlog" / "ledger.jsonl").read_text().splitlines()[-1])
     assert len(event["commit"]) == 40, f"a moving ref must be resolved to a sha, got {event['commit']!r}"
@@ -391,7 +476,8 @@ def next_skips_blocked_items():
     assert ok(root, "next").stdout.startswith("A1")
     ok(root, "open", "A1")
     assert ok(root, "next").stdout.startswith("A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok\n")
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "close", "A1", "--commit", head(root))
     assert ok(root, "next").stdout.startswith("A2")
 
@@ -425,10 +511,9 @@ def hand_edited_view_is_caught():
 @test
 def tampered_evidence_is_caught():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="ok | PASS\n")
-    ev = next((root / ".backlog" / "evidence").iterdir())
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
+    ev = next((root / ".backlog" / "evidence").glob("*-r*.txt"))
     with ev.open("a", encoding="utf-8") as fh:
         fh.write("tampered\n")
     r = run(root, "check")
@@ -455,10 +540,13 @@ def run_log_records_every_call():
 @test
 def audit_writes_report_and_json():
     root = fresh()
-    ok(root, "file", "--id", "A1", "--text", "first")
-    ok(root, "open", "A1")
-    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="check | FAIL\n")
-    ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="check | PASS\n")
+    ready(root)
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
+    ok(root, "run", "A1")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "audit", "--since", "2d")
     files = sorted(p.name for p in (root / "audit").iterdir())
     assert any(f.endswith(".md") for f in files) and any(f.endswith(".json") for f in files)
@@ -497,8 +585,9 @@ def show_and_schema_emit_valid_json():
     assert schema["round_cap"] == 3, schema
     assert schema["causes"] == ["code", "harness", "dispute"], schema
     assert sorted(schema["events"]) == [
-        "brief", "checks", "claims", "close", "defer", "drop",
-        "file", "note", "open", "rebaseline", "reopen", "round", "run",
+        "brief", "checks", "claims", "close", "defer", "drop", "file",
+        "misclassified", "note", "open", "rebaseline", "reopen", "round", "run",
+        "second-check",
     ], schema
 
 
@@ -547,7 +636,7 @@ def the_documented_verbs_are_the_real_verbs():
         assert taught, f"SKILL.md never teaches bl {verb}"
     # only command-looking text counts: inline code spans and fenced blocks
     spans = re.findall(r"```[^`]*```|`[^`\n]+`", skill)
-    used = {v for span in spans for v in re.findall(r"\bbl ([a-z]+)", span)}
+    used = {v for span in spans for v in re.findall(r"\bbl ([a-z][a-z-]*)", span)}
     invented = used - declared
     assert not invented, f"SKILL.md uses verbs the binary does not have: {sorted(invented)}"
 

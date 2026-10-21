@@ -18,7 +18,7 @@ The producer optimises for finishing. That instinct is what the verifier exists 
 1. **One item in verification at a time.** `bl open <id>` locks it; a second `open` is refused. A FAIL then always belongs to a known item. A second producer may run in parallel on disjoint files; its item still waits its turn.
 2. **A verifier is spawned fresh for the item, and never sees the producer's session or an earlier round's.** Its own two dispatches — the checks it writes, then the claims it falsifies — are the same verifier continued. If you cannot spawn a subagent, stop and tell the human: self-verification is not a verdict and must not be recorded as one.
 3. **The producer does not declare the item passed.** It reports what it changed and what it could not do.
-4. **Every claim carries its command.** A number without the command that produced it is a guess. `bl round --rows` will not accept an empty table.
+4. **Every claim carries its command.** A number without the command that produced it is a guess. `bl round --rows` will not accept a verdicts file that does not match the frozen list, the run and the tree.
 5. **A test must bind, when the item touches a test.** Mutate the code in a throwaway copy and watch the new test fail. On an item that adds no test, the verifier marks the row N/A with its reason.
 6. **Findings are filed, never fixed in place.** A verifier that finds something outside the current item's blast radius reports it; you file it as a new item with `bl file … --source verifier:<id>/r<N>`. Fixing it inside the item conflates two verdicts.
 7. **Irreversible work stops for a human.** State rewrites, migrations, deploys and deletions run the `irreversible-op` playbook.
@@ -44,7 +44,8 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl rebaseline A1 --file checks.tsv --reason "…"` | yes | replaces the frozen list with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
 | `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with the exit code and the full output of each row, and records the file's hash |
-| `bl round A1 --verdict FAIL --cause code --rows -` | yes | records one round; rows come from stdin or a file |
+| `bl round A1 --rows verdicts.tsv` | yes | records one round: the verdict is derived from the blocking rows, the cause is constrained, and the evidence file holds one line per frozen check id |
+| `bl second-check A1 --row J1 --cmd "…" --expect "stdout matches ^two"` | yes | runs a second judge's command under the same fixed environment and records the verdict it computes; a second check that disagrees with the row's verdict refuses the round |
 | `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round, a clean tree, a real commit |
 | `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |
 | `bl defer A1 --reason "…"` | yes | parked: visible, skipped by `next` |
