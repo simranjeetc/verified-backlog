@@ -389,6 +389,13 @@ file under the item's scope paths (§2). A round is refused if any of those hash
 in the item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that
 the scope did not declare is therefore refused, not silently dropped from the record.
 
+**R29 — the anchor covers a sequence number, not just a hash.** An `anchor` event records the ledger `seq` it covers
+and the checkpoint hash at that `seq`. `bl check` refuses when the ledger's `seq` is lower than the last anchored
+`seq`: a chain that verifies is not enough, because an attacker who can rewrite the file can also truncate its tail
+and leave a shorter chain that still verifies. The version counter is what makes truncation visible. (This is the
+lesson TUF/Uptane learned with its version and expiry metadata, and the reason certificate-transparency logs publish
+a signed tree head rather than just a tree.)
+
 **R25 — artefacts are excluded from the tree test.** `.backlog/` is excluded from the clean-tree test in R18, and
 never appears in a verified tree, because `.gitignore` keeps it untracked. If `.backlog/` is tracked in the
 repository, `bl` refuses the round rather than comparing trees that include it.
@@ -698,6 +705,12 @@ invisible**". Everything below satisfies that on any operating system, and they 
 | **B. The remote is the witness** — the ledger is committed with the work; the agent holds **fetch-only** credentials for the remote, and the push credential never touches the machine the agent runs on | one credential split; the human pushes, or a CI job pushes | the remote's history is the anchor; local rewrites are visible by comparing to the remote. Free, and already how most repos work | nothing if the agent can push; a rewrite that is pushed looks like normal history |
 | **C. Append-only public log** — the head is submitted to an immutable transparency log (a Sigstore/Rekor-style log, or any append-only service) | an account and a network call | the first anchor is immutable forever, so every later rewrite is provably a second, conflicting history. The agent *can* submit a forged head — but it cannot erase the first one, so the forgery becomes visible | only helps once something is anchored; costs a network dependency and an account |
 | **D. Hardware signing key** — the head is signed by a FIDO2/hardware token the agent can call but whose private key never leaves the device (human presses to allow) | the device; a human press per anchor | a forged head cannot be produced by the agent at all — the strongest of the four | a hardware dependency; still manual |
+
+**All four are the same generic pattern** — content-address the payload, chain the events, checkpoint the chain, sign
+the checkpoint, anchor the checkpoint outside the write surface — which is the pattern certificate-transparency logs
+(RFC 6962), Sigstore/Rekor, in-toto/SLSA, TUF/Uptane, git's signed refs, AWS CloudTrail's digest files and immudb all
+use, with the payload swapped out. What the pattern needs that a plain chain does not is a **sequence number** in the
+anchor (R29), so a truncated tail cannot pass as current.
 
 **Default to ship with:** A, because it is the cheapest and it works everywhere, and it needs no credential the agent
 could reach. B is free if the repository already has a remote and the human is willing to own the push credential.
