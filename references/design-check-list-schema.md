@@ -1,9 +1,10 @@
 # Design — the check list schema, and who decides a row
 
 **Status:** proposal, and **not yet verified**. Nothing here is implemented; `bl` does not yet have `checks`, `claims`,
-`run`, or a derived verdict. Six verification rounds are recorded in §8; the last one still found blocking defects,
-which are fixed in this revision but have not been through a seventh round. Treat it as a reviewed draft, not a
-finished design.
+`run`, or a derived verdict. Seven verification rounds are recorded in §8; the last one still found blocking defects,
+which are fixed in this revision but have not been through an eighth round. Two findings from round 7 are
+**structural, not textual** — the ledger is a file the agent can rewrite, and files outside the pinned tree can hold
+the fix — and both need a human decision (§7). Treat this as a reviewed draft, not a finished design.
 **Date:** 2026-10-21
 **Inputs:** `references/opinions/2026-10-21-claude-opus-cost-cutting.md` (cost), `…-claude-opus-5-5-judgment-seam.md`
 (the judgment seam), `…-claude-opus-5-5-check-classification.md` (classification). Vocabulary: `references/GLOSSARY.md`.
@@ -149,10 +150,14 @@ id	row_verdict	anchor
 **Evidence format** (what `bl round` writes). One line per frozen check id, in the order the check list was frozen:
 
 ```
-id	cmd	exit	timed_out	observed	row_verdict
-S1	go test ./scripts/cmd/bl	0	false	stdout sha 3f2a…, stderr sha 9b1c…	PASS
-J3	cat scripts/cmd/bl/missing.conf	1	false	stdout sha 0d44…, stderr sha 71b0…; anchor "No such file or directory"	FAIL
+id	cmd	exit	signalled	timed_out	observed	excerpt	row_verdict
+S1	go test ./scripts/cmd/bl	0	false	false	stdout sha 3f2a…, stderr sha 9b1c…	ok	pkg	bl	0.004s	PASS
+J3	cat scripts/cmd/bl/missing.conf	1	false	false	stdout sha 0d44…, stderr sha 71b0…; anchor "No such file or directory"	cat: scripts/cmd/bl/missing.conf: No such file or directory	FAIL
 ```
+
+`signalled` is true when the process was killed by a signal, and then `exit` is `128+signal`; a command that exits
+137 on its own is recorded as `exit 137, signalled false`, so the two are distinguishable. The `excerpt` column
+carries the first 4096 bytes of each stream, for a human; the `observed` column carries the hashes the run computed.
 
 **Execution environment (R21).** Every `cmd` is run as `/bin/sh -c <cmd>` with:
 - working directory = the repository root;
@@ -162,7 +167,7 @@ J3	cat scripts/cmd/bl/missing.conf	1	false	stdout sha 0d44…, stderr sha 71b0�
   under `HOME` cannot write into the tree;
 - stdin = `/dev/null`;
 - rows executed **sequentially**, in the order of the frozen list;
-- a 120-second timeout, after which the process group is killed; the row is recorded with `timed_out = true` and
+- a 120-second timeout, after which the process **group** is killed; the row is recorded with `timed_out = true` and
   `exit = -1`, which is distinct from any command's own exit code;
 - stdout and stderr captured separately, each truncated to 4096 bytes for the excerpt, each hashed in full (sha256 of
   the raw bytes) for the record;
@@ -171,9 +176,20 @@ J3	cat scripts/cmd/bl/missing.conf	1	false	stdout sha 0d44…, stderr sha 71b0�
 Two runs of the same command against the same tree produce the same hashes whenever the command's output is
 deterministic; a command whose output varies produces varying hashes, and the run file records the values it saw.
 
+**Ignored files under the scope.** A file that `.gitignore` excludes is not in the verified tree, so a change to it
+is invisible to the diff. The before-state therefore records, for every ignored file that exists under the item's
+scope paths, its path and its hash; the same list is recorded with the run. R28 refuses a round in which one of those
+hashes changed, unless the file was named in the item's scope as an ignored file the item may write
+(`bl open A1 --scope-ignored <path>`). This is the difference between "the fix is invisible to the diff" and "the fix
+is invisible to the record": the first is allowed only for a file the item declared, and the second is not allowed at
+all.
+
 **Artefacts (R25).** `.backlog/` is an artefact directory: it is expected to be untracked, and it is excluded from the
 clean-tree test in R18. It is never part of a verified tree, because `git add -A` skips ignored files and `.backlog/`
 is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repository error and `bl` says so.
+
+**Init.** `bl init` creates `.backlog/`, the empty ledger, and the two views, and reports — but does not change — the
+fact that `.backlog/` is not in `.gitignore`. It is the only command that creates the directory.
 
 **Human sign-off (R22).** `bl signoff A1 --by <name> --note <text>` records a `signoff` event naming the item, a
 non-empty person and a non-empty note. It is accepted only for an item that has no round yet, so it cannot override a
@@ -197,8 +213,8 @@ exists in the item's brief. A `brief_ref` naming a clause that does not exist is
 `severity: advisory` may carry an empty `brief_ref`.
 
 **R3 — a judge row justifies itself.** A `decider: judge` row must carry a non-empty `fail_if` (the frozen fail
-condition) and a non-empty `why_not_mech`. `why_not_mech` shorter than 12 characters, or one of the placeholders
-`TBD`, `TODO`, `n/a`, `none`, `because`, `because it is judgment`, is a refusal. Whether the reason is *good* is not
+condition) and a non-empty `why_not_mech`. `why_not_mech` shorter than 12 characters, or equal — after trimming and lower-casing — to one of the placeholders
+`tbd`, `todo`, `n/a`, `none`, `because`, `because it is judgment`, is a refusal. Whether the reason is *good* is not
 mechanically decidable and is not claimed to be: the author's duty is to write a row that is genuinely undecidable by a
 command, and the mechanical backstops are R16 (a second judge asked to write a deciding command) and the calibration
 run. A `why_not_mech` that names a command result ("the tests failing is a command result") is a defect the author
@@ -216,9 +232,8 @@ already has a `claims` event (R5).
 **R5 — the list is frozen before the claims.** `bl claims A1 --file <path>` reads the producer's report from that
 path. A claim exists only if a `claims` event is in the ledger for that item; a hand-written `claims.md` is not a claim,
 and `bl claims` overwrites whatever is at that path.
-`bl claims` is refused if the item has no check list, and refused if the check list was recorded *after* the claims.
-`bl claims` is refused if the item already has a `claims` event — the claims are frozen once, like the list. `bl
-checks` is refused if the item already has a `claims` event. This is the ordering rule the whole design rests on, and
+`bl claims` is refused if the item has no check list. `bl claims` is refused if the item already has a `claims`
+event — the claims are frozen once, like the list. `bl checks` is refused if the item already has a `claims` event. This is the ordering rule the whole design rests on, and
 it is the one thing not to trade away.
 
 **R6 — the verdicts file must match the frozen list, the run, and the tree.** `bl round` accepts a verdicts file only
@@ -232,8 +247,8 @@ Comment lines are skipped. A `decider: bl` row's line must have an empty `anchor
 **R7 — the run executes every row, and the round records that run.** `bl run A1` executes the `cmd` of every row in the
 frozen list, under the environment in §2, whatever the decider, and writes the run file with the exit code, the
 timeout flag, the full output and the output hashes of each row. A `decider: bl` row's row-verdict is computed by the
-binary from `expect` and the run's observed values. A `decider: judge` row's row-verdict is the judge's, read from the run file and
-written into the verdicts file. The evidence file of the round copies the run's observed values, so the claim that a command ran is never
+binary from `expect` and the run's observed values. A `decider: judge` row's row-verdict is the judge's; the judge read the run file and wrote that verdict into the
+verdicts file. The evidence file of the round copies the run's observed values, so the claim that a command ran is never
 something a model typed into a cell, and the judge and the record read the same bytes. `bl round` never executes a
 command: it consumes a run.
 
@@ -242,8 +257,8 @@ command: it consumes a run.
 refusal at `bl checks` time. The regex dialect is Go's `regexp` (RE2), applied with search semantics (not a full
 match) to the **full** captured output, not the 4096-byte excerpt. `<code>` is an integer between 0 and 255 — `-1` is reserved for the timeout and is not a valid expectation, so a
 timeout can never be written up as a pass; `<path>` is relative to the
-repository root, may not be absolute, may not contain `..`, and `file exists` is true when `stat` succeeds for it, be
-it a file or a directory; `<hash>` is a 40-character lowercase hex tree value — the before-tree is the only tree a
+repository root, may not be absolute, may not contain `..`, and `file exists` is true when `stat` succeeds for it at the moment the
+row runs, be it a file or a directory; `<hash>` is a 40-character lowercase hex tree value — the before-tree is the only tree a
 row can know when the list is written, and `tree ==` against the verified tree can only be written in a
 `second-check`.
 
@@ -251,7 +266,8 @@ row can know when the list is written, and `tree ==` against the verified tree c
 only that form is checked. A judge row about the change and a judge row about a command's output are told apart by the
 form of the anchor, not by a rule: the author picks the form, and the form must be valid for what the row reads.
 - **output anchor** — the quoted text must appear as a substring of the row's captured stdout or stderr (the full
-  output, not the excerpt).
+  output, not the excerpt). If the command produced no output at all, the anchor cannot match and the row's verdict is
+  `FAIL`; a row is not refused for an empty output, so an item cannot deadlock on a row whose command says nothing.
 - **source anchor** — `file` must be inside the item's scope, the line must exist in the verified tree, the quoted
   text must appear as a substring of that line, and the line must lie inside the new-side range of a diff hunk of the
   round's diff.
@@ -314,8 +330,10 @@ not consume a code round (R19).
 `row_verdict` field must be exactly `PASS` or `FAIL` (R6); a self-reported confidence number cannot be expressed
 there, and an `anchor` field that is not one of the two anchor forms is refused by R9.
 
-**R18 — the close is pinned to the verified tree.** `bl close A1 --commit <sha>` requires: the last round is `PASS`;
-the commit's tree (`<sha>^{tree}`, as a 40-character hex value) equals the verified tree pinned by that round; the
+**R18 — the close is pinned to the verified tree, and to the brief the round was written against.** `bl close A1
+--commit <sha>` requires: the last round is `PASS`; the brief hash recorded in that round equals the current brief
+hash, so a brief amended after the round invalidates the round and the item needs a new one; the commit's tree
+(`<sha>^{tree}`, as a 40-character hex value) equals the verified tree pinned by that round; the
 working tree is clean apart from artefacts (§2) — clean means no tracked file differs from `<sha>^{tree}` and no
 untracked file exists outside `.backlog/`; and the item satisfies R15. Trees are compared as full 40-character hex
 strings, never by prefix. The close event records the commit and the pinned tree.
@@ -324,15 +342,18 @@ strings, never by prefix. The close event records the commit and the pinned tree
 human. A code round is a round whose cause is `code`; a `PASS` round carries no cause and is not a code round. The
 causes are `code`, `harness` and `dispute`; a round with cause `harness` or `dispute` does not consume a code round. A
 `misclassified` event (R16) is not a round and consumes nothing. Three harness rounds and three dispute rounds per item; a fourth of either is refused and the item escalates to a
-human, so a finding cannot be used to excuse a failing item indefinitely. The number of harness and dispute rounds is
+human, so a finding cannot be used to excuse a failing item indefinitely. An item may have at most six rounds in total,
+of any cause; a seventh round of any kind is refused and the item escalates, so three code rounds plus three disputes
+cannot become six failing rounds. The number of harness and dispute rounds is
 recorded and shown by `bl status`.
 
 **R20 — hashes, and the frozen artefacts are re-verified at every command.** The brief, the check list, the claims, the
 run file and the evidence file are each hashed (sha256) and the hash is stored in the ledger event that references the
 file. `bl check` re-hashes every one of them and fails if any file no longer matches its recorded hash.
 
-More important: `bl run`, `bl round` and `bl close` each start by re-hashing the item's brief, check list and claims
-and refuse if any of them differs from the hash of the latest event that recorded it. A frozen artefact that was edited
+More important: `bl run`, `bl round`, `bl claims` and `bl close` each start by re-hashing the item's brief, check list
+and claims — and, for `bl close`, the evidence file of the last round — and refuse if any of them differs from the hash
+of the latest event that recorded it. A frozen artefact that was edited
 after the freeze is therefore refused at the point of use, not merely detected later by `bl check`. A run file that
 has no `run` event, or whose hash differs from that event's, is refused by R6.
 
@@ -362,6 +383,11 @@ new event with its new hash; the earlier event keeps its hash. `bl check` compar
 amendment removes a clause that a frozen row cites in its `brief_ref`, `bl round` refuses that round: the row's
 criterion no longer exists in the brief it was written against.
 
+**R28 — an ignored file under the scope may not change.** The before-state records the path and hash of every ignored
+file under the item's scope paths (§2). A round is refused if any of those hashes changed, unless the file was named
+in the item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that
+the scope did not declare is therefore refused, not silently dropped from the record.
+
 **R25 — artefacts are excluded from the tree test.** `.backlog/` is excluded from the clean-tree test in R18, and
 never appears in a verified tree, because `.gitignore` keeps it untracked. If `.backlog/` is tracked in the
 repository, `bl` refuses the round rather than comparing trees that include it.
@@ -372,37 +398,47 @@ that no longer exists. The comparison is on the tree, so a command that only tou
 a command that writes into the scratch directory outside the repository does not trip it either. The current verified
 tree must also equal the run's tree when `bl round` runs (R6).
 
-**R27 — a row may not write to the ledger.** `bl run` hashes `.backlog/` before the run and again after it. If the hash
-differs, the run is refused: a row's command wrote to the ledger, the evidence, or the item files, and the run's own
-record would have been written by the thing it is recording.
+**R27 — a row may not write to the ledger.** `bl run` hashes the whole of `.backlog/` before the run and again after it.
+If the hash differs, the run is refused: a row's command wrote to the ledger, the evidence, or the item files, and the
+run's own record would have been written by the thing it is recording. Because the whole directory is hashed, two
+items in flight at once cannot both run: the second run's pre-hash differs from the first's post-hash and is refused.
+The skill's one-item-in-flight rule is what keeps that from being a problem.
 
 ---
 
 ## 4. Precedence
 
-Where two rules can both match, the winner is named here, not left to the implementation. P1, P5, P6 and P7 are per
+Where two rules can both match, the winner is named here, not left to the implementation. P1, P2, P3 and P4 are per
 command: the checks below are the order in which a command evaluates its rules, and a rule that refuses stops the
-command there. P2, P3, P4, P8, P9 and P10 are general rules that apply to every command.
+command there. P6, P7, P8, P9 and P10 are general rules that apply to every command.
 
 **P1 — `bl checks` order.** R1 (schema) → R5 (ordering) → R4 (single list, amend scope) → R2 (brief clause) → R3
 (judge justification) → R8 (expectation form).
 
-**P5 — `bl round` order.** R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
-list, names the latest run, and names the run's tree, which is the current tree) → R25 (artefacts are excluded) → R9
+The five per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4) and `bl close` (P5).
+
+**P2 — `bl round` order.** R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
+list, names the latest run, and names the run's tree, which is the current tree) → R28 (no ignored file under the scope
+changed) → R25 (artefacts are excluded) → R9
 (anchors) → R10 (hunk coverage) → R16 (misclassification) → R13 (dispute) → R14 (advisory filed) → R12 (derived verdict)
 → R23-cause (code or dispute) → R19 (cap).
 
-**P6 — `bl run` order.** R26 (the tree did not move) → R27 (the ledger did not move) → R1 (the list still parses) →
-R7 (every row ran). A run is refused on the first of these that fails, and no run file is written.
+**P3 — `bl run` order.** R20 (the frozen artefacts are what they were) → R26 (the tree did not move) → R27 (the ledger
+did not move) → R1 (the list still parses) → R7 (every row ran). A run is refused on the first of these that fails,
+and no run file is written.
 
-**P7 — `bl close` order.** R18 (a PASS round, the pinned tree, a clean tree) → R15 (a blocking `decider: bl` row, or a
+**P4 — `bl claims` order.** R20 (the frozen artefacts are what they were) → R5 (the list exists, and the claims are
+not already recorded).
+
+**P5 — `bl close` order.** R20 (the frozen artefacts are what they were) → R18 (a PASS round, the pinned tree, a clean
+tree) → R15 (a blocking `decider: bl` row, or a
 sign-off) → R25 (artefacts are excluded).
 
-**P3 — the frozen list wins.** If a stored check list and a submitted list disagree about an `id`, the stored one wins
-for that id, and the disagreement is a refusal (R4), not a merge. P3 governs submissions that are not amendments; an
+**P6 — the frozen list wins.** If a stored check list and a submitted list disagree about an `id`, the stored one wins
+for that id, and the disagreement is a refusal (R4), not a merge. P6 governs submissions that are not amendments; an
 amendment is governed by R4 alone.
 
-**P4 — stricter wins.** Where an amendment would make a row easier to pass, it is refused (R4): `judge → bl` is
+**P7 — stricter wins.** Where an amendment would make a row easier to pass, it is refused (R4): `judge → bl` is
 allowed, `bl → judge` is not.
 
 **P8 — derived beats supplied.** Where a derived value and a supplied value disagree, the derived value is the record
@@ -479,7 +515,7 @@ State: the item has a `claims` event. `bl checks` is then called with the valid 
 Frozen ids: `S1`, `J3`. The verdicts file contains `S1` only.
 
 **Must hold:** refused on R6 — `J3` is missing.
-**Must not hold:** no round event is written; the cap is not touched (a refusal never reaches the ledger, P7).
+**Must not hold:** no round event is written; the cap is not touched (a refusal never reaches the ledger, P10).
 
 ### E7 — the verdict is derived, and a disagreeing verdict is refused
 
@@ -528,7 +564,7 @@ Frozen: `J3` is `judge`, `advisory`, `brief_ref` empty, with `fail_if` and `why_
 - An amendment that fills the empty `brief_ref` with `B2` **is accepted**, and is recorded as an amendment event with
   both hashes (R4, R24).
 - An amendment that reclassifies the `bl` row `S1` to `decider: judge` is **refused on R1** — P1 runs R1 before R4, and
-  a judge row may not carry `expect`, which `S1` has. P4's "stricter wins" reaches the same outcome from the other
+  a judge row may not carry `expect`, which `S1` has. P7's "stricter wins" reaches the same outcome from the other
   direction: the change is looser, and looser is refused.
 - An amendment that reclassifies `J3` to `decider: bl`, setting `expect: exit 0` and clearing `fail_if` and
   `why_not_mech`, **is accepted**.
@@ -588,13 +624,15 @@ Computed with the rules above.
 |---|---|---|
 | checks `bl` validates before storing a list | 6 | R1, R2, R3, R4, R5, R8 |
 | refusals `bl checks` can raise | 6 | R1, R2, R3, R4, R5, R8 |
-| refusals `bl round` can raise | 8 | R6, R9, R10, R12, R14, R16, R23, R25 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal is counted separately because it is the cap rather than a check |
+| refusals `bl round` can raise | 10 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
 | refusals `bl run` can raise | 4 | R1, R20, R26, R27 |
+| refusals `bl close` can raise | 4 | R15, R18, R20, R25 |
 | frozen artefacts re-verified before a command | 3 | the brief, the check list and the claims, each against its latest recorded hash — R20 |
 | code rounds a failing item may have | 3 | R19 |
 | harness rounds an item may have | 3 | R19 |
 | dispute rounds an item may have | 3 | R19, R13 |
-| blocking rows an item needs to close | at least 1, of which at least 1 must be `decider: bl` — or 0 with a human sign-off **and** an empty diff | R15, R10, R22 |
+| rounds an item may have in total, of any cause | 6 | R19 |
+| blocking rows an item needs to close | at least 1, of which at least 1 must be `decider: bl` — or 0 with a human sign-off, and only then if the diff has no hunks and no ignored file under the scope changed (R10, R28) | R15, R10, R22, R28 |
 | the minimum number of blocking rows for an item with a diff | at least one per hunk, and at least one `decider: bl` row; a single row may cover several hunks if it names their file | R10, R15 |
 
 **Sensitivities, not headlines.** The figures below describe the loop as it exists today and are *not* a property of
@@ -614,7 +652,7 @@ the same counting rule instead of reusing a row.
 
 A third party can implement `bl checks`, `bl claims` and `bl round` from this document alone, and:
 
-1. for every rule that can refuse (R1–R6, R8–R12, R14–R20, R22–R27), at least one input exists where it refuses and
+1. for every rule that can refuse (R1–R6, R8–R12, R14–R20, R22–R28), at least one input exists where it refuses and
    one where it does not; R7, R13 and R21 never refuse, and the document says so;
 2. the sixteen worked examples E1–E16 hold exactly as stated, and each "must not hold" is also checked;
 3. no two rules can produce different outcomes for the same input — the precedence section decides any pair;
@@ -634,10 +672,15 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | the frequency of the calibration run | policy | R16 names the hook; the rate is a choice, not a derivation |
 | behaviour that depends on things outside the repository | limit | a parent `go.work`, a global git config, a developer's shell environment or an ignored file can change what a command does, and the record pins the tree, not the environment. This is a limit of the claim, not a defect in the rules |
 | who keeps `.backlog/` ignored | process | R25 refuses a round when `.backlog/` is tracked; the repository's `.gitignore` is what keeps it ignored, and `bl init` can only report it |
-| two items in flight at once | process | R27 hashes this item's files only; two rounds running at once would still both append to the ledger, and the ledger is append-only |
-| the cost of `bl round` itself | implementation | the rows are executed sequentially; parallelism is an implementation choice that changes wall time, not the recorded values |
+| two items in flight at once | process | R27 hashes the whole of `.backlog/`, so a second concurrent run is refused; the skill's one-item-in-flight rule is what keeps this from mattering |
+| **the ledger is a file the agent can rewrite** | **architecture** | every hash in this design is stored in `.backlog/ledger.jsonl`, which lives in the repository the agent may write. A hash chain detects an edit to an event; it does not stop the agent writing a new chain, or a forged `run` or `round` event, in place of the old one. The guarantee this design can honestly claim is "a third party can detect that the record changed", not "the agent cannot rewrite history". Closing that needs a witness the agent cannot reach: an external anchor (a remote commit, a notary), a signing key in the OS keychain, or a ledger owned by a second uid. **This is a decision for a human, not a rule.** |
+| a change made and reverted inside the run | limit | R26 compares the tree before and after the run, so it catches a net change; a change made and reverted while the rows run is invisible. Catching it needs a per-row tree, at the cost of hashing the tree after every command |
+| a command that detaches a background process | limit | the run kills the process group on timeout, but a process that detaches itself and acts after the run is outside what the tree checks can see |
+| the cost of `bl run` itself | implementation | the rows are executed sequentially; parallelism is an implementation choice that changes wall time, not the recorded values |
 | a brief clause amended between rounds | policy | R24 refuses a round whose row cites a clause the amendment removed; whether a reworded clause still means the same thing is a judgement |
 | which of two filed items mentioning the same advisory row id a reader should trust | policy | R14 says the most recently filed wins |
+| whether the scope constrains what the producer writes | limit | the scope is a file list in the brief and in the producer's prompt. No rule in this document makes the binary refuse a write outside it; the enforcement is review-based (the before-state diff, and the clean-tree gate at close). R28 and R10 make the *record* complete, not the *scope* enforced |
+| a change to a file outside the repository that the build depends on | limit | a parent `go.work`, a global git config or an ignored file can change what a command does, and the record pins the tree, not the environment. R28 covers ignored files under the scope; nothing covers the rest |
 | how the escalation of a dispute is requested | interface | there is no `bl escalate` verb; a dispute is recorded, and the orchestrator is expected to escalate in the open. A verb would be better |
 | a row whose output depends on the time of day | implementation | the run records what it saw; the row is a record of that run, not a reproducible value |
 | the interface by which a verdict-time downgrade is requested | interface | R11 refuses the downgrade; the requester has no command to call, and files an item instead — that is deliberate, but it is a gap in the interface |
@@ -655,10 +698,17 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | 4 | Claude Opus 5.5, re-implementing, plus a check of round 3's claimed fixes | FAIL | the same class as round 3 — the tree. R21 set `HOME` to the repository root, so `go test` wrote its build cache into the repo, the after-run tree differed, and **no round that runs `go test` could ever be recorded**. Also: the judge read an earlier run while the round re-ran the command; a `# finding:` line had no defined cause; R25 was still missing from the precedence; §6 numbers wrong; the open-cases table listed decided cases | the premise was re-derived, not patched: **the run is the unit of verification**. `bl run` executes every row and writes a run file; the judge reads that file and writes verdicts naming the run and its tree; `bl round` consumes both and never executes a command. Also: `HOME`/`TMPDIR` point at a scratch directory outside the repository and `PATH` is inherited and recorded; R26/R27 moved to the run; a dispute derives its cause; harness and dispute rounds are each capped at three; R24 refuses a round citing a removed clause |
 | 5 | Claude Opus 5.5, re-implementing, plus a hard test of the round-4 premise | FAIL | the re-derived premise was still leaky: the run file stored excerpts and hashes, but R8's regexes and R9's output anchors need the **full** output, and the judge read only the excerpt — so "the judge and the record read the same bytes" was false. Also a parent `go.work` changes what the commands do without changing the tree; stale §6 rows; R25 missing from the precedence; a `--finding` with `--cause harness` not refused; the open-cases table still listed decided cases | the run file stores the **full** stdout and stderr (base64 with a flag for non-UTF-8 output) and the excerpt exists only in the evidence; the run file schema is written down; R6 requires a claims event and refuses a run already consumed by a round; R8 defines `file exists` and `tree ==`; R9 defines quote escaping; R23 refuses a finding on a harness round; the precedence list is renumbered; §6 re-derived; the open-cases table gains the honest limits |
 | 6 | Claude Opus 5.5, re-implementing, plus a hard test of the premise | FAIL | the strongest: **the frozen check list was never re-verified against its hash at the point of use.** A one-line `sed` on `checks.tsv` after the freeze changed what the run executed, and neither `bl run` nor `bl round` nor `bl close` compared the file with the frozen hash — only `bl check` did, and only later. This defeated R4, R5 and R20 at once. Runners-up: the verified tree was still index-derived, so a `skip-worktree` path hid an edit; a forged run file with no `run` event was accepted; `expect exit -1` turned a timeout into a PASS; the ids `run` and `tree` collided with the verdicts file's metadata lines; the precedence list had two P4s; the §6 counts were stale | R20 now requires the brief, the check list and the claims to be re-hashed and matched at the start of `bl run`, `bl round` and `bl close`; R6 refuses a run file with no `run` event or a mismatched hash; the verified tree is computed from the filesystem with `git hash-object` and `git mktree`, never from the index, so `skip-worktree` and `assume-unchanged` cannot hide a change; `expect exit` is limited to 0–255 so a timeout cannot be written up as a pass; the ids `run` and `tree` are reserved; the precedence list is renumbered P1–P10; §6 re-derived |
-| 7 | *not run* | | | |
+| 7 | Claude Opus 5.5, via `claude -p`, re-implementing from the text alone, plus a hard test of both premises | FAIL | **the strongest: the fix can live outside the pinned tree.** A `.gitignore` holding `*.gen.go`, and the item's fix written to `scripts/cmd/bl/config.gen.go`: the file is ignored, so it is not in the verified tree, the diff is empty, R10 passes trivially, and `bl close` succeeds on a commit that contains no fix at all — a closed item that does not do what it was asked. Runner-up: **the ledger is a file the agent can rewrite** — a forged `run` or `round` event appended to `.backlog/ledger.jsonl` is indistinguishable from a real one, so every hash in this design rests on a trust root the agent holds. Also: R20 was missing from the harness path and from the close path, so a `sed` on the frozen list still slipped through a harness round; the precedence list had a gap (P2) and stale cross-references; the §6 counts were wrong; a judge row whose command produced no output could deadlock the item; a brief amended after a PASS round passed the close; a failing item could stretch to six failing rounds (3 code + 3 dispute); R18's untracked was undefined for ignored files | fixed: **R28** — the before-state records the path and hash of every ignored file under the scope, and a round is refused if one of them changed unless the item declared it with `--scope-ignored`; R20 now runs first in the harness, claims, run, round and close paths; the precedence list is renumbered P1–P10 with no gap and the cross-references repaired; a judge row whose command produced no output is a FAIL, not a refusal, so an item cannot deadlock; R18 requires the brief hash pinned by the PASS round to equal the current brief, so a brief amended after the round invalidates it; R19 adds a total budget of six rounds per item; §6 re-derived. **Not fixed, deliberately:** the ledger trust root and the files outside the tree are architecture, not rules. They are now in §7 as the two decisions that need a human | | 8 | *not run* | | | |
 
-**Where this stands.** Six rounds, six FAILs, and every round found something real. The first three were wording and
-missing definitions; rounds 4 and 5 exposed a wrong premise, which was re-derived rather than patched; round 6 found
-that the frozen artefacts were not re-verified where they are used. The round-6 defects are fixed in this revision but
-**have not been through a seventh round**, so the document is a reviewed draft, not a verified design. The remaining
-open cases in §7 are the honest limits of the design, not gaps to be closed by wording.
+**Where this stands.** Seven rounds, seven FAILs, and every round found something real. The first three were
+wording and missing definitions; rounds 4 and 5 exposed a wrong premise, which was re-derived rather than patched;
+round 6 found that the frozen artefacts were not re-verified where they are used; round 7 found that the fix can live
+outside the pinned tree, and that the ledger itself is the trust root. The round-7 defects are fixed in this revision
+but **have not been through an eighth round**, so the document is a reviewed draft, not a verified design.
+
+**Two findings in round 7 are not rules, and they are the ones worth a decision.** The ledger lives in the repository
+the agent can write, so the guarantee this design can honestly make is "a third party can detect that the record
+changed", not "the agent cannot rewrite history". And anything outside the tree — a parent `go.work`, a global git
+config, an ignored file — can change what the commands do while the record stays clean; R28 closes the ignored-file
+case under the scope, and nothing closes the rest. Both are in §7 with the options. Both need a human, not another
+round of wording.
