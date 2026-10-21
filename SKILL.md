@@ -23,6 +23,7 @@ The producer optimises for finishing. That instinct is what the verifier exists 
 6. **Findings are filed, never fixed in place.** A verifier that finds something outside the current item's blast radius reports it; you file it as a new item with `bl file … --source verifier:<id>/r<N>`. Fixing it inside the item conflates two verdicts.
 7. **Irreversible work stops for a human.** State rewrites, migrations, deploys and deletions run the `irreversible-op` playbook.
 8. **Commit locally; push only when the backlog says it may push.** Record that authorisation in `BRIEF.md` when the work starts. A protected branch, no remote, and no git at all are normal conditions: `bl close` refuses without a commit, so say so and use `bl drop`/`bl defer` with a reason instead of faking one.
+9. **Compact on every 250k crossing, and only between steps.** Whenever a session's token consumption crosses a multiple of 250k, you trigger the compaction — every crossing, not only the first, so a long session is compacted repeatedly instead of never. The compaction waits until the logical step that crossed the threshold is complete: finish the step you are in (the edit you are making, the round you are recording, the command you are running) and only then compact. Never compact in the middle of a step.
 
 ## The binary
 
