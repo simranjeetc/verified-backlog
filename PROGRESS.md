@@ -21,9 +21,12 @@ Verdict: PASS — closed at a571e713bb510018cec6f5a5a5c782d0d5bd2d56
 
 ## I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)
 
-Status: open
+Verdict: PASS — closed at 9e8f95a942dff47bd8a238456ab3327d64c1113e
 
+- r1 PASS — .backlog/evidence/I2-r1.txt (1673524cab31)
+- code failures: 0 / cap 3
 - note: I13 comes first: the check-list format's two dialects and the mechanical refusal of an over-escaped cmd must be in place before the largest check list is written. Two harness rounds were spent on I8's premise fixing exactly this.
+- note: two advisories, both filed: R25's 'if .backlog/ is tracked, bl says so' is not implemented (I16), and cmdRun does not require the item in flight, so a run can happen outside the item's turn (I17). A third: the Go suite never runs inside a git repository, so the tree-from-the-filesystem property is bound by the frozen row V10 and the mutation, not by the Go tests. The design's P3 was amended to the order that is implementable.
 
 ## I5 — the total-round budget: R19 - six rounds of any cause for an item, refused beyond that, counted across re-baselines so a re-baseline cannot reset the only cap
 
