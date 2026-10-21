@@ -2,13 +2,12 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (14)
+## Queue (13)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I18 — R7 says the binary computes a decider: bl row's row-verdict, and the implementation does not: the round takes the judge's word for a bl row, so the derivation in R12 rests on the judge's word and a judge who writes PASS for a failing command gets a PASS round; the binary must compute a bl row's row-verdict from the run's observed values against that row's expect  _(producer:I3/r1)_
 - [ ] I20 — the check-list format did not say that a row covering a change must name the file it covers: R10's coverage is a literal comparison, so a list written to drive a binary left every hunk uncovered and no round could be recorded at all. The design now says the path belongs in the command - verify that the design says it, and make the loop's own check lists carry the path  _(supervisor:I3/r1)_
 - [ ] I21 — a row's command can satisfy its expectation from a statement other than its own assertion - the row added to item I3 passed while the defect it was written for was still in the code. The design now says one assertion per row - verify that it says it, and that the loop's own rows do it  _(supervisor:I3/r1)_
-- [ ] I22 — the nested-git test's directory case creates empty directories, so it passes even with the fix reverted and binds nothing; it must build a nested repository with content - a git init inside it and a commit - so the case fails when the tree computation stops skipping a nested .git directory  _(verifier:I3/r2)_
 - [ ] I23 — a defective row cannot be corrected once the claims are recorded: item I3's row D1 is satisfied by an earlier statement in its own command and does not bind the refusal it was written for, and R5 refuses the re-baseline that would fix it. The design must say how a defective row is corrected after the claims - a second judge, a re-recorded claim, or a rule that the freeze binds the list's content and not its corrections  _(verifier:I3/r2)_
 - [ ] I26 — bl audit writes audit/<date>.md and audit/<date>.json into the repository and .gitignore does not ignore them, so the files land in the next item's diff and R10 demands a row covering them; the audit output is an artefact of the ledger like the rendered views, and must be written under .backlog/ or excluded from the verified tree  _(supervisor:I25/r1)_
 - [ ] I27 — R34's check counts the backslashes before every pipe in a cmd, including a pipe inside a single-quoted pattern, where the shell never reads it as a pipe at all: the command grep -Eq 'a\|b' file is a working command and is refused under R34; the check must skip the quoted parts of the command  _(verifier:I19/r1)_
@@ -31,7 +30,7 @@ _none_
 
 - [x] I14 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(the item was opened with an empty scope, so R28 watched every ignored file in the repository, including the gate binary scripts/bl, and the producer's rebuild of that binary inside the repository made the round unrecordable. The item is re-filed as I25 with a scope naming the files under test; the code, the list and the verification are the same.; verifier:I11/r2)_
 
-## Closed (17)
+## Closed (18)
 
 - [x] I1 — bl checks + bl claims: the check-list row schema and the ordering rule (design R1-R8, R20, R24). Scope: scripts/cmd/bl/main.go, scripts/cmd/bl/main_test.go  _(commit a571e71)_
 - [x] I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)  _(commit 9e8f95a)_
@@ -49,5 +48,6 @@ _none_
 - [x] I16 — R25 says bl says so when .backlog/ is tracked by git, and the implementation does not: bl run excludes .backlog/ from the tree unconditionally and never says anything about it being tracked  _(commit e1e9f50; verifier:I2/r1)_
 - [x] I17 — bl run does not require the item to be in flight (cmdRun omits requireInFlight), so a run can happen outside the item's turn and the one-item-at-a-time discipline is not enforced on that path; decide whether bl run must hold the lock like bl round does, and enforce it  _(commit 19b71cb; verifier:I2/r1)_
 - [x] I19 — the verified tree includes the loop's own rendered views (TODO.md and PROGRESS.md), which change with every ledger event, so R6's tree pin refuses any round after the ledger moved - and the ledger moves in the item's own flow, because R14 files the advisory items between the run and the round. Decide whether the rendered views are artefacts and are excluded from the tree, or the pin compares something narrower than the whole tree, and make the design and the code say the same thing  _(commit a1914fa; producer:I3/r1)_
+- [x] I22 — the nested-git test's directory case creates empty directories, so it passes even with the fix reverted and binds nothing; it must build a nested repository with content - a git init inside it and a commit - so the case fails when the tree computation stops skipping a nested .git directory  _(commit 05cddd4; verifier:I3/r2)_
 - [x] I25 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(commit ad60961; supervisor:I14/scope)_
 
