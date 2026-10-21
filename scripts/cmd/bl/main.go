@@ -1121,9 +1121,9 @@ func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string,
 		return "", err
 	}
 	// R34: the command's dialect. A cmd is a script run by /bin/sh -c, so a pipe in it is a
-	// pipe; a backslash before a pipe is read by the shell as a literal pipe, and the row then
-	// does not do what it says. The list is refused here, before it is frozen, so the mistake
-	// cannot reach a round.
+	// pipe; a pipe with an odd number of backslashes before it is read by the shell as a
+	// literal pipe, and the row then does not do what it says. The list is refused here, before
+	// it is frozen, so the mistake cannot reach a round.
 	if err := validateR34(rows); err != nil {
 		return "", err
 	}
@@ -1208,20 +1208,45 @@ func validateR1(rows []checkRow) error {
 }
 
 // validateR34 applies R34 — a command is a shell script, and a pattern is not a shell — to
-// every row. A cmd is run by /bin/sh -c, so a pipe in it is a pipe; a backslash before a pipe
-// is read by the shell as a literal pipe, so the row does not do what it says and the list is
-// refused before it can reach a round.
+// every row. A cmd is run by /bin/sh -c, so a pipe in it is a pipe; a pipe is ESCAPED when an
+// odd number of backslashes precedes it, because the shell then reads it as a literal pipe, so
+// the row does not do what it says and the list is refused before it can reach a round.
+//
+// The check counts the backslashes rather than looking for the pair: an even number of
+// backslashes before a pipe is an escaped backslash followed by a real pipe, and that row is
+// fine.
 //
 // Only the cmd field is checked. An expect pattern is Go's RE2, where a backslash before a
 // pipe means a literal pipe — and there that is what the pattern says, not a fault.
 func validateR34(rows []checkRow) error {
 	for _, r := range rows {
-		if strings.Contains(r.f["cmd"], `\|`) {
-			return refuseRule("R34", "row %s: the command holds a backslash before a pipe — the shell reads that as a literal pipe; write the pipe as a pipe",
-				r.f["id"])
+		if n, ok := escapedPipe(r.f["cmd"]); ok {
+			return refuseRule("R34", "row %s: the command holds an odd number of backslashes (%d) before a pipe — the shell reads that as a literal pipe; write the pipe as a pipe",
+				r.f["id"], n)
 		}
 	}
 	return nil
+}
+
+// escapedPipe reports the number of backslashes immediately before the first pipe the shell
+// would read as a literal pipe, and whether there is one at all. A pipe is ESCAPED when an ODD
+// number of backslashes precedes it: the shell reads `\|` as a literal pipe. An EVEN number is
+// an escaped backslash followed by a real pipe, and a pipe with no backslash before it is a real
+// pipe too — so only the odd count is a fault.
+func escapedPipe(cmd string) (int, bool) {
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] != '|' {
+			continue
+		}
+		n := 0
+		for j := i - 1; j >= 0 && cmd[j] == '\\'; j-- {
+			n++
+		}
+		if n%2 == 1 {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 // validateR2 applies R2 — a blocking row cites the brief — to every row.

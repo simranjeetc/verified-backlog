@@ -2685,6 +2685,67 @@ func TestR34NamesTheFirstBrokenRowOnly(t *testing.T) {
 	}
 }
 
+// The count of the backslashes decides, not the pair. A pipe is ESCAPED when an ODD number of
+// backslashes precedes it: the shell reads it as a literal pipe, so the row does not do what it
+// says. An EVEN number is an escaped backslash followed by a real pipe, which the shell runs as
+// a pipe, and that row is fine.
+func TestChecksR34CountsTheBackslashesBeforeAPipe(t *testing.T) {
+	cases := []struct {
+		name    string
+		row     string
+		refused bool
+	}{
+		{"no backslash", "PIPE0\tbl\tblocking\tB1\techo a | cat\texit 0\t\t\tc\n", false},
+		{"one backslash", "PIPE1\tbl\tblocking\tB1\techo a \\| cat\texit 0\t\t\tc\n", true},
+		{"two backslashes", "PIPE2\tbl\tblocking\tB1\techo a \\\\| cat\texit 0\t\t\tc\n", false},
+		{"three backslashes", "PIPE3\tbl\tblocking\tB1\techo a \\\\\\| cat\texit 0\t\t\tc\n", true},
+		{"four backslashes", "PIPE4\tbl\tblocking\tB1\techo a \\\\\\\\| cat\texit 0\t\t\tc\n", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := openItem(t)
+			list := checksHeader + c.row
+			if !c.refused {
+				// the row is fine: the list is frozen
+				checksOK(t, dir, list)
+				return
+			}
+			r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+			if r.rule != "R34" {
+				t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
+			}
+			id := strings.SplitN(c.row, "\t", 2)[0]
+			if !strings.Contains(r.msg, id) {
+				t.Errorf("the refusal must name the offending row %s: %s", id, r.msg)
+			}
+			// nothing is written
+			events, _ := readLedger(dir)
+			if last := events[len(events)-1]; last.T != "open" {
+				t.Fatalf("a refusal wrote %+v", last)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv")); err == nil {
+				t.Fatal("a refused list must not be stored")
+			}
+		})
+	}
+}
+
+// `bl rebaseline` freezes a list too, so it counts the backslashes the same way: an even number
+// of backslashes before a pipe is a real pipe, and the re-baseline is accepted.
+func TestRebaselineR34AcceptsAnEvenNumberOfBackslashesBeforeAPipe(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	list := checksHeader + "PIPE2\tbl\tblocking\tB1\techo a \\\\| cat\texit 0\t\t\tc\n"
+	if err := call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "the premise moved"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+	if string(data) != list {
+		t.Fatalf("the re-baseline stored %q, want %q", data, list)
+	}
+}
+
 // ── the run ──────────────────────────────────────────────────────────────────
 
 // oneRowList is a well-formed list with one row: the smallest thing a run can be over.
