@@ -97,7 +97,9 @@ execution per round.
 **Run file schema.** `.backlog/evidence/<id>-run<N>.json` holds, for the run: the run id (`run<N>`), the verified tree
 at the start and at the end of the run, and for each row: the `id`, the `cmd`, the exit code, the timeout flag, the
 **full** stdout and stderr as text (UTF-8; output that is not valid UTF-8 is stored base64 with a `binary: true` flag),
-and the sha256 of each stream. The full output is stored, not an excerpt: R8's regexes and R9's output anchors are
+and the sha256 of each stream. A `decider: bl` row carries its `verdict` beside them — `PASS` or `FAIL` — and the
+binary computes it from the row's `expect` and the observed values recorded next to it (R7); a `decider: judge` row
+carries none, because its row-verdict is the judge's. The full output is stored, not an excerpt: R8's regexes and R9's output anchors are
 evaluated against it, and the judge reads it. The excerpt (4096 bytes per stream) exists only in the evidence file, for
 a human to read.
 
@@ -137,6 +139,8 @@ id	row_verdict	anchor
   only, and both lines are required. The run id must be the item's latest run, and the tree must be the tree that run
   verified (R6).
 - `row_verdict` is exactly `PASS` or `FAIL`.
+- The `row_verdict` of a `decider: bl` row is not what decides the round: that row's row-verdict is the one the
+  binary computed from the run (R7), and the judge writes what it read for the record.
 - `anchor` is empty for `decider: bl` rows and must be empty for them (R6).
 - For `decider: judge` rows the anchor is a **source anchor** `file:line "quoted text"` or an **output anchor**
   `"quoted text"`. The form is determined syntactically: an anchor whose text before the first `"` contains a `:`
@@ -166,6 +170,8 @@ J3	cat scripts/cmd/bl/missing.conf	1	false	false	stdout sha 0d44…, stderr sha 
 `signalled` is true when the process was killed by a signal, and then `exit` is `128+signal`; a command that exits
 137 on its own is recorded as `exit 137, signalled false`, so the two are distinguishable. The `excerpt` column
 carries the first 4096 bytes of each stream, for a human; the `observed` column carries the hashes the run computed.
+The `row_verdict` column holds the row's row-verdict: the binary's computed verdict for a `decider: bl` row (R7) and
+the judge's for a `decider: judge` row.
 
 **Execution environment (R21).** Every `cmd` is run as `/bin/sh -c <cmd>` with:
 - working directory = the repository root;
@@ -265,15 +271,19 @@ Comment lines are skipped. A `decider: bl` row's line must have an empty `anchor
 
 **R7 — the run executes every row, and the round records that run.** `bl run A1` executes the `cmd` of every row in the
 frozen list, under the environment in §2, whatever the decider, and writes the run file with the exit code, the
-timeout flag, the full output and the output hashes of each row. A `decider: bl` row's row-verdict is computed by the
-binary from `expect` and the run's observed values. A `decider: judge` row's row-verdict is the judge's; the judge read the run file and wrote that verdict into the
-verdicts file. The evidence file of the round copies the run's observed values, so the claim that a command ran is never
+timeout flag, the full output and the output hashes of each row, and the row-verdict of every `decider: bl` row. A
+`decider: bl` row's row-verdict is computed by the binary from `expect` and the run's observed values, and is recorded
+with them. A `decider: judge` row's row-verdict is the judge's; the judge read the run file and wrote that verdict into the
+verdicts file. The run's exit code follows the rows' verdicts: it is 0 when every `decider: bl` row's computed
+row-verdict is `PASS`, and 1 otherwise, so a row whose command refused is not reported as a failure when its expectation
+holds. The evidence file of the round copies the run's observed values, so the claim that a command ran is never
 something a model typed into a cell, and the judge and the record read the same bytes. `bl round` never executes a
 command: it consumes a run.
 
 **R8 — a binary-decided expectation is one of five forms.** `expect` is exactly one of: `exit <code>`,
 `stdout matches <regex>`, `stderr matches <regex>`, `file exists <path>`, `tree == <hash>`. Any other form is a
-refusal at `bl checks` time. The regex dialect is Go's `regexp` (RE2), applied with search semantics (not a full
+refusal at `bl checks` time, and again at `bl run` time when a frozen row carries one, because the run computes that
+row's verdict from it. The regex dialect is Go's `regexp` (RE2), applied with search semantics (not a full
 match) to the **full** captured output, not the 4096-byte excerpt. `<code>` is an integer between 0 and 255 — `-1` is reserved for the timeout and is not a valid expectation, so a
 timeout can never be written up as a pass; `<path>` is relative to the
 repository root, may not be absolute, may not contain `..`, and `file exists` is true when `stat` succeeds for it at the moment the
@@ -516,12 +526,16 @@ The six per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), 
 
 **P2 — `bl round` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
 list, names the latest run, and names the run's tree, which is the current tree) → R28 (no ignored file under the scope
-changed) → R25 (artefacts are excluded) → R9
+changed) → R25 (artefacts are excluded) → R7 (the round consumes the run, and the row-verdicts of the `decider: bl` rows
+are the ones the binary computed from the run's observed values) → R9
 (anchors) → R10 (hunk coverage) → R16 (misclassification) → R13 (dispute) → R14 (advisory filed) → R12 (derived verdict)
-→ R23-cause (code or dispute) → R19 (cap).
+→ R23-cause (code or dispute) → R19 (cap). R7 sits with the rules that read the run — R9's anchors and R16's second check —
+because the row-verdicts it yields are read out of the run file, and R14 and R12 consume them: the derived verdict is the
+AND of the binary's computed row-verdicts for the `decider: bl` rows and of the judge's row-verdicts for the
+`decider: judge` rows, so it does not rest on the judge's word for a binary row.
 
 **P3 — `bl run` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R1 (the list still parses) → R7 (every row
-ran) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
+ran and its row-verdict was computed) → R8 (the expectation's form, which is refused inside R7) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
 on the first of these that fails, and no run file is written. R26 and R27 are comparisons ACROSS the run — the tree and
 the ledger are hashed before it and again after it — so they can only be made once the rows have run. The list
 therefore has to parse, and the rows have to run, before they are checked. This order was written before anything ran;
@@ -728,7 +742,7 @@ Computed with the rules above.
 | checks `bl` validates before storing a list | 6 | R1, R2, R3, R4, R5, R8 |
 | refusals `bl checks` can raise | 6 | R1, R2, R3, R4, R5, R8 |
 | refusals `bl round` can raise | 11 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
-| refusals `bl run` can raise | 5 | R1, R20, R26, R27, R35 |
+| refusals `bl run` can raise | 6 | R1, R8, R20, R26, R27, R35 |
 | refusals `bl close` can raise | 4 | R15, R18, R20, R25 |
 | frozen artefacts re-verified before a command | 3 | the brief, the check list and the claims, each against its latest recorded hash — R20 |
 | code rounds a failing item may have | 3 | R19 |

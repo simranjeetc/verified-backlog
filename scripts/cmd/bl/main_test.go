@@ -1379,7 +1379,7 @@ func wantBudgetRefusal(t *testing.T, err error) Refusal {
 // R19: three code rounds per item, and a fourth is refused under R19. The refusal names the
 // cap, says the item escalates to a human, and writes nothing at all.
 func TestR19TheThirdCodeRoundIsAcceptedAndTheFourthIsRefused(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	for i := 0; i < roundCap; i++ {
 		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
@@ -1439,7 +1439,7 @@ func TestR19TheFourthDisputeRoundIsRefused(t *testing.T) {
 // R19: six rounds in total, of any cause. The seventh is refused under R19 although no cause
 // has spent three rounds.
 func TestR19TheSeventhRoundIsRefused(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	rounds := []struct{ cause string }{
 		{"code"}, {"code"}, {"harness"}, {"harness"}, {"dispute"}, {"dispute"},
 	}
@@ -1463,7 +1463,9 @@ func TestR19TheSeventhRoundIsRefused(t *testing.T) {
 // The refusal is the state guard's (R18): the item's last round is a PASS, so the only
 // legal next step is the close.
 func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir, marker := switchItem(t)
+	// The binary row fails while the marker is there, so the code rounds are FAIL rounds.
+	markFailing(t, marker)
 	for i := 0; i < 2; i++ {
 		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
@@ -1479,7 +1481,9 @@ func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
-	// the sixth round is a PASS and it is accepted
+	// the sixth round is a PASS and it is accepted: the marker is gone, so the binary row
+	// passes and the derived verdict is PASS
+	markPassing(t, marker)
 	rows = runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
@@ -1549,7 +1553,7 @@ func TestR19TheBudgetSurvivesTwoRebaselines(t *testing.T) {
 // re-baseline is refused — and either way the counts are not reset: the fourth code round is
 // refused under R19.
 func TestR19TheCountsSurviveARebaselineRefusedUnderR5(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	for i := 0; i < roundCap; i++ {
 		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
@@ -1566,7 +1570,7 @@ func TestR19TheCountsSurviveARebaselineRefusedUnderR5(t *testing.T) {
 
 // R19: a refused round exits 2, writes no event, and leaves the item's state untouched.
 func TestR19ARefusedRoundWritesNothing(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	for i := 0; i < roundCap; i++ {
 		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
@@ -1621,7 +1625,8 @@ func TestStatusShowsTheHarnessAndDisputeCounts(t *testing.T) {
 // R19: `bl status` counts the PASS rounds too — the total is every round of every cause, and a
 // PASS is a round, so it is visible in the budget.
 func TestStatusCountsThePassRounds(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir, marker := switchItem(t)
+	markFailing(t, marker)
 	for i := 0; i < 3; i++ {
 		rows := runAndVerdicts(t, dir, roundFail...)
 		if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
@@ -1635,6 +1640,8 @@ func TestStatusCountsThePassRounds(t *testing.T) {
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "dispute", "--finding", "a new finding", "--rows", rows); err != nil {
 		t.Fatalf("dispute round: %v", err)
 	}
+	// the last round is a PASS: the marker is gone, so the binary row passes
+	markPassing(t, marker)
 	rows = runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
@@ -1683,7 +1690,8 @@ func TestHarnessRoundIsRecordedWithoutRows(t *testing.T) {
 // whose budget is spent is refused with the already-passed refusal, not with the budget's —
 // and the refusal writes nothing.
 func TestR18TheStateGuardOutranksTheBudget(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir, marker := switchItem(t)
+	markFailing(t, marker)
 	for i, cause := range []string{"code", "harness", "dispute", "code", "dispute"} {
 		argv := []string{"A1", "--verdict", "FAIL", "--cause", cause}
 		if cause != "harness" {
@@ -1696,11 +1704,14 @@ func TestR18TheStateGuardOutranksTheBudget(t *testing.T) {
 			t.Fatalf("round %d (%s): %v", i+1, cause, err)
 		}
 	}
-	// the sixth round is a PASS
+	// the sixth round is a PASS: the marker is gone, so the binary row passes
+	markPassing(t, marker)
 	rows := runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	// and the round after it is a FAIL round again: the marker is back
+	markFailing(t, marker)
 	rows = runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows))
@@ -1723,15 +1734,20 @@ func TestR18TheStateGuardOutranksTheBudget(t *testing.T) {
 // the close, whatever is left of the budget (R19). The refusal names R18, says the item
 // already passed, and writes nothing.
 func TestR18ARoundAfterAPassIsRefused(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir, marker := switchItem(t)
+	markFailing(t, marker)
 	rows := runAndVerdicts(t, dir, roundFail...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 		t.Fatalf("code round: %v", err)
 	}
+	// the marker is gone, so the binary row passes and the round is a PASS
+	markPassing(t, marker)
 	rows = runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	// and the marker is back, so the round after it would be a FAIL round
+	markFailing(t, marker)
 	rows = runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	files := evidenceFiles(t, dir)
@@ -1755,11 +1771,14 @@ func TestR18ARoundAfterAPassIsRefused(t *testing.T) {
 // R18: the refusal is written for a human to read — it names R18, says the item already
 // passed, and the call exits 2.
 func TestR18TheRefusalNamesTheRuleAndExitsTwo(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir, marker := switchItem(t)
 	rows := runAndVerdicts(t, dir, roundPass...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
 		t.Fatalf("pass round: %v", err)
 	}
+	// the marker is back, so the round after the PASS is a FAIL round — and it is the state
+	// guard that refuses it, not the verdict
+	markFailing(t, marker)
 	rows = runAndVerdicts(t, dir, roundFail...)
 	var code int
 	out := captureStderr(t, func() {
@@ -2008,10 +2027,12 @@ func TestChecksAWellFormedListIsStillAccepted(t *testing.T) {
 
 // ── R24: the removed-clause refusal at use ───────────────────────────────────
 
-// r24List freezes two blocking rows: S1 cites B1, S2 cites B2.
+// r24List freezes two blocking rows: S1 cites B1, S2 cites B2. Their commands pass their
+// expectations, so the binary computes PASS for both (R7) and a round over the list is a PASS
+// round.
 const r24List = checksHeader +
-	"S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n" +
-	"S2\tbl\tblocking\tB2\tgo test ./...\texit 0\t\t\tother tests pass\n"
+	"S1\tbl\tblocking\tB1\ttrue\texit 0\t\t\ttests pass\n" +
+	"S2\tbl\tblocking\tB2\ttrue\texit 0\t\t\tother tests pass\n"
 
 // r24BriefWithoutB2 is the brief after an amendment that removed B2.
 const r24BriefWithoutB2 = "B1: add a verb\n"
@@ -2717,7 +2738,7 @@ func TestR23AHarnessRoundWithAFileThatCannotBeOpenedIsRefused(t *testing.T) {
 // R23: a code round is a verdict about rows, so a rows file with content is still accepted, and
 // the round is recorded with the rows and their hash.
 func TestR23ACodeRoundWithRowsIsStillAccepted(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	rows := runAndVerdicts(t, dir, roundFail...)
 	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 		t.Fatalf("code round: %v", err)
@@ -2953,13 +2974,61 @@ func readRunFile(t *testing.T, dir, name string) (runFile, []byte) {
 // ── the round path ───────────────────────────────────────────────────────────
 
 // roundList is a well-formed list for the round path: a binary row and a judge row, both of
-// which print a known word, so that an output anchor has something to point at.
+// which print a known word, so that an output anchor has something to point at. The binary
+// row's expectation matches its output, so the binary computes PASS for it (R7).
 const roundList = checksHeader +
 	"S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n" +
 	"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
 
+// roundFailList is roundList with a binary row whose output does NOT match its expectation: the
+// binary computes FAIL for it (R7), so a judge that writes PASS for it cannot make the round
+// pass.
+const roundFailList = checksHeader +
+	"S1\tbl\tblocking\tB1\techo two\tstdout matches ^never\t\t\tprints two\n" +
+	"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
+
+// roundSwitchList is a list whose binary row passes or fails on demand: the row prints FAIL
+// while the marker file is there and PASS while it is not. The marker sits outside the
+// repository, so the tree does not move under the run, and the binary's computed row-verdict
+// follows the marker (R7).
+func roundSwitchList(marker string) string {
+	return checksHeader +
+		"S1\tbl\tblocking\tB1\tif [ -f " + marker + " ]; then echo FAIL; else echo PASS; fi\tstdout matches PASS\t\t\tprints PASS unless the marker is there\n" +
+		"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
+}
+
+// switchItem prepares an item whose binary row passes or fails on demand, and returns the
+// directory and the marker that decides it.
+func switchItem(t *testing.T) (string, string) {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "fail")
+	return roundItem(t, roundSwitchList(marker)), marker
+}
+
+// markFailing puts the marker there, so the binary row's command prints FAIL and the binary
+// computes FAIL for it.
+func markFailing(t *testing.T, marker string) {
+	t.Helper()
+	if err := os.WriteFile(marker, []byte("fail\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// markPassing takes the marker away, so the binary row's command prints PASS and the binary
+// computes PASS for it.
+func markPassing(t *testing.T, marker string) {
+	t.Helper()
+	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 // The verdicts of the round list: both rows pass, or the binary row fails. A judge row carries
 // an output anchor, and the row's command prints the anchored word.
+//
+// The judge's word for a binary row is not that row's verdict (R7): the round takes the verdict
+// the binary computed from the run. The two agree in these fixtures, so the verdicts file reads
+// as the judge read the run.
 var (
 	roundPass = []string{"S1\tPASS\t", "J1\tPASS\t\"two\""}
 	roundFail = []string{"S1\tFAIL\t", "J1\tPASS\t\"two\""}
@@ -3086,6 +3155,133 @@ func TestRunRecordsTheRowItRan(t *testing.T) {
 	if row.StdoutSHA != shaHex([]byte("OUT\n")) || row.StderrSHA != shaHex([]byte("ERR\n")) {
 		t.Errorf("row = %+v, want the hash of each stream", row)
 	}
+}
+
+// R7: the binary computes a binary row's row-verdict from the row's expectation and the values
+// the run observed, and records it with them. The exit code is not the verdict: a row whose
+// command exits 2 because the binary refused is a PASS row when its expectation matches what
+// the refusal printed, and the run exits 0.
+func TestRunComputesPassForARowThatRefusedAndMatchesItsExpectation(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo refused >&2; exit 2\tstderr matches refused\t\t\trefuses\n")
+	if code := run([]string{"--root", dir, "run", "A1"}); code != 0 {
+		t.Fatalf("bl run: exit = %d, want 0 — the row's expectation matched", code)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if len(rf.Rows) != 1 {
+		t.Fatalf("want one row, got %d", len(rf.Rows))
+	}
+	row := rf.Rows[0]
+	if row.Exit != 2 {
+		t.Errorf("exit = %d, want 2 — the command refused", row.Exit)
+	}
+	if row.Verdict != "PASS" {
+		t.Errorf("verdict = %q, want PASS — the expectation matches what the refusal printed", row.Verdict)
+	}
+}
+
+// R7: a binary row whose observed values do not match its expectation is a FAIL row, even when
+// its command exits 0, and the run exits non-zero.
+func TestRunComputesFailForARowThatDoesNotMatchItsExpectation(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo ok\tstdout matches ^never$\t\t\tdoes not match\n")
+	if code := run([]string{"--root", dir, "run", "A1"}); code == 0 {
+		t.Fatal("bl run: exit = 0, want non-zero — the row failed")
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	row := rf.Rows[0]
+	if row.Exit != 0 {
+		t.Errorf("exit = %d, want 0 — the command succeeded", row.Exit)
+	}
+	if row.Verdict != "FAIL" {
+		t.Errorf("verdict = %q, want FAIL — the output does not match the expectation", row.Verdict)
+	}
+}
+
+// R7 and R8: the row-verdict is computed from the expectation, form by form, against the values
+// the run observed. The exit code is never the verdict on its own.
+func TestTheRowVerdictIsComputedFormByForm(t *testing.T) {
+	cases := []struct {
+		name   string
+		cmd    string
+		expect string
+		want   string
+	}{
+		{"the exit matches", "exit 3", "exit 3", "PASS"},
+		{"the exit does not match", "exit 3", "exit 0", "FAIL"},
+		{"the stdout matches", "echo hello", "stdout matches (?m)^hello$", "PASS"},
+		{"the stdout does not match", "echo hello", "stdout matches ^never$", "FAIL"},
+		{"the stderr matches", "echo oops >&2", "stderr matches oops", "PASS"},
+		{"the stderr does not match", "echo oops >&2", "stderr matches never", "FAIL"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\t"+c.cmd+"\t"+c.expect+"\t\t\tone row\n")
+			if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+				t.Fatalf("run: %v", err)
+			}
+			rf, _ := readRunFile(t, dir, "A1-run1.json")
+			if got := rf.Rows[0].Verdict; got != c.want {
+				t.Errorf("verdict = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// R8: `file exists` is true when the path is there when the row runs, and `tree ==` is true
+// when the tree the run verified is the one the row names.
+func TestTheRowVerdictIsComputedForTheFileAndTheTreeForms(t *testing.T) {
+	t.Run("the file is there", func(t *testing.T) {
+		dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\ttrue\tfile exists there.txt\t\t\tone row\n")
+		writeFile(t, dir, "there.txt", "x\n")
+		if err := call(t, cmdRun, dir, "A1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		rf, _ := readRunFile(t, dir, "A1-run1.json")
+		if got := rf.Rows[0].Verdict; got != "PASS" {
+			t.Errorf("verdict = %q, want PASS — the file is there", got)
+		}
+	})
+	t.Run("the file is not there", func(t *testing.T) {
+		dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\ttrue\tfile exists nothere.txt\t\t\tone row\n")
+		if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+			t.Fatalf("run: %v", err)
+		}
+		rf, _ := readRunFile(t, dir, "A1-run1.json")
+		if got := rf.Rows[0].Verdict; got != "FAIL" {
+			t.Errorf("verdict = %q, want FAIL — the file is not there", got)
+		}
+	})
+	t.Run("the tree matches", func(t *testing.T) {
+		dir := openItem(t)
+		tree, err := verifiedTreeWriting(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == "+tree+"\t\t\tone row\n")
+		if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+			t.Fatalf("claims: %v", err)
+		}
+		if err := call(t, cmdRun, dir, "A1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		rf, _ := readRunFile(t, dir, "A1-run1.json")
+		if got := rf.Rows[0].Verdict; got != "PASS" {
+			t.Errorf("verdict = %q, want PASS — the run verified the tree the row names", got)
+		}
+	})
+	t.Run("the tree does not match", func(t *testing.T) {
+		dir := openItem(t)
+		checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == 0000000000000000000000000000000000000000\t\t\tone row\n")
+		if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+			t.Fatalf("claims: %v", err)
+		}
+		if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+			t.Fatalf("run: %v", err)
+		}
+		rf, _ := readRunFile(t, dir, "A1-run1.json")
+		if got := rf.Rows[0].Verdict; got != "FAIL" {
+			t.Errorf("verdict = %q, want FAIL — the run verified another tree", got)
+		}
+	})
 }
 
 // A row that exits non-zero is recorded as a failure, with its code and its output, and the
@@ -3708,7 +3904,7 @@ func TestR10AnUncoveredHunkIsRefused(t *testing.T) {
 // R12: the verdict is derived from the blocking rows. A supplied --verdict that differs from
 // the derived one is refused.
 func TestR12ADerivedFailWithASuppliedPassIsRefused(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := roundItem(t, roundFailList)
 	rows := runAndVerdicts(t, dir, roundFail...)
 	before, _ := readLedger(dir)
 	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows))
@@ -3721,6 +3917,56 @@ func TestR12ADerivedFailWithASuppliedPassIsRefused(t *testing.T) {
 	}
 	// and the derived verdict is recorded when --verdict is absent
 	if err := call(t, cmdRound, dir, "A1", "--cause", "code", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" || ev.Cause != "code" {
+		t.Fatalf("round event = %+v", ev)
+	}
+}
+
+// R7 and R12: the round's derived verdict is computed from the row-verdicts the binary computed,
+// so a judge that writes PASS for a failing row does not get a PASS round. The judge's word for
+// a binary row is not that row's verdict.
+func TestTheRoundDoesNotTakeTheJudgesWordForABinaryRow(t *testing.T) {
+	dir := roundItem(t, roundFailList)
+	// the judge writes PASS for the row, and the run says the row failed
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if rf.Rows[0].Verdict != "FAIL" {
+		t.Fatalf("the run must record the row as FAIL: %+v", rf.Rows[0])
+	}
+	if err := call(t, cmdRound, dir, "A1", "--cause", "code", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "round" || ev.Verdict != "FAIL" {
+		t.Fatalf("round event = %+v — the judge's PASS must not make the round pass", ev)
+	}
+	// and the evidence file records the computed verdict, not the judge's word
+	body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ev.Rows)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "\tFAIL\n") {
+		t.Errorf("the evidence file must record the computed FAIL:\n%s", body)
+	}
+}
+
+// R12: a supplied --verdict that disagrees with the derived one is refused under R12, and one
+// that agrees is accepted.
+func TestR12TheSuppliedVerdictIsCheckedAgainstTheDerivedOne(t *testing.T) {
+	dir := roundItem(t, roundFailList)
+	rows := runAndVerdicts(t, dir, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+	// the derived verdict is FAIL, and a supplied PASS is refused under R12
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows))
+	if r.rule != "R12" {
+		t.Fatalf("want a refusal under R12, got %s: %s", r.rule, r.msg)
+	}
+	// and the supplied FAIL agrees with the derived one, so the round is recorded
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows); err != nil {
 		t.Fatalf("round: %v", err)
 	}
 	events, _ := readLedger(dir)

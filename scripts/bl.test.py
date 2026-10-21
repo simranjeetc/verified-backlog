@@ -122,6 +122,10 @@ def head(root: Path) -> str:
 
 # ── the round path ────────────────────────────────────────────────────────────
 
+# The round path's list. The binary row S1 passes on its own: the binary computes its
+# row-verdict from the observed values against the row's expect, so no judge can make it fail
+# (R7). A round that has to fail fails through the judge row J1, whose row-verdict is the
+# judge's.
 ROUND_LIST = (
     "id\tdecider\tseverity\tbrief_ref\tcmd\texpect\tfail_if\twhy_not_mech\tcriterion\n"
     "S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n"
@@ -296,7 +300,7 @@ def round_refuses_fail_without_cause():
     root = fresh()
     ready(root)
     ok(root, "run", "A1")
-    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
     refused(root, "round", "A1", "--verdict", "FAIL", "--rows", str(rows), match="needs --cause")
 
 
@@ -337,10 +341,10 @@ def cap_counts_code_only():
     ready(root)
     for _ in range(3):
         ok(root, "run", "A1")
-        rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+        rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
         ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
     ok(root, "run", "A1")
-    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
     refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows), match="cap 3")
     ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "harness")
     ok(root, "run", "A1")
@@ -354,7 +358,7 @@ def round_refuses_after_pass():
     rows = ready(root)
     ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "run", "A1")
-    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
     refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows), match="already passed")
 
 
@@ -391,7 +395,7 @@ def close_refuses_without_pass():
     root = fresh()
     ready(root)
     ok(root, "run", "A1")
-    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
     ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
     refused(root, "close", "A1", "--commit", head(root), match="no PASS")
 
@@ -542,7 +546,7 @@ def audit_writes_report_and_json():
     root = fresh()
     ready(root)
     ok(root, "run", "A1")
-    rows = verdicts(root, "S1\tFAIL\t", "J1\tPASS\t\"two\"")
+    rows = verdicts(root, "S1\tPASS\t", "J1\tFAIL\t\"two\"")
     ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
     ok(root, "run", "A1")
     rows = verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")

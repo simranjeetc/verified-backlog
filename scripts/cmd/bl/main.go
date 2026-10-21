@@ -1601,6 +1601,10 @@ type runRow struct {
 	Stderr       string `json:"stderr"`
 	StderrSHA    string `json:"stderr_sha256"`
 	StderrBinary bool   `json:"stderr_binary"`
+	// Verdict is the row-verdict the binary computed for a `decider: bl` row, from the row's
+	// expectation and the values observed above (R7). A `decider: judge` row carries none: its
+	// row-verdict is the judge's, and the judge reads this file to write it.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // runFile is the run file (§2): the item, the run id, the verified tree at the start and at the
@@ -1618,7 +1622,8 @@ type runFile struct {
 // writes the run file, and records the run event (R7).
 //
 // The order is P3's: R35 (the item is the one in flight) → R20 (the frozen artefacts are what
-// they were) → R1 (the list still parses) → R7 (every row ran) → R26 (the tree did not move) →
+// they were) → R1 (the list still parses) → R7 (every row ran and its row-verdict was computed;
+// R8, the expectation's form, is refused inside it) → R26 (the tree did not move) →
 // R27 (the ledger did not move). A run is refused on the first of these that fails, and no run
 // file is written.
 //
@@ -1688,10 +1693,27 @@ func cmdRun(root string, a args) error {
 	path := os.Getenv("PATH")
 	home := envHome(env)
 	tmpdir := envTmp(env)
-	// R7: every row runs, in the order of the frozen list, whatever the decider.
+	// R7: every row runs, in the order of the frozen list, whatever the decider. A
+	// `decider: bl` row's row-verdict is computed HERE, from the row's expectation and the
+	// values the run observed: the exit code is not the verdict, and a row whose command
+	// refused is a PASS row when its expectation matches what the refusal printed. A
+	// `decider: judge` row's row-verdict is the judge's, and the judge reads this file.
 	records := make([]runRow, 0, len(rows))
 	for _, row := range rows {
-		records = append(records, execRow(root, row, env, runTimeout))
+		rec := execRow(root, row, env, runTimeout)
+		if row.f["decider"] == "bl" {
+			v, err := expectVerdict(root, row.f["id"], row.f["expect"], rec, treeStart)
+			if err != nil {
+				return err
+			}
+			if rec.TimedOut {
+				// R8: a timeout is recorded with exit = -1, and -1 is not a valid
+				// expectation, so a timeout can never be written up as a pass.
+				v = "FAIL"
+			}
+			rec.Verdict = v
+		}
+		records = append(records, rec)
 	}
 	// The state after the run.
 	treeEnd, err := verifiedTreeWriting(root)
@@ -1741,9 +1763,12 @@ func cmdRun(root string, a args) error {
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
 	}
+	// The run's exit code follows the rows' verdicts: a run whose rows all PASS exits 0, even
+	// when a row's command exited non-zero because the binary refused. A judge row has no
+	// verdict yet — the judge writes it — so it cannot fail the run.
 	failed := 0
 	for _, r := range records {
-		if r.Exit != 0 || r.TimedOut {
+		if r.Verdict == "FAIL" {
 			failed++
 		}
 	}
@@ -2694,6 +2719,50 @@ func treesMatch(root, a, b string) bool {
 
 // ── the round's rules ────────────────────────────────────────────────────────
 
+// computedVerdicts reads the row-verdicts the binary computed for the `decider: bl` rows of a
+// run (R7). They are computed by `bl run`, from each row's expectation and the values the run
+// observed, and they are the row-verdicts of record: the judge's word for a binary row is not
+// the row's verdict, and the round's derived verdict does not rest on it.
+//
+// A judge row has none: its row-verdict is the judge's, and it comes from the verdicts file.
+func computedVerdicts(frozen []checkRow, rf *runFile) (map[string]string, error) {
+	observed := map[string]runRow{}
+	for _, r := range rf.Rows {
+		observed[r.ID] = r
+	}
+	out := map[string]string{}
+	for _, row := range frozen {
+		if row.f["decider"] != "bl" {
+			continue
+		}
+		id := row.f["id"]
+		rec, ok := observed[id]
+		if !ok {
+			return nil, refuseRule("R6", "the run has no record of row %s — the round cannot take its row-verdict from the run", id)
+		}
+		if rec.Verdict != "PASS" && rec.Verdict != "FAIL" {
+			return nil, refuseRule("R6", "the run carries no computed row-verdict for row %s — the row-verdict is the binary's, and it is computed by `bl run`", id)
+		}
+		out[id] = rec.Verdict
+	}
+	return out, nil
+}
+
+// rowVerdict is a row's row-verdict: the binary's computed verdict for a `decider: bl` row
+// (R7), and the judge's for a `decider: judge` row.
+func rowVerdict(id string, frozen []checkRow, vf *verdictsFile, computed map[string]string) string {
+	for _, row := range frozen {
+		if row.f["id"] != id {
+			continue
+		}
+		if row.f["decider"] == "bl" {
+			return computed[id]
+		}
+		break
+	}
+	return vf.rows[id].verdict
+}
+
 // checkAnchors is R9: a judge row is anchored, and only the form the anchor is written in is
 // checked. An output anchor's text must appear in the row's captured stdout or stderr; a
 // source anchor's file must be in the item's scope, its line must exist, its text must be at
@@ -2827,13 +2896,16 @@ func coveredPath(frozen []checkRow, path string) bool {
 // checkR14 is R14: every advisory row whose row-verdict is FAIL must already be filed as a
 // backlog item, with the row id appearing in the item's text as a whitespace-delimited token,
 // and that item being the most recently filed item mentioning the id.
-func checkR14(vf *verdictsFile, frozen []checkRow, order []*Item) error {
+//
+// The row-verdict of a `decider: bl` row is the one the binary computed (R7), so an advisory
+// binary row that failed on its own values has to be filed too.
+func checkR14(vf *verdictsFile, frozen []checkRow, computed map[string]string, order []*Item) error {
 	for _, row := range frozen {
 		if row.f["severity"] != "advisory" {
 			continue
 		}
 		id := row.f["id"]
-		if vf.rows[id].verdict != "FAIL" {
+		if rowVerdict(id, frozen, vf, computed) != "FAIL" {
 			continue
 		}
 		latest := latestMention(order, id)
@@ -2873,13 +2945,19 @@ func hasToken(text, token string) bool {
 
 // checkR16 is R16: a second check that disagrees with the row's recorded verdict refuses the
 // round. A second-check event computed against an earlier run is stale and is ignored.
-func checkR16(root string, it *Item, vf *verdictsFile, runID string) error {
+//
+// The row's recorded verdict is the binary's computed verdict for a `decider: bl` row (R7) and
+// the judge's for a `decider: judge` row.
+func checkR16(root string, it *Item, vf *verdictsFile, frozen []checkRow, computed map[string]string, runID string) error {
 	for _, ev := range it.SecondChecks {
 		if ev.Run != runID {
 			continue
 		}
-		v, ok := vf.rows[ev.Row]
-		if !ok || ev.Computed == v.verdict {
+		if _, ok := vf.rows[ev.Row]; !ok {
+			continue
+		}
+		recorded := rowVerdict(ev.Row, frozen, vf, computed)
+		if ev.Computed == recorded {
 			continue
 		}
 		// A misclassified event is the one kind of refusal that writes to the ledger: it is
@@ -2890,7 +2968,7 @@ func checkR16(root string, it *Item, vf *verdictsFile, runID string) error {
 		}); err != nil {
 			return err
 		}
-		return refuseRule("R16", "the second check computed %s for row %s and the verdicts file records %s — the row is misclassified", ev.Computed, ev.Row, v.verdict)
+		return refuseRule("R16", "the second check computed %s for row %s and the verdicts file records %s — the row is misclassified", ev.Computed, ev.Row, recorded)
 	}
 	return nil
 }
@@ -2983,7 +3061,10 @@ func checkR25(root string) error {
 // evidenceText writes the evidence file of a round (§2): one line per frozen check id, in the
 // order the list was frozen, with the run's observed values — so the claim that a command ran
 // is never something a model typed into a cell.
-func evidenceText(vf *verdictsFile, frozen []checkRow, rf *runFile) string {
+//
+// The row_verdict column holds the row's row-verdict: the binary's computed verdict for a
+// `decider: bl` row (R7) and the judge's for a `decider: judge` row.
+func evidenceText(vf *verdictsFile, frozen []checkRow, rf *runFile, computed map[string]string) string {
 	observed := map[string]runRow{}
 	for _, r := range rf.Rows {
 		observed[r.ID] = r
@@ -2999,7 +3080,7 @@ func evidenceText(vf *verdictsFile, frozen []checkRow, rf *runFile) string {
 			seen += "; anchor " + v.anchor
 		}
 		fmt.Fprintf(&b, "%s\t%s\t%d\t%t\t%t\t%s\t%s\t%s\n",
-			id, rec.Cmd, rec.Exit, rec.Signalled, rec.TimedOut, seen, excerpt(rec), v.verdict)
+			id, rec.Cmd, rec.Exit, rec.Signalled, rec.TimedOut, seen, excerpt(rec), rowVerdict(id, frozen, vf, computed))
 	}
 	return b.String()
 }
@@ -3303,6 +3384,13 @@ func cmdRound(root string, a args) error {
 	if err := checkR25(root); err != nil {
 		return err
 	}
+	// R7: the round consumes the run, and the row-verdicts of the `decider: bl` rows are the
+	// ones the binary computed from the run's observed values. The judge's word for a binary
+	// row is not the row's verdict, so the derivation in R12 does not rest on it.
+	computed, err := computedVerdicts(frozen, &rf)
+	if err != nil {
+		return err
+	}
 	// The round's diff: the before-tree against the verified tree.
 	hunks, bare := roundDiff(root, it.BeforeTree, tree)
 	// R9: the anchors.
@@ -3314,7 +3402,7 @@ func cmdRound(root string, a args) error {
 		return err
 	}
 	// R16: a second check that disagrees with the row's recorded verdict.
-	if err := checkR16(root, it, vf, runEv.Run); err != nil {
+	if err := checkR16(root, it, vf, frozen, computed, runEv.Run); err != nil {
 		return err
 	}
 	// R13: a finding is a dispute, whatever R12 derived.
@@ -3332,17 +3420,19 @@ func cmdRound(root string, a args) error {
 		finding = vf.finding
 	}
 	// R14: a failing advisory row must already be filed.
-	if err := checkR14(vf, frozen, order); err != nil {
+	if err := checkR14(vf, frozen, computed, order); err != nil {
 		return err
 	}
-	// R12: the verdict is derived. FAIL if any blocking row's row-verdict is FAIL.
+	// R12: the verdict is derived. FAIL if any blocking row's row-verdict is FAIL. The
+	// row-verdict of a `decider: bl` row is the one the binary computed (R7); the row-verdict
+	// of a `decider: judge` row is the judge's.
 	derived := "PASS"
 	blockingFailed := false
 	for _, row := range frozen {
 		if row.f["severity"] != "blocking" {
 			continue
 		}
-		if vf.rows[row.f["id"]].verdict == "FAIL" {
+		if rowVerdict(row.f["id"], frozen, vf, computed) == "FAIL" {
 			derived = "FAIL"
 			blockingFailed = true
 			break
@@ -3400,7 +3490,7 @@ func cmdRound(root string, a args) error {
 		return err
 	}
 	name := fmt.Sprintf("%s-r%d.txt", it.ID, len(it.Rounds)+1)
-	body := evidenceText(vf, frozen, &rf)
+	body := evidenceText(vf, frozen, &rf, computed)
 	if err := atomicWrite(filepath.Join(p.evidence, name), body); err != nil {
 		return err
 	}
