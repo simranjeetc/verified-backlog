@@ -473,13 +473,14 @@ command there. P6, P7, P8, P9 and P10 are general rules that apply to every comm
 list, added by item I9 when the implementation found the gap.
 
 **P1 — `bl checks` order.** R5 (the claims freeze the list) → R4 (the list is written once) → *the list is read* → R1
-(schema) → R4 (the amend scope, when `--amend` is given) → R2 (brief clause) → R3 (judge justification) → R8
+(schema) → R34 (the command is a shell script, not a pattern) → R4 (the amend scope, when `--amend` is given) →
+R2 (brief clause) → R3 (judge justification) → R8
 (expectation form). The state guards come first because a command that is not allowed to write a list has no use for
 the list, and refusing before the input is read means a doomed command never waits on stdin. Within one rule, the
 first broken row in file order is named, and only that one. Item I9 changed this order: before it, R1 came before R5
 and R4, so item I7's brief said "R1 across all rows, then R5, R4" - that wording is superseded.
 
-**P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were) → R1 (schema) → R2 (brief clause) → R3
+**P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were) → R1 (schema) → R34 (the command is a shell script, not a pattern) → R2 (brief clause) → R3
 (judge justification) → R8 (expectation form) → R5 (the claims freeze the list) → R4 (the list is written once, and
 the amend scope). The list's rules come first here because the list IS the proposal: a re-baseline that names a
 broken list is refused for the list's own fault, not for the state of the item.
