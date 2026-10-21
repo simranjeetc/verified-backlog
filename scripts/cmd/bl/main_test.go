@@ -1073,10 +1073,10 @@ func TestOpenRefusedAfterClaims(t *testing.T) {
 	}
 }
 
-// R2 at use: a frozen row whose brief_ref names a clause the current brief no longer holds is a
-// refusal — the row's criterion no longer exists in the brief it was written against (R24).
-// The check runs where the round path reads the frozen artefacts, so a round cannot pass on a
-// list whose brief_ref has gone missing.
+// R24 at use: a frozen row whose brief_ref names a clause the current brief no longer holds is a
+// refusal — the row's criterion no longer exists in the brief it was written against, because an
+// amendment removed the clause. The check runs where the round path reads the frozen artefacts,
+// so a round cannot pass on a list whose brief_ref has gone missing.
 func TestCheckRefusesRowWhoseBriefRefIsGone(t *testing.T) {
 	dir := openItem(t)
 	// S1 cites B2; J1 is a judge row with an empty brief_ref, which is fine
@@ -1097,8 +1097,8 @@ func TestCheckRefusesRowWhoseBriefRefIsGone(t *testing.T) {
 	}
 
 	r := wantRefusal(t, call(t, cmdCheck, dir))
-	if r.rule != "R2" {
-		t.Fatalf("want a refusal under R2, got %s: %s", r.rule, r.msg)
+	if r.rule != "R24" {
+		t.Fatalf("want a refusal under R24, got %s: %s", r.rule, r.msg)
 	}
 	if !strings.Contains(r.msg, "S1") {
 		t.Errorf("the refusal must name the row: %s", r.msg)
@@ -1113,7 +1113,7 @@ func TestCheckRefusesRowWhoseBriefRefIsGone(t *testing.T) {
 
 	// the round path refuses too: a round cannot pass on a list whose brief_ref has gone missing
 	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tFAIL\n")
-	wantRule(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows), "R2")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", rows), "R24")
 	events, _ := readLedger(dir)
 	if last := events[len(events)-1]; last.T != "brief" {
 		t.Fatalf("a refused round wrote %+v", last)
@@ -1905,5 +1905,191 @@ func TestChecksAWellFormedListIsStillAccepted(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
 	if err != nil || string(data) != goodList {
 		t.Fatalf("checks.tsv = %q, %v", data, err)
+	}
+}
+
+// ── R24: the removed-clause refusal at use ───────────────────────────────────
+
+// r24List freezes two blocking rows: S1 cites B1, S2 cites B2.
+const r24List = checksHeader +
+	"S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n" +
+	"S2\tbl\tblocking\tB2\tgo test ./...\texit 0\t\t\tother tests pass\n"
+
+// r24BriefWithoutB2 is the brief after an amendment that removed B2.
+const r24BriefWithoutB2 = "B1: add a verb\n"
+
+// r24Setup is the state a round is written against: the list is frozen, an amendment removed the
+// clause S2 cites, and the claims are recorded.
+func r24Setup(t *testing.T) string {
+	t.Helper()
+	dir := openItem(t)
+	checksOK(t, dir, r24List)
+	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", r24BriefWithoutB2)); err != nil {
+		t.Fatalf("brief: %v", err)
+	}
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	return dir
+}
+
+// The use paths — bl round, bl check and bl close — refuse under R24 when an amendment removed a
+// clause a frozen row cites, and the refusal names the row and the clause.
+func TestR24TheUsePathsRefuseUnderR24(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler func(string, args) error
+		argv    func(t *testing.T, dir string) []string
+	}{
+		{
+			name:    "round",
+			handler: cmdRound,
+			argv: func(t *testing.T, dir string) []string {
+				return []string{"A1", "--verdict", "PASS",
+					"--rows", writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")}
+			},
+		},
+		{
+			name:    "check",
+			handler: cmdCheck,
+			argv:    func(t *testing.T, dir string) []string { return nil },
+		},
+		{
+			name:    "close",
+			handler: cmdClose,
+			argv:    func(t *testing.T, dir string) []string { return []string{"A1", "--commit", "abc1234"} },
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := r24Setup(t)
+			r := wantRefusal(t, call(t, c.handler, dir, c.argv(t, dir)...))
+			if r.rule != "R24" {
+				t.Fatalf("want a refusal under R24, got %s: %s", r.rule, r.msg)
+			}
+			if !strings.Contains(r.msg, "S2") {
+				t.Errorf("the refusal must name the row: %s", r.msg)
+			}
+			if !strings.Contains(r.msg, "B2") {
+				t.Errorf("the refusal must name the missing clause: %s", r.msg)
+			}
+		})
+	}
+}
+
+// The write path keeps R2: a list written with a clause that does not exist is refused under R2,
+// not R24, and the list is not stored.
+func TestR24TheWritePathStillRefusesUnderR2(t *testing.T) {
+	dir := openItem(t)
+	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", r24BriefWithoutB2)); err != nil {
+		t.Fatalf("brief: %v", err)
+	}
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", r24List)))
+	if r.rule != "R2" {
+		t.Fatalf("want a refusal under R2, got %s: %s", r.rule, r.msg)
+	}
+	// the list is not stored, and nothing was written
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "brief" {
+		t.Fatalf("a refused list wrote %+v", last)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv")); !os.IsNotExist(err) {
+		t.Errorf("a refused list was stored: %v", err)
+	}
+}
+
+// A refused round writes nothing: no event in the ledger, no evidence file, and the item's state
+// is unchanged.
+func TestR24ARefusedRoundWritesNothing(t *testing.T) {
+	dir := r24Setup(t)
+	before, _ := readLedger(dir)
+	files := evidenceFiles(t, dir)
+	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")
+	wantRule(t, call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows), "R24")
+
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused round appended %d events", len(after)-len(before))
+	}
+	if got := evidenceFiles(t, dir); len(got) != len(files) {
+		t.Fatalf("a refused round wrote an evidence file: %v", got)
+	}
+	_, byID, err := derive(after)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	it := byID["a1"]
+	if len(it.Rounds) != 0 {
+		t.Errorf("a refused round recorded %d rounds", len(it.Rounds))
+	}
+	if it.Status != "open" {
+		t.Errorf("the item is %s, want open", it.Status)
+	}
+}
+
+// A round whose rows still cite clauses that exist is unaffected by whatever else the amendment
+// changed.
+func TestR24ARoundIsUnaffectedByAnUnrelatedAmendment(t *testing.T) {
+	cases := map[string][]string{
+		// the amendment adds a clause and leaves the cited ones alone
+		"an amendment that adds a clause": {"B1: add a verb\nB2: test it\nB3: and a third thing\n"},
+		// a clause removed and then restored by a later amendment exists in the latest brief
+		"a clause removed and then restored": {"B1: add a verb\n", "B1: add a verb\nB2: test it\n"},
+	}
+	for name, amendments := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := openItem(t)
+			checksOK(t, dir, r24List)
+			for _, text := range amendments {
+				if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", text)); err != nil {
+					t.Fatalf("brief: %v", err)
+				}
+			}
+			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+				t.Fatalf("claims: %v", err)
+			}
+			rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")
+			if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
+				t.Fatalf("round: %v", err)
+			}
+			events, _ := readLedger(dir)
+			if last := events[len(events)-1]; last.T != "round" || last.Verdict != "PASS" {
+				t.Fatalf("the round event = %+v", last)
+			}
+		})
+	}
+}
+
+// The rule id in the message is R24 in the use paths and R2 in the write path.
+func TestR24TheRuleIdInTheMessageIsR24AtUseAndR2AtWrite(t *testing.T) {
+	dir := r24Setup(t)
+	rows := writeFile(t, t.TempDir(), "rows.txt", "S1\tPASS\n")
+	out := captureStderr(t, func() {
+		if code := run([]string{"--root", dir, "round", "A1", "--verdict", "PASS", "--rows", rows}); code != 2 {
+			t.Errorf("bl round: exit = %d, want 2", code)
+		}
+	})
+	if !strings.Contains(out, "refused (R24)") {
+		t.Errorf("the use path must refuse under R24: %s", out)
+	}
+	if strings.Contains(out, "refused (R2)") {
+		t.Errorf("the use path must not refuse under R2: %s", out)
+	}
+
+	// the write path: a list written with a clause that does not exist is still R2
+	w := openItem(t)
+	if err := call(t, cmdBrief, w, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", r24BriefWithoutB2)); err != nil {
+		t.Fatalf("brief: %v", err)
+	}
+	out = captureStderr(t, func() {
+		if code := run([]string{"--root", w, "checks", "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", r24List)}); code != 2 {
+			t.Errorf("bl checks: exit = %d, want 2", code)
+		}
+	})
+	if !strings.Contains(out, "refused (R2)") {
+		t.Errorf("the write path must refuse under R2: %s", out)
+	}
+	if strings.Contains(out, "R24") {
+		t.Errorf("the write path must not refuse under R24: %s", out)
 	}
 }

@@ -925,10 +925,14 @@ func requireInFlight(order []*Item, it *Item) error {
 	return nil
 }
 
-// verifyBriefRefs checks that every frozen row still resolves against the brief (R2 at use, and
-// the removed-clause refusal R24 states for a round). A row's brief_ref must name a clause the
-// current brief holds: an amendment that dropped the clause leaves the row citing something that
-// no longer exists, and the row's criterion is gone from the brief it was written against.
+// verifyBriefRefs checks that every frozen row still resolves against the brief. This is the USE
+// path — `bl round`, `bl check` and `bl close` — so the refusal is R24's: an amendment removed
+// the clause the frozen row cites, and the row's criterion no longer exists in the brief it was
+// written against.
+//
+// The WRITE path is R2's: `bl checks` refuses a list written with a clause that does not exist
+// (validateR2), and it keeps R2. The two are different faults — a list that was never valid, and
+// a list that a later amendment invalidated — and they are named differently.
 //
 // A row with an empty brief_ref is fine — a judge row and an advisory row may both carry one.
 // Only a brief_ref that is present and names a clause the brief no longer holds is a refusal.
@@ -955,7 +959,7 @@ func verifyBriefRefs(root string, it *Item) error {
 		if ref == "" || clauses[ref] {
 			continue
 		}
-		return refuseRule("R2", "row %s: brief_ref %q names no clause in the brief %s — the frozen row cites a clause that no longer exists",
+		return refuseRule("R24", "row %s: brief_ref %q names no clause in the brief %s — a brief amendment removed it, so the row's criterion no longer exists in the brief it was written against",
 			r.f["id"], ref, it.Brief)
 	}
 	return nil
@@ -1464,8 +1468,8 @@ func cmdRound(root string, a args) error {
 	if err := verifyFrozen(root, it); err != nil {
 		return err
 	}
-	// R2 at use: a frozen row that cites a clause the current brief no longer holds is a
-	// refusal — the round cannot pass on a list whose brief_ref has gone missing (R24).
+	// R24: an amendment that removed a clause a frozen row cites refuses the round — the row's
+	// criterion no longer exists in the brief it was written against.
 	if err := verifyBriefRefs(root, it); err != nil {
 		return err
 	}
@@ -1596,8 +1600,8 @@ func cmdClose(root string, a args) error {
 	if err := verifyFrozen(root, it); err != nil {
 		return err
 	}
-	// R2 at use: the rows the last round was written against must still resolve against the
-	// brief, or the round closed on a criterion the brief no longer holds (R24).
+	// R24: the rows the last round was written against must still resolve against the brief, or
+	// the round closed on a criterion the brief no longer holds.
 	if err := verifyBriefRefs(root, it); err != nil {
 		return err
 	}
@@ -1955,8 +1959,8 @@ func cmdCheck(root string, a args) error {
 		if err := verifyFrozen(root, it); err != nil {
 			return err
 		}
-		// R2 at use: a frozen row whose brief_ref names a clause the current brief no longer
-		// holds is a refusal — the row's criterion no longer exists (R24).
+		// R24: a frozen row whose brief_ref names a clause the current brief no longer holds is
+		// a refusal — an amendment removed it, so the row's criterion no longer exists.
 		if err := verifyBriefRefs(root, it); err != nil {
 			return err
 		}
