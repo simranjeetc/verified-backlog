@@ -422,6 +422,39 @@ The skill's one-item-in-flight rule is what keeps that from being a problem.
 
 ---
 
+### 3.5 Rules added by running the loop
+
+These four rules were not in the first draft. They came out of five implementation rounds on the repository's own
+backlog, where each one caught a hole that the design had not thought of. They are stated here because the
+implementation in `scripts/cmd/bl/` already enforces them and the design should not lag the code.
+
+**R30 — a new premise is a new event, and the old one keeps its hash.** A check list that turns out to be broken
+itself — commands that cannot run, rows that die before an assertion — cannot be edited into shape: a list is
+written once. `bl rebaseline <id> --file <path> --reason <text>` replaces it, records a `rebaseline` event carrying
+the new list's hash and the previous list's hash, and leaves every earlier event in the ledger exactly as it was.
+The earlier rounds are not erased. A re-baseline is a new premise, and the ledger says so.
+
+**R31 — one helper, one family, one test.** Every verb that reads or writes a frozen artefact re-hashes that
+artefact and compares the hash with the one in the ledger before it does anything. The comparison is one helper,
+called from every such verb, and one table-driven test enumerates the verbs in that family, so a verb added later
+cannot join the family without the test noticing. Without this rule the same hole reappeared three rounds running:
+one verb at a time was fixed, and the next one had the same defect.
+
+**R32 — the frozen row is checked against the brief that exists now.** A blocking row cites a brief clause. If the
+brief is later amended and the clause is gone, the row is refused at use, not just at write time: `bl check` and
+`bl round` both re-read the brief and refuse with R2 naming the row and the missing clause. A list whose rows point
+at clauses that no longer exist is not a passing list.
+
+**R33 — the claims freeze the brief and the list.** Once an item has a claims event, the brief and the check list
+are frozen. No verb may rewrite them: `bl brief`, `bl checks` and `bl open` all refuse with R5, and they refuse
+before they write anything. An item with claims cannot be re-opened, because re-opening would replace the brief
+that the claims were made against.
+
+**P1 is a rule about the whole list, not about one row.** The precedence in §4 applies across the list: if one row
+breaks R1 and another breaks R8, the refusal names R1. Evaluating rule by rule and row by row lets the rule that
+happens to sit higher in the file win, which is not the same thing as the earliest broken rule. This is still an
+open implementation item (I7) — the design states it, the code does not yet do it.
+
 ## 4. Precedence
 
 Where two rules can both match, the winner is named here, not left to the implementation. P1, P2, P3 and P4 are per
@@ -700,6 +733,7 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | how the escalation of a dispute is requested | interface | there is no `bl escalate` verb; a dispute is recorded, and the orchestrator is expected to escalate in the open. A verb would be better |
 | a row whose output depends on the time of day | implementation | the run records what it saw; the row is a record of that run, not a reproducible value |
 | the interface by which a verdict-time downgrade is requested | interface | R11 refuses the downgrade; the requester has no command to call, and files an item instead — that is deliberate, but it is a gap in the interface |
+| a judge row with no output anchor | interface | R9 wants the judge row to name the artefact and the output anchor, but the sample row in §2 (criterion: "clear", cmd: "true") emits nothing at all, so under R9 it can only ever be recorded FAIL. A judge row whose command prints nothing needs a rule that says what "the output" is |
 | a round whose commands need the network | implementation | the environment has no proxy variables and `HOME` is scratch; a network command may behave differently from the developer's shell |
 | a check list that cannot run | process | a frozen list cannot be replaced (R4 allows only a narrow amend), so a list whose commands never reach an assertion spends a code round on its own defect. The loop needs a re-baseline path: a new premise, logged, with the round counter reset |
 | the granularity of the brief's clauses | interface | R2 makes a blocking row cite a clause that exists, and the clauses come from the item text. A check list written from the intent can therefore only cite ids the item text implies — so the brief must be readable by the check-list author, or the brief format must accept pre-numbered clauses (`B1: …`) instead of inventing ids |
