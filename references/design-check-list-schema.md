@@ -441,9 +441,11 @@ cannot join the family without the test noticing. Without this rule the same hol
 one verb at a time was fixed, and the next one had the same defect.
 
 **R32 — the frozen row is checked against the brief that exists now.** A blocking row cites a brief clause. If the
-brief is later amended and the clause is gone, the row is refused at use, not just at write time: `bl check` and
-`bl round` both re-read the brief and refuse with R2 naming the row and the missing clause. A list whose rows point
-at clauses that no longer exist is not a passing list.
+brief is later amended and the clause is gone, the row is refused at use, not just at write time: `bl check`,
+`bl round` and `bl close` all re-read the brief and refuse, naming the row and the missing clause. The rule named
+differs by path, because the rules differ: a list **written** with a clause that does not exist is refused under R2,
+the schema rule, while a frozen row whose clause an **amendment** removed is refused under R24, the amendment rule. A
+list whose rows point at clauses that no longer exist is not a passing list.
 
 **R33 — the claims freeze the brief and the list.** Once an item has a claims event, the brief and the check list
 are frozen. No verb may rewrite them: `bl brief`, `bl checks` and `bl open` all refuse with R5, and they refuse
