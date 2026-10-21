@@ -11,7 +11,11 @@
 //
 //	bl init
 //	bl file --id A1 --text "..." [--after B2] [--source human]
-//	bl open A1
+//	bl open A1                                            (writes .backlog/items/A1/brief.md)
+//	bl brief A1 --file brief.md                           (amends the brief; a new event)
+//	bl checks A1 [--file checks.tsv] [--amend]            (list from stdin without --file)
+//	bl rebaseline A1 --file checks.tsv --reason "..."      (replaces the frozen list)
+//	bl claims A1 --file claims.md
 //	bl round A1 --verdict FAIL --cause code --rows -      (rows from stdin)
 //	bl round A1 --verdict PASS --rows checks.txt
 //	bl close A1 --commit 6742cf6
@@ -55,6 +59,10 @@ const (
 	recordView  = "PROGRESS.md"
 	roundCap    = 3
 	marker      = "rendered from " + backlogDir + "/" + ledgerName + " by bl"
+	itemsDir    = "items"
+	briefName   = "brief.md"
+	checksName  = "checks.tsv"
+	claimsName  = "claims.md"
 )
 
 var (
@@ -65,6 +73,11 @@ var (
 	legacyVerdic = regexp.MustCompile(`(?i)^\s*(?:[-*>]\s*)?(?:\*\*)?Verdict(?:\*\*)?\s*:\s*(?:\*\*)?\s*(PASS|FAIL)`)
 	commitRe     = regexp.MustCompile(`\b([0-9a-f]{7,40})\b`)
 	periodRe     = regexp.MustCompile(`^(\d+)\s*([dhw])$`)
+	clauseRe     = regexp.MustCompile(`^(B[0-9]+):\s+(.+)$`)
+	clauseSplit  = regexp.MustCompile(`;\s+`)
+	rowIDRe      = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	exitCodeRe   = regexp.MustCompile(`^(0|[1-9][0-9]{0,2})$`)
+	treeHashRe   = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 var (
@@ -88,6 +101,14 @@ type Event struct {
 	Commit  string `json:"commit,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	By      string `json:"by,omitempty"`
+	// Artefacts (R20): each event that references a file records its path and sha256.
+	Brief     string `json:"brief,omitempty"`
+	BriefSHA  string `json:"brief_sha,omitempty"`
+	Checks    string `json:"checks,omitempty"`
+	ChecksSHA string `json:"checks_sha,omitempty"`
+	PrevSHA   string `json:"prev_checks_sha,omitempty"`
+	Claims    string `json:"claims,omitempty"`
+	ClaimsSHA string `json:"claims_sha,omitempty"`
 }
 
 // Item is the derived state of one backlog entry.
@@ -104,12 +125,23 @@ type Item struct {
 	Commit    string
 	Reason    string
 	FiledAt   string
+	// The latest event that recorded each artefact (R24).
+	Brief, BriefSHA   string
+	Checks, ChecksSHA string
+	Claims, ClaimsSHA string
+	// The seq of the latest re-baseline: a re-baseline is a new premise, so the code rounds
+	// before it no longer count against the cap.
+	RebaselineSeq int
 }
 
+// codeFails counts the code rounds spent since the latest re-baseline (R19).
 func (i *Item) codeFails() int {
 	n := 0
 	for _, r := range i.Rounds {
-		if r.Verdict == "FAIL" && r.Cause == "code" {
+		if r.Verdict != "FAIL" || r.Cause != "code" {
+			continue
+		}
+		if i.RebaselineSeq == 0 || r.Seq > i.RebaselineSeq {
 			n++
 		}
 	}
@@ -124,11 +156,16 @@ func (i *Item) last() *Event {
 }
 
 // Refusal is a call the ledger will not accept. Nothing is written.
-type Refusal struct{ msg string }
+// rule names the design rule the call violates, when there is one.
+type Refusal struct{ msg, rule string }
 
 func (r Refusal) Error() string { return r.msg }
 
-func refuse(format string, a ...any) error { return Refusal{fmt.Sprintf(format, a...)} }
+func refuse(format string, a ...any) error { return Refusal{msg: fmt.Sprintf(format, a...)} }
+
+func refuseRule(rule, format string, a ...any) error {
+	return Refusal{msg: fmt.Sprintf(format, a...), rule: rule}
+}
 
 // Corruption means the ledger on disk breaks its own invariants.
 type Corruption struct{ msg string }
@@ -138,7 +175,7 @@ func (c Corruption) Error() string { return c.msg }
 func corrupt(format string, a ...any) error { return Corruption{fmt.Sprintf(format, a...)} }
 
 type paths struct {
-	base, ledger, runlog, evidence, queue, record string
+	base, ledger, runlog, evidence, items, queue, record string
 }
 
 func newPaths(root string) paths {
@@ -148,12 +185,21 @@ func newPaths(root string) paths {
 		ledger:   filepath.Join(base, ledgerName),
 		runlog:   filepath.Join(base, runlogName),
 		evidence: filepath.Join(base, evidenceDir),
+		items:    filepath.Join(base, itemsDir),
 		queue:    filepath.Join(root, queueView),
 		record:   filepath.Join(root, recordView),
 	}
 }
 
+// itemFile is the repository-relative path of an item's artefact, as recorded in the ledger.
+func itemFile(id, name string) string { return backlogDir + "/" + itemsDir + "/" + id + "/" + name }
+
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func shaHex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
 
 // ── ledger io ────────────────────────────────────────────────────────────────
 
@@ -284,6 +330,27 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 		switch ev.T {
 		case "open":
 			it.Opened = true
+			if ev.Brief != "" {
+				it.Brief, it.BriefSHA = ev.Brief, ev.BriefSHA
+			}
+		case "brief":
+			it.Brief, it.BriefSHA = ev.Brief, ev.BriefSHA
+		case "checks":
+			if it.Claims != "" {
+				return nil, nil, corrupt("checks event for %s after its claims", ev.ID)
+			}
+			it.Checks, it.ChecksSHA = ev.Checks, ev.ChecksSHA
+		case "rebaseline":
+			if it.Claims != "" {
+				return nil, nil, corrupt("rebaseline event for %s after its claims", ev.ID)
+			}
+			it.Checks, it.ChecksSHA = ev.Checks, ev.ChecksSHA
+			it.RebaselineSeq = ev.Seq
+		case "claims":
+			if it.Checks == "" {
+				return nil, nil, corrupt("claims event for %s before any check list", ev.ID)
+			}
+			it.Claims, it.ClaimsSHA = ev.Claims, ev.ClaimsSHA
 		case "round":
 			it.Rounds = append(it.Rounds, ev)
 		case "close":
@@ -675,6 +742,14 @@ func cmdOpen(root string, a args) error {
 	if err != nil {
 		return err
 	}
+	// R5: the brief is frozen with the claims. `bl open` writes the brief from the item text, so
+	// opening an item that already has a claims event would replace the brief the claims were
+	// recorded against, and a frozen row citing a clause of it would be left pointing at a
+	// clause that no longer exists. The check comes before the brief is read or written, so a
+	// refusal leaves the stored brief exactly as it was.
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the brief is frozen with the claims", it.ID)
+	}
 	if it.BlockedBy != "" {
 		return refuse("%s is blocked by %s", it.ID, it.BlockedBy)
 	}
@@ -685,10 +760,590 @@ func cmdOpen(root string, a args) error {
 	if cur != nil {
 		return refuse("%s is already in flight — close, drop or defer it first", cur.ID)
 	}
-	if _, err := appendEvent(root, Event{T: "open", ID: it.ID}); err != nil {
+	brief := briefText(it.Text)
+	rel := itemFile(it.ID, briefName)
+	// R20: the stored brief is what the ledger says it is. Re-hash it before it is overwritten —
+	// the same helper every other verb that touches a frozen artefact uses, so there is one
+	// comparison, not three. An item with no recorded brief has nothing to re-hash.
+	if it.Brief != "" {
+		if _, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief"); err != nil {
+			return err
+		}
+	}
+	if err := atomicWrite(filepath.Join(root, rel), brief); err != nil {
+		return err
+	}
+	ev := Event{T: "open", ID: it.ID, Brief: rel, BriefSHA: shaHex([]byte(brief))}
+	if _, err := appendEvent(root, ev); err != nil {
 		return err
 	}
 	fmt.Printf("bl: %s in flight\n", it.ID)
+	return nil
+}
+
+// briefText numbers the item's clauses B1, B2, ... one per line. An item text is split into
+// clauses at semicolons; a text with none is one clause, B1.
+func briefText(text string) string {
+	var clauses []string
+	for _, part := range clauseSplit.Split(strings.Join(strings.Fields(text), " "), -1) {
+		if part = strings.TrimSpace(part); part != "" {
+			clauses = append(clauses, part)
+		}
+	}
+	var b strings.Builder
+	for i, c := range clauses {
+		fmt.Fprintf(&b, "B%d: %s\n", i+1, c)
+	}
+	return b.String()
+}
+
+// briefClauses returns the clause ids of a brief (§2: a line matching ^(B[0-9]+):\s+(.+)$).
+func briefClauses(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		if m := clauseRe.FindStringSubmatch(strings.TrimRight(line, "\r")); m != nil {
+			out[m[1]] = true
+		}
+	}
+	return out
+}
+
+// cmdBrief records the item's brief. The text comes from --file, or from stdin when --file is
+// absent. An amended brief is a new event with a new hash; the earlier event keeps its own hash
+// (R24). Once the producer has claimed, the brief is frozen (R5). Before it overwrites the stored
+// brief it re-hashes that file and refuses when it no longer matches the ledger (R20).
+func cmdBrief(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	order, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it); err != nil {
+		return err
+	}
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the brief is frozen", it.ID)
+	}
+	// R20: the stored brief is what the ledger says it is. Re-hash it before overwriting it —
+	// the same helper `bl check` and `bl round` use, so there is one comparison, not three.
+	// An item with no recorded brief has nothing to re-hash.
+	if it.Brief != "" {
+		if _, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief"); err != nil {
+			return err
+		}
+	}
+	text, err := a.input("file")
+	if err != nil {
+		return err
+	}
+	if len(briefClauses(text)) == 0 {
+		return refuseRule("R2", "the brief has no numbered clause — a clause is a line matching %s", clauseRe.String())
+	}
+	rel := itemFile(it.ID, briefName)
+	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
+		return err
+	}
+	ev := Event{T: "brief", ID: it.ID, Brief: rel, BriefSHA: shaHex([]byte(text))}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s brief recorded\n", it.ID)
+	return nil
+}
+
+// verifyArtefact re-reads a frozen artefact and refuses if it no longer matches the hash of the
+// latest event that recorded it (R20). The message names the artefact and both hashes.
+func verifyArtefact(root, rel, want, what string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		return nil, refuseRule("R20", "the %s %s is missing", what, rel)
+	}
+	if got := shaHex(data); got != want {
+		return nil, refuseRule("R20", "the %s %s no longer matches the hash recorded in the ledger: recorded %s, on disk %s", what, rel, want, got)
+	}
+	return data, nil
+}
+
+// verifyFrozen re-hashes the item's frozen artefacts — the brief, the check list and the claims —
+// and refuses when one of them no longer matches the hash of the latest event that recorded it
+// (R20). It is the check every verb that reads a frozen artefact makes before it uses it.
+func verifyFrozen(root string, it *Item) error {
+	for _, a := range []struct{ what, rel, want string }{
+		{"brief", it.Brief, it.BriefSHA},
+		{"check list", it.Checks, it.ChecksSHA},
+		{"claims", it.Claims, it.ClaimsSHA},
+	} {
+		if a.rel == "" {
+			continue
+		}
+		if _, err := verifyArtefact(root, a.rel, a.want, a.what); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireInFlight(order []*Item, it *Item) error {
+	cur, err := pinned(order)
+	if err != nil {
+		return err
+	}
+	if cur == nil || !strings.EqualFold(cur.ID, it.ID) {
+		return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
+	}
+	return nil
+}
+
+// verifyBriefRefs checks that every frozen row still resolves against the brief (R2 at use, and
+// the removed-clause refusal R24 states for a round). A row's brief_ref must name a clause the
+// current brief holds: an amendment that dropped the clause leaves the row citing something that
+// no longer exists, and the row's criterion is gone from the brief it was written against.
+//
+// A row with an empty brief_ref is fine — a judge row and an advisory row may both carry one.
+// Only a brief_ref that is present and names a clause the brief no longer holds is a refusal.
+// The message names the row and the clause.
+func verifyBriefRefs(root string, it *Item) error {
+	if it.Brief == "" || it.Checks == "" {
+		return nil
+	}
+	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	if err != nil {
+		return err
+	}
+	list, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+	if err != nil {
+		return err
+	}
+	clauses := briefClauses(string(brief))
+	rows, err := parseChecks(string(list))
+	if err != nil {
+		return refuseRule("R1", "the stored check list %s does not parse: %v", it.Checks, err)
+	}
+	for _, r := range rows {
+		ref := r.f["brief_ref"]
+		if ref == "" || clauses[ref] {
+			continue
+		}
+		return refuseRule("R2", "row %s: brief_ref %q names no clause in the brief %s — the frozen row cites a clause that no longer exists",
+			r.f["id"], ref, it.Brief)
+	}
+	return nil
+}
+
+// ── check list ───────────────────────────────────────────────────────────────
+
+var checkColumns = []string{"id", "decider", "severity", "brief_ref", "cmd", "expect", "fail_if", "why_not_mech", "criterion"}
+
+var placeholderReasons = map[string]bool{
+	"tbd": true, "todo": true, "n/a": true, "none": true, "because": true, "because it is judgment": true,
+}
+
+// checkRow is one row of a check list, its cells keyed by column name.
+type checkRow struct {
+	line int
+	f    map[string]string
+}
+
+// parseChecks reads a check list by column name (§2). It enforces the header and the field count
+// of R1; validateChecks enforces the rest.
+func parseChecks(text string) ([]checkRow, error) {
+	text = strings.TrimRight(text, "\r\n")
+	if strings.TrimSpace(text) == "" {
+		return nil, refuseRule("R1", "the check list is empty")
+	}
+	lines := strings.Split(text, "\n")
+	header := strings.Split(strings.TrimRight(lines[0], "\r"), "\t")
+	known := map[string]bool{}
+	for _, c := range checkColumns {
+		known[c] = true
+	}
+	seen := map[string]bool{}
+	for _, h := range header {
+		switch {
+		case !known[h]:
+			return nil, refuseRule("R1", "the header names an unknown column %q; it must name exactly: %s", h, strings.Join(checkColumns, ", "))
+		case seen[h]:
+			return nil, refuseRule("R1", "the header names column %q twice", h)
+		}
+		seen[h] = true
+	}
+	if len(seen) != len(checkColumns) {
+		var missing []string
+		for _, c := range checkColumns {
+			if !seen[c] {
+				missing = append(missing, c)
+			}
+		}
+		return nil, refuseRule("R1", "the header is missing column(s): %s", strings.Join(missing, ", "))
+	}
+	var rows []checkRow
+	for n, raw := range lines[1:] {
+		raw = strings.TrimRight(raw, "\r")
+		line := n + 2
+		if strings.TrimSpace(raw) == "" {
+			return nil, refuseRule("R1", "line %d is empty", line)
+		}
+		cells := strings.Split(raw, "\t")
+		if len(cells) != len(header) {
+			return nil, refuseRule("R1", "line %d has %d fields, want %d", line, len(cells), len(header))
+		}
+		r := checkRow{line: line, f: map[string]string{}}
+		for i, h := range header {
+			r.f[h] = strings.TrimSpace(cells[i])
+		}
+		rows = append(rows, r)
+	}
+	if len(rows) == 0 {
+		return nil, refuseRule("R1", "the check list has a header and no rows")
+	}
+	return rows, nil
+}
+
+// validateChecks applies R1, R2, R3 and R8 to every row. clauses are the brief's clause ids.
+func validateChecks(rows []checkRow, clauses map[string]bool) error {
+	ids := map[string]bool{}
+	for _, r := range rows {
+		id := r.f["id"]
+		switch {
+		case !rowIDRe.MatchString(id):
+			return refuseRule("R1", "line %d: id %q does not match %s", r.line, id, rowIDRe.String())
+		case strings.EqualFold(id, "run") || strings.EqualFold(id, "tree"):
+			return refuseRule("R1", "line %d: id %q is reserved", r.line, id)
+		case ids[id]:
+			return refuseRule("R1", "line %d: id %q is not unique", r.line, id)
+		}
+		ids[id] = true
+		if s := r.f["severity"]; s != "blocking" && s != "advisory" {
+			return refuseRule("R1", "row %s: severity %q must be blocking or advisory", id, s)
+		}
+		if r.f["cmd"] == "" {
+			return refuseRule("R1", "row %s: cmd is empty — every row runs a command", id)
+		}
+		switch r.f["decider"] {
+		case "bl":
+			if r.f["expect"] == "" {
+				return refuseRule("R1", "row %s: a decider bl row needs a non-empty expect", id)
+			}
+			if r.f["fail_if"] != "" || r.f["why_not_mech"] != "" {
+				return refuseRule("R1", "row %s: a decider bl row must have empty fail_if and why_not_mech", id)
+			}
+			if err := checkExpect(id, r.f["expect"]); err != nil {
+				return err
+			}
+		case "judge":
+			if r.f["expect"] != "" {
+				return refuseRule("R1", "row %s: a decider judge row must have an empty expect", id)
+			}
+			// R1 owns the row schema: a judge row needs a non-empty fail_if. R3 owns the
+			// justification — the placeholder and the too-short why_not_mech.
+			if r.f["fail_if"] == "" {
+				return refuseRule("R1", "row %s: a judge row needs a non-empty fail_if", id)
+			}
+			why := r.f["why_not_mech"]
+			if why == "" {
+				return refuseRule("R3", "row %s: a judge row needs a non-empty why_not_mech", id)
+			}
+			if placeholderReasons[strings.ToLower(why)] {
+				return refuseRule("R3", "row %s: why_not_mech %q is a placeholder, not a reason", id, why)
+			}
+			if len([]rune(why)) < 12 {
+				return refuseRule("R3", "row %s: why_not_mech %q is shorter than 12 characters", id, why)
+			}
+		default:
+			return refuseRule("R1", "row %s: decider %q must be bl or judge", id, r.f["decider"])
+		}
+		ref := r.f["brief_ref"]
+		if ref == "" && r.f["severity"] == "blocking" {
+			return refuseRule("R2", "row %s: a blocking row needs a brief_ref naming a clause in the brief", id)
+		}
+		if ref != "" && !clauses[ref] {
+			return refuseRule("R2", "row %s: brief_ref %q names no clause in the brief", id, ref)
+		}
+	}
+	return nil
+}
+
+// checkExpect accepts exactly the five forms of R8.
+func checkExpect(id, expect string) error {
+	switch {
+	case strings.HasPrefix(expect, "exit "):
+		code := strings.TrimPrefix(expect, "exit ")
+		if n, err := strconv.Atoi(code); err != nil || !exitCodeRe.MatchString(code) || n > 255 {
+			return refuseRule("R8", "row %s: `exit` takes an integer 0-255, not %q", id, code)
+		}
+		return nil
+	case strings.HasPrefix(expect, "stdout matches "), strings.HasPrefix(expect, "stderr matches "):
+		re := expect[len("stdout matches "):]
+		if re == "" {
+			return refuseRule("R8", "row %s: %q has an empty regex", id, expect)
+		}
+		if _, err := regexp.Compile(re); err != nil {
+			return refuseRule("R8", "row %s: regex %q is not valid RE2: %v", id, re, err)
+		}
+		return nil
+	case strings.HasPrefix(expect, "file exists "):
+		path := strings.TrimPrefix(expect, "file exists ")
+		if path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
+			return refuseRule("R8", "row %s: `file exists` takes a non-empty relative path without .., not %q", id, path)
+		}
+		return nil
+	case strings.HasPrefix(expect, "tree == "):
+		hash := strings.TrimPrefix(expect, "tree == ")
+		if !treeHashRe.MatchString(hash) {
+			return refuseRule("R8", "row %s: `tree ==` takes a 40-character lowercase hex tree, not %q", id, hash)
+		}
+		return nil
+	}
+	return refuseRule("R8", "row %s: expect %q is not one of: exit <code>, stdout matches <regex>, stderr matches <regex>, file exists <path>, tree == <hash>", id, expect)
+}
+
+// checkAmendment allows exactly the two edits of R4: judge → bl, and filling an empty brief_ref
+// on an advisory row. old and next are both already valid lists.
+func checkAmendment(old, next []checkRow) error {
+	if len(old) != len(next) {
+		return refuseRule("R4", "an amendment never adds or removes a row (%d rows, was %d)", len(next), len(old))
+	}
+	changed := false
+	for i := range old {
+		o, n := old[i].f, next[i].f
+		if o["id"] != n["id"] {
+			return refuseRule("R4", "row %d: an amendment never changes or reorders ids (%s, was %s)", i+1, n["id"], o["id"])
+		}
+		id := o["id"]
+		for _, col := range []string{"severity", "cmd", "criterion"} {
+			if o[col] != n[col] {
+				return refuseRule("R4", "row %s: an amendment never changes %s", id, col)
+			}
+		}
+		switch {
+		case o["decider"] == n["decider"]:
+			for _, col := range []string{"expect", "fail_if", "why_not_mech"} {
+				if o[col] != n[col] {
+					return refuseRule("R4", "row %s: %s may change only when the row is reclassified from judge to bl", id, col)
+				}
+			}
+		case o["decider"] == "judge" && n["decider"] == "bl":
+			changed = true
+		default:
+			return refuseRule("R4", "row %s: the only reclassification an amendment may make is judge → bl", id)
+		}
+		if o["brief_ref"] != n["brief_ref"] {
+			if o["brief_ref"] != "" || o["severity"] != "advisory" {
+				return refuseRule("R4", "row %s: an amendment may only fill an empty brief_ref on an advisory row", id)
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return refuseRule("R4", "the amendment changes nothing")
+	}
+	return nil
+}
+
+func cmdChecks(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	order, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it); err != nil {
+		return err
+	}
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
+	}
+	amend := a.flag("amend")
+	if it.Checks != "" && !amend {
+		return refuseRule("R4", "%s already has a check list — it is written once; only --amend may change it", it.ID)
+	}
+	if it.Checks == "" && amend {
+		return refuseRule("R4", "%s has no check list to amend", it.ID)
+	}
+	if it.Brief == "" {
+		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
+	}
+	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	if err != nil {
+		return err
+	}
+	text, err := a.input("file")
+	if err != nil {
+		return err
+	}
+	rows, err := parseChecks(text)
+	if err != nil {
+		return err
+	}
+	if err := validateChecks(rows, briefClauses(string(brief))); err != nil {
+		return err
+	}
+	rel := itemFile(it.ID, checksName)
+	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text))}
+	if amend {
+		prev, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+		if err != nil {
+			return err
+		}
+		old, err := parseChecks(string(prev))
+		if err != nil {
+			return err
+		}
+		if err := checkAmendment(old, rows); err != nil {
+			return err
+		}
+		ev.PrevSHA = it.ChecksSHA
+	}
+	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
+		return err
+	}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	if amend {
+		fmt.Printf("bl: %s check list amended (%d rows)\n", it.ID, len(rows))
+	} else {
+		fmt.Printf("bl: %s check list frozen (%d rows)\n", it.ID, len(rows))
+	}
+	return nil
+}
+
+// cmdRebaseline replaces the frozen check list. The new list is validated with the same rules
+// `bl checks` uses (R1, R2, R3, R8), and the re-baseline is recorded as a new event with the old
+// and the new hash; the earlier checks event keeps its own hash (R24). A re-baseline is a NEW
+// PREMISE: it is visible in the ledger, it does not erase the rounds that came before it, and it
+// resets the code-round counter so the new premise is not judged against the old one's rounds.
+func cmdRebaseline(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	order, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it); err != nil {
+		return err
+	}
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
+	}
+	if it.Checks == "" {
+		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
+	}
+	reason, err := cleanText(a.get("reason"), "reason")
+	if err != nil {
+		return err
+	}
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	if it.Brief == "" {
+		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
+	}
+	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	if err != nil {
+		return err
+	}
+	text, err := a.input("file")
+	if err != nil {
+		return err
+	}
+	rows, err := parseChecks(text)
+	if err != nil {
+		return err
+	}
+	if err := validateChecks(rows, briefClauses(string(brief))); err != nil {
+		return err
+	}
+	rel := itemFile(it.ID, checksName)
+	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
+		return err
+	}
+	ev := Event{
+		T: "rebaseline", ID: it.ID, Checks: rel,
+		ChecksSHA: shaHex([]byte(text)), PrevSHA: it.ChecksSHA, Reason: reason,
+	}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s check list re-baselined (%d rows)\n", it.ID, len(rows))
+	return nil
+}
+
+func cmdClaims(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	order, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	if err := requireInFlight(order, it); err != nil {
+		return err
+	}
+	if it.Checks == "" {
+		return refuseRule("R5", "%s has no check list — the list is frozen before the claims; run `bl checks %s` first", it.ID, it.ID)
+	}
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the claims are frozen once", it.ID)
+	}
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	path := a.get("file")
+	if path == "" {
+		return refuse("--file is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return refuse("--file %s: %v", path, err)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return refuse("--file %s is empty", path)
+	}
+	rel := itemFile(it.ID, claimsName)
+	if err := atomicWrite(filepath.Join(root, rel), string(data)); err != nil {
+		return err
+	}
+	if _, err := appendEvent(root, Event{T: "claims", ID: it.ID, Claims: rel, ClaimsSHA: shaHex(data)}); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s claims recorded\n", it.ID)
 	return nil
 }
 
@@ -714,6 +1369,15 @@ func cmdRound(root string, a args) error {
 	}
 	if cur == nil || !strings.EqualFold(cur.ID, it.ID) {
 		return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
+	}
+	// R20: the frozen artefacts are what they were when the round was written against.
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	// R2 at use: a frozen row that cites a clause the current brief no longer holds is a
+	// refusal — the round cannot pass on a list whose brief_ref has gone missing (R24).
+	if err := verifyBriefRefs(root, it); err != nil {
+		return err
 	}
 	verdict := strings.ToUpper(strings.TrimSpace(a.get("verdict")))
 	if verdict != "PASS" && verdict != "FAIL" {
@@ -788,6 +1452,15 @@ func cmdClose(root string, a args) error {
 	}
 	if cur == nil || !strings.EqualFold(cur.ID, it.ID) {
 		return refuse("%s is not the item in flight — run `bl open %s`", it.ID, it.ID)
+	}
+	// R20: the frozen artefacts are what they were when the round was written against.
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	// R2 at use: the rows the last round was written against must still resolve against the
+	// brief, or the round closed on a criterion the brief no longer holds (R24).
+	if err := verifyBriefRefs(root, it); err != nil {
+		return err
 	}
 	if last := it.last(); last == nil || last.Verdict != "PASS" {
 		return refuse("%s has no PASS round — nothing to close", it.ID)
@@ -1109,6 +1782,16 @@ func cmdCheck(root string, a args) error {
 	}
 	var problems []string
 	for _, it := range order {
+		// R20: re-hash the frozen artefacts and refuse when one no longer matches the hash of
+		// the latest event that recorded it.
+		if err := verifyFrozen(root, it); err != nil {
+			return err
+		}
+		// R2 at use: a frozen row whose brief_ref names a clause the current brief no longer
+		// holds is a refusal — the row's criterion no longer exists (R24).
+		if err := verifyBriefRefs(root, it); err != nil {
+			return err
+		}
 		if it.Status == "closed" {
 			if last := it.last(); last == nil || last.Verdict != "PASS" {
 				problems = append(problems, it.ID+" is closed without a PASS round")
@@ -1193,14 +1876,18 @@ func schemaJSON() map[string]any {
 		"round_cap":  roundCap,
 		"statuses":   []string{"open", "blocked", "closed", "declined", "parked"},
 		"events": map[string]map[string][]string{
-			"file":   {"required": {"id", "text"}, "optional": {"after", "source"}},
-			"open":   {"required": {"id"}, "optional": {}},
-			"round":  {"required": {"id", "verdict", "rows"}, "optional": {"cause"}},
-			"close":  {"required": {"id", "commit"}, "optional": {}},
-			"drop":   {"required": {"id", "reason"}, "optional": {"by"}},
-			"defer":  {"required": {"id", "reason"}, "optional": {}},
-			"reopen": {"required": {"id"}, "optional": {"reason"}},
-			"note":   {"required": {"id", "text"}, "optional": {}},
+			"file":       {"required": {"id", "text"}, "optional": {"after", "source"}},
+			"open":       {"required": {"id"}, "optional": {"brief", "brief_sha"}},
+			"brief":      {"required": {"id", "brief", "brief_sha"}, "optional": {}},
+			"checks":     {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
+			"rebaseline": {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
+			"claims":     {"required": {"id", "claims", "claims_sha"}, "optional": {}},
+			"round":      {"required": {"id", "verdict", "rows"}, "optional": {"cause"}},
+			"close":      {"required": {"id", "commit"}, "optional": {}},
+			"drop":       {"required": {"id", "reason"}, "optional": {"by"}},
+			"defer":      {"required": {"id", "reason"}, "optional": {}},
+			"reopen":     {"required": {"id"}, "optional": {"reason"}},
+			"note":       {"required": {"id", "text"}, "optional": {}},
 		},
 	}
 }
@@ -1211,9 +1898,11 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	fmt.Printf("bl schema v1 — %s/%s\n", backlogDir, ledgerName)
-	order := []string{"file", "open", "round", "close", "drop", "defer", "reopen", "note"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "round", "close", "drop", "defer", "reopen", "note"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
+	// The count is part of the output: a reader (and a grep) must be able to tell 12 kinds
+	// from 11 without counting the lines.
+	fmt.Printf("bl schema v1 — %s/%s · %d event kinds\n", backlogDir, ledgerName, len(order))
 	for _, name := range order {
 		s := spec[name]
 		opt := strings.Join(s["optional"], ", ")
@@ -1693,7 +2382,24 @@ func (a args) rows() (string, error) {
 	return string(data), nil
 }
 
-var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true}
+// input reads the file named by a flag, or stdin when the flag is absent.
+func (a args) input(name string) (string, error) {
+	path := a.get(name)
+	if path == "" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", refuse("--%s %s: %v", name, path, err)
+	}
+	return string(data), nil
+}
+
+var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true}
 
 func parseArgs(raw []string) (args, error) {
 	a := args{flags: map[string]string{}, boolFlags: map[string]bool{}}
@@ -1722,31 +2428,35 @@ func parseArgs(raw []string) (args, error) {
 }
 
 var handlers = map[string]func(string, args) error{
-	"init":   cmdInit,
-	"file":   cmdFile,
-	"open":   cmdOpen,
-	"round":  cmdRound,
-	"close":  cmdClose,
-	"drop":   cmdDrop,
-	"defer":  cmdDefer,
-	"reopen": cmdReopen,
-	"note":   cmdNote,
-	"next":   cmdNext,
-	"show":   cmdShow,
-	"status": cmdStatus,
-	"render": cmdRender,
-	"check":  cmdCheck,
-	"schema": cmdSchema,
-	"audit":  cmdAudit,
-	"import": cmdImport,
-	"lint":   cmdLint,
+	"init":       cmdInit,
+	"file":       cmdFile,
+	"open":       cmdOpen,
+	"brief":      cmdBrief,
+	"checks":     cmdChecks,
+	"rebaseline": cmdRebaseline,
+	"claims":     cmdClaims,
+	"round":      cmdRound,
+	"close":      cmdClose,
+	"drop":       cmdDrop,
+	"defer":      cmdDefer,
+	"reopen":     cmdReopen,
+	"note":       cmdNote,
+	"next":       cmdNext,
+	"show":       cmdShow,
+	"status":     cmdStatus,
+	"render":     cmdRender,
+	"check":      cmdCheck,
+	"schema":     cmdSchema,
+	"audit":      cmdAudit,
+	"import":     cmdImport,
+	"lint":       cmdLint,
 }
 
 const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
-  init | file | open | round | close | drop | defer | reopen | note
-  next | show | status | check | render | schema | audit | import | lint
+  init | file | open | brief | checks | rebaseline | claims | round | close | drop | defer
+  reopen | note | next | show | status | check | render | schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`
@@ -1805,7 +2515,11 @@ func report(err error) int {
 	var corruption Corruption
 	switch {
 	case errors.As(err, &refusal):
-		fmt.Fprintf(os.Stderr, "bl: refused: %s\n", refusal.msg)
+		if refusal.rule != "" {
+			fmt.Fprintf(os.Stderr, "bl: refused (%s): %s\n", refusal.rule, refusal.msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "bl: refused: %s\n", refusal.msg)
+		}
 		return 2
 	case errors.As(err, &corruption):
 		fmt.Fprintf(os.Stderr, "bl: corrupt ledger: %s\n", corruption.msg)
