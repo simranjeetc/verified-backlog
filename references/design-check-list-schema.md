@@ -192,6 +192,13 @@ is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repos
 **Init.** `bl init` creates `.backlog/`, the empty ledger, and the two views, and reports — but does not change — the
 fact that `.backlog/` is not in `.gitignore`. It is the only command that creates the directory.
 
+**Who writes the ledger.** One writer: `bl`. Every other party produces a file and hands it over — the human writes
+`BRIEF.md` and the item text, the producer writes the source files and `claims.md`, verifier-1 writes `checks.tsv`,
+verifier-2 writes `verdicts.tsv`, and the machine produces the run — and `bl` hashes and records each one. No verb
+edits the ledger; a correction is a new event. The limit, stated plainly: the model has a shell, so it can rewrite the
+file directly, and "the ledger is append-only" is a property of the binary, not of the machine. The chain and the
+anchor exist for exactly that case, and for nothing else.
+
 **Human sign-off (R22).** `bl signoff A1 --by <name> --note <text>` records a `signoff` event naming the item, a
 non-empty person and a non-empty note. It is accepted only for an item that has no round yet, so it cannot override a
 failed round.
