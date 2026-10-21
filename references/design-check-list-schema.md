@@ -394,6 +394,9 @@ failed round; it exists so that an item with no `decider: bl` blocking row can s
 - `--cause harness` is accepted only when the verdicts file is absent or contains no rows, because a harness failure
   means the verifier did not run, and only when no `--finding` was given, because a run that never happened cannot
   have found anything. A harness round skips R6, R9, R10, R12 and R14, and is recorded with no rows.
+  **Absent** means the flag was not given, or the path does not exist. A path that exists and cannot be read as a file
+  — a directory, or a file that cannot be opened — is refused, not treated as empty: a caller who meant to hand over
+  rows and handed over something else has made a mistake, and a mistake is not a run that never happened.
 - `--cause dispute` is accepted only when R13 applies.
 - `--cause code` is accepted only when the derived verdict is `FAIL` and at least one blocking row has row-verdict
   `FAIL`.
@@ -474,6 +477,11 @@ The same goes the other way: an `expect` pattern is Go's RE2, so two alternative
 backslash before a pipe there means a literal pipe rather than an alternation. The refusal names the row that holds
 the mistake.
 
+**R35 — only the item in flight is worked on.** A verb that works on an item — `bl run` and `bl round` — refuses
+when that item is not the item in flight, and reports R35. The loop keeps one item in verification at a time, and
+the lock is what keeps it that way: two items in flight at once would each hold a half-written tree, and the run
+that pins a tree cannot tell which half it pinned. A refusal under R35 writes nothing.
+
 **P1 is a rule about the whole list, not about one row.** The precedence in §4 applies across the list: if one row
 breaks R1 and another breaks R8, the refusal names R1. Evaluating rule by rule and row by row lets the rule that
 happens to sit higher in the file win, which is not the same thing as the earliest broken rule. This is still an
@@ -502,13 +510,13 @@ broken list is refused for the list's own fault, not for the state of the item.
 The six per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4), `bl close` (P5) and
 `bl rebaseline` (P11).
 
-**P2 — `bl round` order.** R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
+**P2 — `bl round` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
 list, names the latest run, and names the run's tree, which is the current tree) → R28 (no ignored file under the scope
 changed) → R25 (artefacts are excluded) → R9
 (anchors) → R10 (hunk coverage) → R16 (misclassification) → R13 (dispute) → R14 (advisory filed) → R12 (derived verdict)
 → R23-cause (code or dispute) → R19 (cap).
 
-**P3 — `bl run` order.** R20 (the frozen artefacts are what they were) → R1 (the list still parses) → R7 (every row
+**P3 — `bl run` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R1 (the list still parses) → R7 (every row
 ran) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
 on the first of these that fails, and no run file is written. R26 and R27 are comparisons ACROSS the run — the tree and
 the ledger are hashed before it and again after it — so they can only be made once the rows have run. The list
@@ -715,8 +723,8 @@ Computed with the rules above.
 |---|---|---|
 | checks `bl` validates before storing a list | 6 | R1, R2, R3, R4, R5, R8 |
 | refusals `bl checks` can raise | 6 | R1, R2, R3, R4, R5, R8 |
-| refusals `bl round` can raise | 10 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
-| refusals `bl run` can raise | 4 | R1, R20, R26, R27 |
+| refusals `bl round` can raise | 11 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
+| refusals `bl run` can raise | 5 | R1, R20, R26, R27, R35 |
 | refusals `bl close` can raise | 4 | R15, R18, R20, R25 |
 | frozen artefacts re-verified before a command | 3 | the brief, the check list and the claims, each against its latest recorded hash — R20 |
 | code rounds a failing item may have | 3 | R19 |
