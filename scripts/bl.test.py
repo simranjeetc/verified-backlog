@@ -17,7 +17,9 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-BL = os.environ.get("BL", str(HERE / "bl"))
+# absolute: the binary is run from other working directories (the temp roots, and the
+# scratch root the verb list is read in), so a relative BL must not follow them.
+BL = os.path.abspath(os.environ.get("BL", str(HERE / "bl")))
 if not Path(BL).exists():
     raise SystemExit(f"no bl binary at {BL} — build it: go build -o scripts/bl ./scripts/bl-go")
 RESULTS: list[tuple[str, bool, str]] = []
@@ -52,6 +54,30 @@ def refused(root: Path, *args: str, stdin: str | None = None, match: str | None 
 def ledger_lines(root: Path) -> int:
     p = root / ".backlog" / "ledger.jsonl"
     return len(p.read_text(encoding="utf-8").splitlines()) if p.exists() else 0
+
+
+def binary_verbs() -> set[str]:
+    """The verbs this binary has, read from the usage output the binary prints itself.
+
+    The set is never typed here. It is parsed out of the compiled binary's own
+    "verbs:" list, so a verb the binary grows is a verb the gate knows about
+    without the gate being edited.
+    """
+    with tempfile.TemporaryDirectory(prefix="bl-verbs-") as tmp:
+        r = subprocess.run([BL], cwd=tmp, capture_output=True, text=True, check=False)
+    lines = (r.stdout + r.stderr).splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.strip() == "verbs:"), None)
+    assert start is not None, "the binary printed no verb list in its usage output"
+    verbs: set[str] = set()
+    for line in lines[start + 1:]:
+        s = line.strip()
+        if not s:
+            break
+        if "|" not in s and verbs:
+            break
+        verbs.update(tok.strip() for tok in s.split("|") if tok.strip())
+    assert verbs, "the binary printed an empty verb list"
+    return verbs
 
 
 def test(fn):
@@ -490,8 +516,7 @@ def a_repeated_seq_exits_3():
 @test
 def the_documented_verbs_are_the_real_verbs():
     skill = (HERE.parent / "SKILL.md").read_text()
-    declared = {"init", "file", "open", "round", "close", "drop", "defer", "reopen", "note",
-                "next", "show", "status", "check", "render", "schema", "audit", "import", "lint"}
+    declared = binary_verbs()
     for verb in sorted(declared):
         taught = any(n in skill for n in (f"bl {verb}", f"`{verb}", f'"$BL" {verb}'))
         assert taught, f"SKILL.md never teaches bl {verb}"
