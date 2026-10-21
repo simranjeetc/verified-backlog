@@ -471,8 +471,10 @@ that the claims were made against.
 
 
 **R34 — a command is a shell script, and a pattern is not a shell.** A `cmd` field is a script run by `/bin/sh -c`
-from the repository root, so a pipe in it is a pipe: `a | b` runs `b` on what `a` prints. A backslash before a pipe is
-refused in a frozen list, because the shell reads `\|` as a literal pipe and the row then does not do what it says.
+from the repository root, so a pipe in it is a pipe: `a | b` runs `b` on what `a` prints. A pipe is ESCAPED when an odd
+number of backslashes precedes it: the shell reads `\|` as a literal pipe, so a row holding one does not do what it
+says, and such a row is refused in a frozen list. An even number of backslashes before a pipe is an escaped backslash
+followed by a real pipe, and the row is fine — the check counts the backslashes rather than looking for the pair.
 The same goes the other way: an `expect` pattern is Go's RE2, so two alternatives are separated by a pipe, and a
 backslash before a pipe there means a literal pipe rather than an alternation. The refusal names the row that holds
 the mistake.
