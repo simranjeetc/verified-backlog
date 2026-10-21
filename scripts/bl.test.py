@@ -257,7 +257,7 @@ def cap_counts_code_only():
     for _ in range(3):
         ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="check | FAIL\n")
     refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="x\n", match="cap 3")
-    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", "-", stdin="harness\n")
+    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "harness")
     ok(root, "round", "A1", "--verdict", "PASS", "--rows", "-", stdin="all green\n")
 
 

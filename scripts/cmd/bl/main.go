@@ -1476,6 +1476,12 @@ func cmdRound(root string, a args) error {
 	if err := verifyFrozen(root, it); err != nil {
 		return err
 	}
+	// R23 (P2): a harness round has no rows and stops here. The check sits right after R20 and
+	// before everything else on this path, so a harness round on tampered frozen artefacts is
+	// refused under R20, not R23.
+	if err := harnessRowsRefused(a); err != nil {
+		return err
+	}
 	// R24: an amendment that removed a clause a frozen row cites refuses the round — the row's
 	// criterion no longer exists in the brief it was written against.
 	if err := verifyBriefRefs(root, it); err != nil {
@@ -1506,9 +1512,11 @@ func cmdRound(root string, a args) error {
 		return err
 	}
 	// R23: a harness round carries no rows — the verifier did not run, so there is nothing to
-	// record and nothing to hash. A code or a dispute round is a verdict about rows, so it
-	// needs them, and they must not be empty. A PASS round carries no cause and no finding:
-	// it may be written against its evidence, and it may be recorded without any.
+	// record and nothing to hash. A rows file with content was already refused at the R23-harness
+	// step, so what reaches here is a harness round with no rows file or with an empty one, and
+	// it is recorded with no rows. A code or a dispute round is a verdict about rows, so it needs
+	// them, and they must not be empty. A PASS round carries no cause and no finding: it may be
+	// written against its evidence, and it may be recorded without any.
 	rows := ""
 	if cause != "harness" {
 		if a.get("rows") != "" || verdict == "FAIL" {
@@ -1548,6 +1556,38 @@ func cmdRound(root string, a args) error {
 		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, verdict)
 	}
 	return nil
+}
+
+// harnessRowsRefused is R23's harness clause, at the place P2 gives it: a harness round has no
+// rows and stops here. A harness round carries no rows because the verifier did not run, so a
+// rows file with content is refused and the round is not recorded at all. A harness round with no
+// rows file, or with an empty one, is accepted and is recorded with no rows.
+//
+// The rows file is read to see whether it holds rows. A file that cannot be read holds none, so
+// it is the design's "absent" case: the round is accepted and recorded with no rows, as it was
+// before.
+func harnessRowsRefused(a args) error {
+	if strings.ToLower(strings.TrimSpace(a.get("cause"))) != "harness" {
+		return nil
+	}
+	if strings.ToUpper(strings.TrimSpace(a.get("verdict"))) != "FAIL" {
+		// a PASS round carries no cause at all, and that refusal is raised where the verdict is
+		// read — this clause is about a harness round, and a PASS round is not one.
+		return nil
+	}
+	path := a.get("rows")
+	if path == "" {
+		return nil
+	}
+	rows, err := a.rows()
+	if err != nil || strings.TrimSpace(rows) == "" {
+		return nil
+	}
+	what := "the rows file " + path
+	if path == "-" {
+		what = "the rows on stdin"
+	}
+	return refuseRule("R23", "a harness round carries no rows — the verifier did not run, so %s must be empty", what)
 }
 
 // completeRefused is R18: the item is complete. Its last round is a PASS, so the only legal
