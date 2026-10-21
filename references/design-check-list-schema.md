@@ -4,7 +4,8 @@
 `run`, or a derived verdict. Seven verification rounds are recorded in §8; the last one still found blocking defects,
 which are fixed in this revision but have not been through an eighth round. Two findings from round 7 are
 **structural, not textual** — the ledger is a file the agent can rewrite, and files outside the pinned tree can hold
-the fix — and both need a human decision (§7). Treat this as a reviewed draft, not a finished design.
+the fix — and both need a human decision. The trust root has four OS-agnostic options, costed, at the end of §7.
+Treat this as a reviewed draft, not a finished design.
 **Date:** 2026-10-21
 **Inputs:** `references/opinions/2026-10-21-claude-opus-cost-cutting.md` (cost), `…-claude-opus-5-5-judgment-seam.md`
 (the judgment seam), `…-claude-opus-5-5-check-classification.md` (classification). Vocabulary: `references/GLOSSARY.md`.
@@ -673,7 +674,7 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | behaviour that depends on things outside the repository | limit | a parent `go.work`, a global git config, a developer's shell environment or an ignored file can change what a command does, and the record pins the tree, not the environment. This is a limit of the claim, not a defect in the rules |
 | who keeps `.backlog/` ignored | process | R25 refuses a round when `.backlog/` is tracked; the repository's `.gitignore` is what keeps it ignored, and `bl init` can only report it |
 | two items in flight at once | process | R27 hashes the whole of `.backlog/`, so a second concurrent run is refused; the skill's one-item-in-flight rule is what keeps this from mattering |
-| **the ledger is a file the agent can rewrite** | **architecture** | every hash in this design is stored in `.backlog/ledger.jsonl`, which lives in the repository the agent may write. A hash chain detects an edit to an event; it does not stop the agent writing a new chain, or a forged `run` or `round` event, in place of the old one. The guarantee this design can honestly claim is "a third party can detect that the record changed", not "the agent cannot rewrite history". Closing that needs a witness the agent cannot reach: an external anchor (a remote commit, a notary), a signing key in the OS keychain, or a ledger owned by a second uid. **This is a decision for a human, not a rule.** |
+| **the ledger is a file the agent can rewrite** | **architecture** | every hash in this design is stored in `.backlog/ledger.jsonl`, which lives in the repository the agent may write. A hash chain detects an edit to an event; it does not stop the agent writing a new chain, or a forged `run` or `round` event, in place of the old one. The guarantee this design can honestly claim is "a third party can detect that the record changed", not "the agent cannot rewrite history". Closing that needs a witness outside the agent's write surface — see the options below, which are all OS-agnostic. **This is a decision for a human, not a rule.** |
 | a change made and reverted inside the run | limit | R26 compares the tree before and after the run, so it catches a net change; a change made and reverted while the rows run is invisible. Catching it needs a per-row tree, at the cost of hashing the tree after every command |
 | a command that detaches a background process | limit | the run kills the process group on timeout, but a process that detaches itself and acts after the run is outside what the tree checks can see |
 | the cost of `bl run` itself | implementation | the rows are executed sequentially; parallelism is an implementation choice that changes wall time, not the recorded values |
@@ -685,6 +686,27 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | a row whose output depends on the time of day | implementation | the run records what it saw; the row is a record of that run, not a reproducible value |
 | the interface by which a verdict-time downgrade is requested | interface | R11 refuses the downgrade; the requester has no command to call, and files an item instead — that is deliberate, but it is a gap in the interface |
 | a round whose commands need the network | implementation | the environment has no proxy variables and `HOME` is scratch; a network command may behave differently from the developer's shell |
+
+### The trust root, in options (all OS-agnostic)
+
+The property needed is not "the agent cannot read the witness" — it is "**the agent cannot make a rewrite
+invisible**". Everything below satisfies that on any operating system, and they compose.
+
+| option | what it costs | what it buys | what it does not buy |
+|---|---|---|---|
+| **A. Hash-chain the ledger, anchor the head by hand** — each event carries `prev_sha`, so the file is a chain; `bl anchor` prints the head hash and the human stores it anywhere they trust and the agent cannot reach (a photo, a paper note, an account the agent has no credentials for) | one human action per anchor; no key material; no infrastructure | a rewrite changes the head, so the stored anchor no longer matches and the tamper is visible. Works on a laptop with no network | does not stop a rewrite that happens *before* the first anchor; the anchor's own storage is out of band |
+| **B. The remote is the witness** — the ledger is committed with the work; the agent holds **fetch-only** credentials for the remote, and the push credential never touches the machine the agent runs on | one credential split; the human pushes, or a CI job pushes | the remote's history is the anchor; local rewrites are visible by comparing to the remote. Free, and already how most repos work | nothing if the agent can push; a rewrite that is pushed looks like normal history |
+| **C. Append-only public log** — the head is submitted to an immutable transparency log (a Sigstore/Rekor-style log, or any append-only service) | an account and a network call | the first anchor is immutable forever, so every later rewrite is provably a second, conflicting history. The agent *can* submit a forged head — but it cannot erase the first one, so the forgery becomes visible | only helps once something is anchored; costs a network dependency and an account |
+| **D. Hardware signing key** — the head is signed by a FIDO2/hardware token the agent can call but whose private key never leaves the device (human presses to allow) | the device; a human press per anchor | a forged head cannot be produced by the agent at all — the strongest of the four | a hardware dependency; still manual |
+
+**Default to ship with:** A, because it is the cheapest and it works everywhere, and it needs no credential the agent
+could reach. B is free if the repository already has a remote and the human is willing to own the push credential.
+C is the one that survives a machine being wiped. D is the only one that turns "the agent cannot rewrite it" into a
+guarantee rather than a detection.
+
+Whatever is chosen, the rules in §3 do not change: the ledger stays a hash chain, the artefacts stay hashed, and
+the anchor is an addition at the point where the head is recorded. This is why it is a decision and not a rule — the
+wording cannot pick it.
 
 ---
 
