@@ -2,12 +2,11 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (12)
+## Queue (11)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I12 — compaction on every 250k crossing: whenever a session's token consumption crosses a multiple of 250k, the compaction must be triggered once the logical step that crossed it is complete - every crossing, not only the first - so a long session is compacted repeatedly instead of never  _(human)_
 - [ ] I14 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(verifier:I11/r2)_
-- [ ] I15 — R34 fires on the two characters backslash and pipe, so a command holding an escaped backslash followed by a real pipe is refused even though its pipe is not escaped; the shell reads the doubled backslash as one backslash and the pipe as a pipe. The refusal must count the backslashes and fire only when the pipe is actually escaped  _(verifier:I13/r1)_
 - [ ] I16 — R25 says bl says so when .backlog/ is tracked by git, and the implementation does not: bl run excludes .backlog/ from the tree unconditionally and never says anything about it being tracked  _(verifier:I2/r1)_
 - [ ] I17 — bl run does not require the item to be in flight (cmdRun omits requireInFlight), so a run can happen outside the item's turn and the one-item-at-a-time discipline is not enforced on that path; decide whether bl run must hold the lock like bl round does, and enforce it  _(verifier:I2/r1)_
 - [ ] I18 — R7 says the binary computes a decider: bl row's row-verdict, and the implementation does not: the round takes the judge's word for a bl row, so the derivation in R12 rests on the judge's word and a judge who writes PASS for a failing command gets a PASS round; the binary must compute a bl row's row-verdict from the run's observed values against that row's expect  _(producer:I3/r1)_
@@ -29,7 +28,7 @@ _none_
 
 _none_
 
-## Closed (11)
+## Closed (12)
 
 - [x] I1 — bl checks + bl claims: the check-list row schema and the ordering rule (design R1-R8, R20, R24). Scope: scripts/cmd/bl/main.go, scripts/cmd/bl/main_test.go  _(commit a571e71)_
 - [x] I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)  _(commit 9e8f95a)_
@@ -42,4 +41,5 @@ _none_
 - [x] I10 — the gate's verb set is a hard-coded list of 18 and omits the four verbs the binary grew in I1 (brief, checks, claims, rebaseline), so SKILL.md cannot document them and the check named the_documented_verbs_are_the_real_verbs is weaker than its name; the set must come from the binary  _(commit 7a6978b; verifier:I8/r1)_
 - [x] I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows  _(commit 0cf8e86; verifier:I8/r1)_
 - [x] I13 — the check-list format never says which dialect each field is written in, so the verifier keeps over-escaping: it writes a backslash-pipe where the shell wants a pipe and where Go's RE2 wants an alternation, and the row cannot run - it cost two harness rounds in I8 and one row in I9. The format must state the two dialects plainly (the cmd is a shell script run by /bin/sh -c, so its pipes are pipes; the expect pattern is Go's RE2, so an alternation is a bare pipe and a backslash-pipe is a literal pipe), and the binary must refuse a frozen list whose cmd contains an escaped pipe, so the mistake cannot reach a round. This must be closed before I2 begins  _(commit be4d18f; human)_
+- [x] I15 — R34 fires on the two characters backslash and pipe, so a command holding an escaped backslash followed by a real pipe is refused even though its pipe is not escaped; the shell reads the doubled backslash as one backslash and the pipe as a pipe. The refusal must count the backslashes and fire only when the pipe is actually escaped  _(commit 69aa5dd; verifier:I13/r1)_
 
