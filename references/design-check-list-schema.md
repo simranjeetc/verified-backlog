@@ -494,9 +494,13 @@ changed) → R25 (artefacts are excluded) → R9
 (anchors) → R10 (hunk coverage) → R16 (misclassification) → R13 (dispute) → R14 (advisory filed) → R12 (derived verdict)
 → R23-cause (code or dispute) → R19 (cap).
 
-**P3 — `bl run` order.** R20 (the frozen artefacts are what they were) → R26 (the tree did not move) → R27 (the ledger
-did not move) → R1 (the list still parses) → R7 (every row ran). A run is refused on the first of these that fails,
-and no run file is written.
+**P3 — `bl run` order.** R20 (the frozen artefacts are what they were) → R1 (the list still parses) → R7 (every row
+ran) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
+on the first of these that fails, and no run file is written. R26 and R27 are comparisons ACROSS the run — the tree and
+the ledger are hashed before it and again after it — so they can only be made once the rows have run. The list
+therefore has to parse, and the rows have to run, before they are checked. This order was written before anything ran;
+item I2 found the order that can be implemented, and item I2's verifier confirmed the implemented order is the only one
+that can be.
 
 **P4 — `bl claims` order.** R20 (the frozen artefacts are what they were) → R5 (the list exists, and the claims are
 not already recorded).
