@@ -51,6 +51,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -1972,6 +1973,9 @@ func verifiedTreeWriting(root string) (string, error) {
 }
 
 func buildTree(root string, write bool) (string, error) {
+	// R25: the artefacts are never part of a verified tree, and a repository that tracks them is
+	// a repository error — bl says so, wherever a tree is computed.
+	reportTrackedArtefact(root)
 	b := &treeBuilder{root: root, ignored: map[string]bool{}, write: write}
 	if err := b.findIgnored(); err != nil {
 		return "", err
@@ -2905,17 +2909,53 @@ func checkR28(root string, it *Item) error {
 	return nil
 }
 
-// checkR25 is R25: `.backlog/` is never part of a verified tree, and a repository that tracks
-// it is a repository error.
-func checkR25(root string) error {
+// ── R25: the artefacts ───────────────────────────────────────────────────────
+
+// trackedArtefact says whether the repository tracks the artefact directory `.backlog/`. The
+// artefacts are never part of a verified tree, and a repository that tracks them is a repository
+// error.
+func trackedArtefact(root string) bool {
 	out, code := git(root, "ls-files", "--", backlogDir)
-	if code != 0 {
+	return code == 0 && strings.TrimSpace(out) != ""
+}
+
+// trackedArtefactMessage is the one sentence R25 uses about a repository that tracks `.backlog/`:
+// it is said wherever a tree is computed, and it is what the round refuses under.
+func trackedArtefactMessage() string {
+	return fmt.Sprintf("the %s directory is tracked in this repository — it is an artefact directory and must never be tracked", backlogDir)
+}
+
+// artefactReported remembers the repositories whose tracked artefacts have already been said, so
+// that a command that computes several trees says it once.
+var artefactReported = struct {
+	sync.Mutex
+	reported map[string]bool
+}{reported: map[string]bool{}}
+
+// reportTrackedArtefact says so when `.backlog/` is tracked: the artefacts are excluded from every
+// verified tree, and a repository that tracks them is a repository error (R25). It is a report and
+// not a refusal — the command that computed the tree carries on and writes its evidence as usual.
+func reportTrackedArtefact(root string) {
+	if !trackedArtefact(root) {
+		return
+	}
+	artefactReported.Lock()
+	said := artefactReported.reported[root]
+	artefactReported.reported[root] = true
+	artefactReported.Unlock()
+	if said {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "bl: %s\n", trackedArtefactMessage())
+}
+
+// checkR25 is R25: `.backlog/` is never part of a verified tree, and a repository that tracks it
+// is a repository error — so the round refuses rather than comparing trees that include it.
+func checkR25(root string) error {
+	if !trackedArtefact(root) {
 		return nil
 	}
-	if strings.TrimSpace(out) != "" {
-		return refuseRule("R25", "the %s directory is tracked in this repository — it is an artefact directory and must never be tracked", backlogDir)
-	}
-	return nil
+	return refuseRule("R25", "%s", trackedArtefactMessage())
 }
 
 // ── the evidence file ────────────────────────────────────────────────────────

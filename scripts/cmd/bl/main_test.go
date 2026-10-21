@@ -3760,3 +3760,87 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 		})
 	}
 }
+
+// ── I16: R25 says so when the artefacts are tracked ──────────────────────────
+
+// trackedArtefactReport is the shape of the message the check looks for: it names `.backlog` and
+// says that it is tracked.
+var trackedArtefactReport = regexp.MustCompile(`(?i)(\.backlog[^\n]*[^a-z]tracked|[^a-z]tracked[^\n]*\.backlog)`)
+
+// trackedWord is the word "tracked" as a word: "untracked" is not it.
+var trackedWord = regexp.MustCompile(`(?i)(^|[^a-z])tracked`)
+
+// gitRunItem prepares an item with a frozen check list in a git repository, ready to run.
+func gitRunItem(t *testing.T) string {
+	t.Helper()
+	dir := gitItem(t)
+	checksOK(t, dir, oneRowList)
+	return dir
+}
+
+// trackedArtefactItem prepares the same item in a repository that TRACKS `.backlog/`: the
+// artefacts are staged, the way a mistake would leave them.
+func trackedArtefactItem(t *testing.T) string {
+	t.Helper()
+	dir := gitRunItem(t)
+	if out, err := exec.Command("git", "-C", dir, "add", "-f", ".backlog").CombinedOutput(); err != nil {
+		t.Fatalf("git add -f .backlog: %v: %s", err, out)
+	}
+	return dir
+}
+
+// A repository that tracks `.backlog/` is a repository error, and `bl` says so: the run says it
+// on stderr, and the run still happens. The artefacts are excluded from the tree either way.
+func TestR25TheRunSaysSoWhenTheArtefactsAreTracked(t *testing.T) {
+	dir := trackedArtefactItem(t)
+	var code int
+	out := captureStderr(t, func() {
+		capture(t, func() { code = run([]string{"--root", dir, "run", "A1"}) })
+	})
+	if code != 0 {
+		t.Fatalf("the run must happen with the artefacts tracked: exit %d\n%s", code, out)
+	}
+	if !trackedArtefactReport.MatchString(out) {
+		t.Fatalf("the run must say that .backlog is tracked:\n%s", out)
+	}
+	// the report is not a refusal: the run file is written
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); err != nil {
+		t.Fatalf("run file: %v", err)
+	}
+	// and the artefacts are still not part of the verified tree
+	tree, err := verifiedTreeWriting(dir)
+	if err != nil {
+		t.Fatalf("the verified tree: %v", err)
+	}
+	ls, lsCode := git(dir, "ls-tree", "-r", tree)
+	if lsCode != 0 {
+		t.Fatalf("ls-tree: exit %d", lsCode)
+	}
+	if strings.Contains(ls, backlogDir) {
+		t.Errorf("the tree must not hold the artefacts:\n%s", ls)
+	}
+}
+
+// With the artefacts untracked — the normal case — the run says nothing about them being tracked.
+func TestR25TheRunSaysNothingWhenTheArtefactsAreUntracked(t *testing.T) {
+	dir := gitRunItem(t)
+	var code int
+	out := captureStderr(t, func() {
+		capture(t, func() { code = run([]string{"--root", dir, "run", "A1"}) })
+	})
+	if code != 0 {
+		t.Fatalf("the run must succeed: exit %d\n%s", code, out)
+	}
+	if trackedWord.MatchString(out) {
+		t.Fatalf("the run must say nothing about .backlog being tracked:\n%s", out)
+	}
+}
+
+// The round's own check is unchanged by the report: a repository that tracks the artefacts is
+// refused under R25, and a repository that does not is not.
+func TestR25TheRoundStillRefusesATrackedArtefactDirectory(t *testing.T) {
+	wantRule(t, checkR25(trackedArtefactItem(t)), "R25")
+	if err := checkR25(gitRunItem(t)); err != nil {
+		t.Fatalf("checkR25: %v", err)
+	}
+}
