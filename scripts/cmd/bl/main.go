@@ -58,6 +58,7 @@ const (
 	queueView   = "TODO.md"
 	recordView  = "PROGRESS.md"
 	roundCap    = 3
+	totalCap    = 6
 	marker      = "rendered from " + backlogDir + "/" + ledgerName + " by bl"
 	itemsDir    = "items"
 	briefName   = "brief.md"
@@ -82,7 +83,7 @@ var (
 
 var (
 	verdicts = []string{"PASS", "FAIL"}
-	causes   = []string{"code", "harness"}
+	causes   = []string{"code", "harness", "dispute"}
 )
 
 // Event is one line of the ledger.
@@ -129,19 +130,34 @@ type Item struct {
 	Brief, BriefSHA   string
 	Checks, ChecksSHA string
 	Claims, ClaimsSHA string
-	// The seq of the latest re-baseline: a re-baseline is a new premise, so the code rounds
-	// before it no longer count against the cap.
+	// The seq of the latest re-baseline: a re-baseline is a new premise, so it is recorded
+	// as the premise it is. It resets no count — the round budget belongs to the item.
 	RebaselineSeq int
 }
 
-// codeFails counts the code rounds spent since the latest re-baseline (R19).
-func (i *Item) codeFails() int {
+// causeRounds counts the item's rounds of one cause over its whole life (R19). A re-baseline
+// is a new premise, not a new item, so it resets no count.
+func (i *Item) causeRounds(cause string) int {
 	n := 0
 	for _, r := range i.Rounds {
-		if r.Verdict != "FAIL" || r.Cause != "code" {
-			continue
+		if r.Cause == cause {
+			n++
 		}
-		if i.RebaselineSeq == 0 || r.Seq > i.RebaselineSeq {
+	}
+	return n
+}
+
+// codeFails counts the code rounds the item has spent over its whole life (R19).
+func (i *Item) codeFails() int {
+	return i.causeRounds("code")
+}
+
+// passRounds counts the item's PASS rounds over its whole life (R19). A PASS carries no
+// cause, so it is counted here: a PASS is a round, and it spends the budget.
+func (i *Item) passRounds() int {
+	n := 0
+	for _, r := range i.Rounds {
+		if r.Verdict == "PASS" {
 			n++
 		}
 	}
@@ -535,6 +551,11 @@ func renderRecords(root string, order []*Item) string {
 			cause := ""
 			if r.Cause != "" {
 				cause = " cause=" + r.Cause
+			}
+			if r.Rows == "" {
+				// a harness round carries no rows, so there is no evidence file to name
+				fmt.Fprintf(&b, "- r%d %s%s — no rows\n", i+1, r.Verdict, cause)
+				continue
 			}
 			sha := r.RowsSHA
 			if len(sha) > 12 {
@@ -1384,40 +1405,58 @@ func cmdRound(root string, a args) error {
 		return refuse("--verdict must be one of %s", strings.Join(verdicts, ", "))
 	}
 	cause := strings.ToLower(strings.TrimSpace(a.get("cause")))
-	if verdict == "FAIL" && cause != "code" && cause != "harness" {
+	if verdict == "FAIL" && cause != "code" && cause != "harness" && cause != "dispute" {
 		return refuse("a FAIL needs --cause %s", strings.Join(causes, "|"))
 	}
 	if verdict == "PASS" && cause != "" {
 		return refuse("a PASS carries no cause")
 	}
-	if last := it.last(); last != nil && last.Verdict == "PASS" {
-		return refuse("%s already passed — close it", it.ID)
-	}
-	if verdict == "FAIL" && cause == "code" && it.codeFails() >= roundCap {
-		return refuse("%s has spent %d code rounds (cap %d) — escalate to a human", it.ID, it.codeFails(), roundCap)
-	}
-	rows, err := a.rows()
-	if err != nil {
+	// R18: the item is complete. Its last round is a PASS, so the only legal next step is the
+	// close, and a further round is refused — whatever is left of the budget. The guard comes
+	// BEFORE the budget (R19), so the refusal names the state of the item and not the
+	// arithmetic.
+	if err := completeRefused(it); err != nil {
 		return err
 	}
-	rows = strings.TrimRight(rows, "\r\n")
-	if strings.TrimSpace(rows) == "" {
-		return refuse("--rows is empty: a verdict exists only after commands have run")
+	// R19: the item's whole round budget. Three code rounds, three harness rounds and three
+	// dispute rounds per item, and six rounds in total, of any cause — a PASS round counts
+	// too. The counts are over the item's whole life, so a re-baseline resets none of them.
+	if err := budgetRefused(it, cause); err != nil {
+		return err
+	}
+	// R23: a harness round carries no rows — the verifier did not run, so there is nothing to
+	// record and nothing to hash. A code or a dispute round is a verdict about rows, so it
+	// needs them, and they must not be empty. A PASS round carries no cause and no finding:
+	// it may be written against its evidence, and it may be recorded without any.
+	rows := ""
+	if cause != "harness" {
+		if a.get("rows") != "" || verdict == "FAIL" {
+			var err error
+			rows, err = a.rows()
+			if err != nil {
+				return err
+			}
+			rows = strings.TrimRight(rows, "\r\n")
+			if strings.TrimSpace(rows) == "" {
+				return refuse("--rows is empty: a verdict exists only after commands have run")
+			}
+		}
 	}
 	p := newPaths(root)
-	if err := os.MkdirAll(p.evidence, 0o755); err != nil {
-		return err
-	}
-	name := fmt.Sprintf("%s-r%d.txt", it.ID, len(it.Rounds)+1)
-	if err := atomicWrite(filepath.Join(p.evidence, name), rows+"\n"); err != nil {
-		return err
-	}
-	sum := sha256.Sum256([]byte(rows + "\n"))
-	ev := Event{
-		T: "round", ID: it.ID, Verdict: verdict,
-		Rows:    backlogDir + "/" + evidenceDir + "/" + name,
-		RowsSHA: hex.EncodeToString(sum[:]),
-		Cause:   cause,
+	ev := Event{T: "round", ID: it.ID, Verdict: verdict, Cause: cause}
+	// a round that carries no rows — a harness round, or a PASS written without any — has no
+	// evidence file to hash, so none is written.
+	if rows != "" {
+		if err := os.MkdirAll(p.evidence, 0o755); err != nil {
+			return err
+		}
+		name := fmt.Sprintf("%s-r%d.txt", it.ID, len(it.Rounds)+1)
+		if err := atomicWrite(filepath.Join(p.evidence, name), rows+"\n"); err != nil {
+			return err
+		}
+		sum := sha256.Sum256([]byte(rows + "\n"))
+		ev.Rows = backlogDir + "/" + evidenceDir + "/" + name
+		ev.RowsSHA = hex.EncodeToString(sum[:])
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
@@ -1426,6 +1465,37 @@ func cmdRound(root string, a args) error {
 		fmt.Printf("bl: %s r%d %s (%s)\n", it.ID, len(it.Rounds)+1, verdict, cause)
 	} else {
 		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, verdict)
+	}
+	return nil
+}
+
+// completeRefused is R18: the item is complete. Its last round is a PASS, so the only legal
+// next step is the close, and a further round is refused. The refusal names R18 and says the
+// item already passed.
+//
+// The guard does not look at the budget: a PASS ends the item's rounds, whatever is left of
+// the six (R19). What is left of the budget is R19's business, not the state's.
+func completeRefused(it *Item) error {
+	last := it.last()
+	if last == nil || last.Verdict != "PASS" {
+		return nil
+	}
+	return refuseRule("R18", "%s already passed — close it", it.ID)
+}
+
+// budgetRefused is R19: the round budget of one item, counted over its whole life. Three
+// code rounds, three harness rounds and three dispute rounds, and six rounds in total, of any
+// cause. A re-baseline is a new premise, not a new item, so it resets no count, and a PASS
+// round counts towards the total because it is a round. A refusal names R19 and says the item
+// escalates to a human; it writes nothing.
+func budgetRefused(it *Item, cause string) error {
+	if cause != "" {
+		if n := it.causeRounds(cause); n >= roundCap {
+			return refuseRule("R19", "%s has spent %d %s rounds (cap %d) — escalate to a human", it.ID, n, cause, roundCap)
+		}
+	}
+	if n := len(it.Rounds); n >= totalCap {
+		return refuseRule("R19", "%s has spent %d rounds in total (cap %d) — escalate to a human", it.ID, n, totalCap)
 	}
 	return nil
 }
@@ -1693,13 +1763,17 @@ func cmdShow(root string, a args) error {
 	if it.Reason != "" {
 		fmt.Printf("reason: %s\n", it.Reason)
 	}
-	fmt.Printf("rounds: %d (code failures %d/%d)\n", len(it.Rounds), it.codeFails(), roundCap)
+	fmt.Printf("%s\n", roundCounts(it))
 	for i, r := range it.Rounds {
 		cause := ""
 		if r.Cause != "" {
 			cause = " cause=" + r.Cause
 		}
-		fmt.Printf("  r%d %s%s %s\n", i+1, r.Verdict, cause, r.Rows)
+		rows := r.Rows
+		if rows == "" {
+			rows = "no rows"
+		}
+		fmt.Printf("  r%d %s%s %s\n", i+1, r.Verdict, cause, rows)
 	}
 	for _, n := range it.Notes {
 		fmt.Printf("  note: %s\n", n)
@@ -1715,7 +1789,7 @@ func cmdStatus(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	order, _, err := derive(events)
+	order, byID, err := derive(events)
 	if err != nil {
 		return err
 	}
@@ -1750,7 +1824,32 @@ func cmdStatus(root string, a args) error {
 		fmt.Printf("items %d · %s\n", len(order), strings.Join(parts, " · "))
 	}
 	fmt.Printf("in flight: %s\n", inFlight)
+	// R19: the round counts are part of the status — the total and how many of each cause,
+	// so the harness and dispute rounds are visible.
+	if id := a.pos(0); id != "" {
+		it, err := lookup(byID, id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s %s\n", it.ID, roundCounts(it))
+		return nil
+	}
+	for _, it := range order {
+		if len(it.Rounds) == 0 {
+			continue
+		}
+		fmt.Printf("%s %s\n", it.ID, roundCounts(it))
+	}
 	return nil
+}
+
+// roundCounts is the item's round budget as spent: the rounds in total and how many of each
+// cause (R19). A PASS carries no cause, so it is counted on its own — the total is every
+// round of every cause, and a PASS is a round. A re-baseline resets none of these counts.
+func roundCounts(it *Item) string {
+	return fmt.Sprintf("rounds: %d (code %d, harness %d, dispute %d, pass %d)",
+		len(it.Rounds), it.causeRounds("code"), it.causeRounds("harness"),
+		it.causeRounds("dispute"), it.passRounds())
 }
 
 func cmdRender(root string, a args) error {
@@ -1798,6 +1897,10 @@ func cmdCheck(root string, a args) error {
 			}
 		}
 		for _, r := range it.Rounds {
+			if r.Rows == "" {
+				// a harness round carries no rows, so there is no evidence file to verify
+				continue
+			}
 			sum := sha256.Sum256(mustRead(filepath.Join(root, r.Rows)))
 			if _, err := os.Stat(filepath.Join(root, r.Rows)); err != nil {
 				problems = append(problems, it.ID+" round "+r.Rows+" is missing")
@@ -1882,7 +1985,7 @@ func schemaJSON() map[string]any {
 			"checks":     {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
 			"rebaseline": {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
 			"claims":     {"required": {"id", "claims", "claims_sha"}, "optional": {}},
-			"round":      {"required": {"id", "verdict", "rows"}, "optional": {"cause"}},
+			"round":      {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha"}},
 			"close":      {"required": {"id", "commit"}, "optional": {}},
 			"drop":       {"required": {"id", "reason"}, "optional": {"by"}},
 			"defer":      {"required": {"id", "reason"}, "optional": {}},
