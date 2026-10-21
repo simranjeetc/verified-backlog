@@ -661,6 +661,9 @@ func isGit(root string) bool {
 	return code == 0
 }
 
+// isArtifact reports whether a repository-relative path is one of the artefacts of R25: a path
+// under the ledger's own directory, or one of the two rendered views, TODO.md and PROGRESS.md.
+// The artefacts are excluded from the verified tree and from the round's diff.
 func isArtifact(rel string) bool {
 	return strings.HasPrefix(rel, backlogDir+"/") || rel == queueView || rel == recordView
 }
@@ -1956,7 +1959,8 @@ type treeEntry struct {
 }
 
 // verifiedTree computes the verified tree from the FILESYSTEM (§2): every file of the working
-// directory — except .git/, the artefacts of R25, and the paths .gitignore excludes — is hashed
+// directory — except .git/, the artefacts of R25 (the ledger's own directory, and the two
+// rendered views, TODO.md and PROGRESS.md), and the paths .gitignore excludes — is hashed
 // with `git hash-object`, and the entries are written as a tree.
 //
 // The index is never consulted, so a staged-but-unstaged path, a skip-worktree path and an
@@ -2086,6 +2090,11 @@ func (b *treeBuilder) tree(rel string) (string, bool, error) {
 				continue
 			}
 			list = append(list, treeEntry{name, treeMode, sha})
+			continue
+		}
+		// R25: the two rendered views, TODO.md and PROGRESS.md, are artefacts: every event in
+		// the ledger rewrites them, so they are never part of a verified tree.
+		if rel == "" && (name == queueView || name == recordView) {
 			continue
 		}
 		sha, mode, err := b.blob(child)
@@ -2646,12 +2655,9 @@ func ignoredUnderScope(root string, scope []string) ([]string, error) {
 // treesMatch reports whether two trees are the same tree, ignoring the ledger's own
 // artefacts. The two views are rendered from the ledger, so they change on every append.
 //
-// The design's verified tree covers the whole working tree (§2), and the views are part of it,
-// so any ledger event between the run and the round moves the tree. The design's own flow
-// needs such an event to be legal — R14 files the advisory items after the verdicts file and
-// before the round — so the pin compares the trees with the artefacts excluded. The code the
-// round verified is still pinned: any other path is a change of the tree, and the round is
-// refused.
+// The verified tree excludes the artefacts (§2, R25), so the comparison is the narrow one the
+// design describes: a ledger event between the run and the round — R14 files the advisory items
+// there — rewrites the views, and the tree the round verifies does not move.
 func treesMatch(root, a, b string) bool {
 	if a == b {
 		return true

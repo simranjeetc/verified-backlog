@@ -69,10 +69,10 @@ is in scope.
 
 **The verified tree.** The state the round verified. It is computed from the *filesystem*, not from the index, because
 the producer's changes are uncommitted and because the index can hide them. The computation is: list the working
-directory's files, excluding `.git/` and every path ignored by `.gitignore`; hash each with `git hash-object`; write the
-resulting tree with `git mktree`. The index is never consulted, so a staged-but-unstaged path, a `skip-worktree` path and
-an `assume-unchanged` path cannot hide a change from the tree. The same computation at `bl open` time produces the
-**before-tree**.
+directory's files, excluding `.git/`, the artefacts of R25, and every path ignored by `.gitignore`; hash each with
+`git hash-object`; write the resulting tree with `git mktree`. The index is never consulted, so a staged-but-unstaged
+path, a `skip-worktree` path and an `assume-unchanged` path cannot hide a change from the tree. The same computation
+at `bl open` time produces the **before-tree**.
 
 The tree covers the whole working tree, not only the scope, on purpose: a change outside the scope can change what
 the item's commands do (a new dependency, a changed config), and a verdict must be about the tree the commands ran
@@ -423,7 +423,9 @@ a signed tree head rather than just a tree.)
 
 **R25 — artefacts are excluded from the tree test.** `.backlog/` is excluded from the clean-tree test in R18, and
 never appears in a verified tree, because `.gitignore` keeps it untracked. If `.backlog/` is tracked in the
-repository, `bl` refuses the round rather than comparing trees that include it.
+repository, `bl` refuses the round rather than comparing trees that include it. The two rendered views, `TODO.md`
+and `PROGRESS.md`, are artefacts as well: every event in the ledger rewrites them, so they are excluded from the
+verified tree and from the round's diff, and a ledger event between the run and the round does not move the tree.
 
 **R26 — the tree must not move under the run.** `bl run` computes the verified tree before the run and again after it.
 If the two differ, the run is refused: a row's command changed the tree, and the rows were verified against a state

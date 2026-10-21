@@ -4018,3 +4018,45 @@ func TestR25TheRoundStillRefusesATrackedArtefactDirectory(t *testing.T) {
 		t.Fatalf("checkR25: %v", err)
 	}
 }
+
+// The two rendered views are artefacts (R25): every event in the ledger rewrites them, so they
+// are never part of a verified tree. A tree computed where the views exist and computed again
+// after the ledger moved and rewrote them is the same tree: the tree pin does not refuse a round
+// because the ledger moved.
+func TestR25TheRenderedViewsAreExcludedFromTheVerifiedTree(t *testing.T) {
+	dir := gitItem(t)
+	before, err := verifiedTreeWriting(dir)
+	if err != nil {
+		t.Fatalf("the verified tree: %v", err)
+	}
+	ls, code := git(dir, "ls-tree", "-r", before)
+	if code != 0 {
+		t.Fatalf("ls-tree: exit %d", code)
+	}
+	if strings.Contains(ls, queueView) || strings.Contains(ls, recordView) {
+		t.Fatalf("the tree must not hold the rendered views:\n%s", ls)
+	}
+	// the ledger moves: the event rewrites the two views
+	view := filepath.Join(dir, recordView)
+	old, err := os.ReadFile(view)
+	if err != nil {
+		t.Fatalf("the record view: %v", err)
+	}
+	if _, err := appendEvent(dir, Event{T: "note", ID: "A1", Text: "the ledger moved"}); err != nil {
+		t.Fatalf("appendEvent: %v", err)
+	}
+	now, err := os.ReadFile(view)
+	if err != nil {
+		t.Fatalf("the record view: %v", err)
+	}
+	if string(now) == string(old) {
+		t.Fatalf("the event must have rewritten the view")
+	}
+	after, err := verifiedTreeWriting(dir)
+	if err != nil {
+		t.Fatalf("the verified tree: %v", err)
+	}
+	if after != before {
+		t.Fatalf("the tree moved when the views were rewritten: %s before, %s after", before, after)
+	}
+}
