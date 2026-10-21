@@ -84,8 +84,12 @@ Source: verifier:I8/r1
 
 ## I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows
 
-Status: open
+Verdict: PASS — closed at 0cf8e862868dcca8ed0e609270b5c562a4da1f7a
 Source: verifier:I8/r1
 
+- r1 PASS — .backlog/evidence/I11-r1.txt (ac42495a94da)
+- code failures: 0 / cap 3
 - note: measured, not assumed: 'bl round A1 --verdict FAIL --cause harness --rows rows.txt' is accepted (exit 0) and the recorded event carries NO rows and no rows_sha - the file is silently dropped, not attached. So no false evidence reaches the ledger; the defect is an unenforced rule and a silent no-op. The resolution: the binary must REFUSE, under R23, a harness round whose --rows file has content (exit 2, nothing written), and keep accepting a harness round with no --rows or an empty one, still recording no rows. The refusal belongs at P2's R23-harness step, right after R20 and before R6. The design needs no change: R23 already says a harness round is accepted only when the verdicts file is absent or contains no rows. The design's other R23 clause (no --finding on a harness round) is moot: the binary has no --finding flag.
+- note: round 1: the implementation was right, one row was wrong, and the gate's own check asserted the old behaviour. H3 hashed run.log, which the binary appends to on every call by design. The gate's check cap_counts_code_only recorded a harness round WITH rows, which R23 now refuses - so the item's blast radius grows to that one check in scripts/bl.test.py: the harness round there must carry no rows, keeping the check's intent (the cap counts code rounds only).
+- note: two advisories from the round, both recorded rather than fixed in place: (1) a refusal writes nothing to the ledger, the evidence or the item's artefacts, but the run.log still grows - the binary logs every call, refusals included, and the gate's own run_log_records_every_call wants that; the design's phrase 'writes nothing' should say so; (2) a --rows path that cannot be read is accepted and recorded with no rows, on the reading that a file that cannot be read holds none - the design's 'absent' is ambiguous there. The second is filed as I14.
 
