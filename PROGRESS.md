@@ -19,6 +19,12 @@ Verdict: PASS — closed at a571e713bb510018cec6f5a5a5c782d0d5bd2d56
 - note: r4 FAIL, code, on one row: X2. All 15 frozen rows pass, and so do T1, TB, H1, N1 and X1. X2 is the gap the producer itself admitted: after a claims event, bl defer + bl reopen + bl open rewrites the R5-frozen brief, appends a new open event with a new brief_sha, leaves a frozen check row pointing at a clause that no longer exists, and bl check still reports PASS - while bl brief refuses the same rewrite under R5, so the implementation contradicts itself. Also filed: I7 = P1 global ordering (a list whose row 1 breaks R8 and row 2 breaks R1 must be refused under R1, not R8). And the judge's advisory: the sample judge row J3 carries no output anchor, so under R9 it can only ever be recorded FAIL. The 3-code-round cap is now spent (r2, r3, r4), so r5 needs a re-baseline or the human's word.
 - note: I1 closed on round 5 (PASS): 15 frozen rows, T1, TB, H1, N1, X1, X2, X3 and the judge row all passed with no repair. Two advisories filed rather than fixed: the R5 guard sits before the R20 re-hash in cmdOpen, so an item with claims reports R5 for a tampered brief (bl check still reports R20); and the frozen list has no row pinning the 12-kind schema count. Both are candidates for the next re-baseline.
 
+## I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)
+
+Status: open
+
+- note: I13 comes first: the check-list format's two dialects and the mechanical refusal of an over-escaped cmd must be in place before the largest check list is written. Two harness rounds were spent on I8's premise fixing exactly this.
+
 ## I5 — the total-round budget: R19 - six rounds of any cause for an item, refused beyond that, counted across re-baselines so a re-baseline cannot reset the only cap
 
 Verdict: PASS — closed at 102cf3fd1f2aba2818c45d159118dfaaed8764b2
