@@ -53,3 +53,10 @@ Verdict: PASS — closed at 0d31559f0867d7e7c50de3975de7ccbd7b0764eb
 - note: round 1: the premise was broken, not the code. The producer's run was 9/10 and the one failure was G9, whose mutation target is a word SKILL.md does not contain. Recorded as a harness round with no rows, because a run that never happened cannot carry a finding (R23). The implementation was not changed between rounds; round 2 runs against the re-based list.
 - note: round 2: the premise was broken again, the code was not. The verifier's verdict was FAIL with the finding that the frozen cmd column escaped the shell's pipes. The implementation was left alone; the list was re-based a second time. Two harness rounds spent on one item's premise - the check list, not the code, is where this loop's rounds go.
 
+## I9 — the precedence for the commands the design does not cover: bl rebaseline needs its own order (P1 names bl checks only, and rebaseline's validateChecks runs R1-R2-R3-R8 with no R5/R4), and bl checks must do its state checks (R5, R4) before it reads the list, so a frozen item is refused without waiting on stdin
+
+Verdict: PASS — closed at 828d2117abd352fba5cf4355f234ed836fc1984b
+
+- r1 PASS — .backlog/evidence/I9-r1.txt (04a44e05823a)
+- code failures: 0 / cap 3
+
