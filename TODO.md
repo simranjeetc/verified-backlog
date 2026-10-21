@@ -2,10 +2,9 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (13)
+## Queue (14)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
-- [ ] I12 — compaction on every 250k crossing: whenever a session's token consumption crosses a multiple of 250k, the compaction must be triggered once the logical step that crossed it is complete - every crossing, not only the first - so a long session is compacted repeatedly instead of never  _(human)_
 - [ ] I18 — R7 says the binary computes a decider: bl row's row-verdict, and the implementation does not: the round takes the judge's word for a bl row, so the derivation in R12 rests on the judge's word and a judge who writes PASS for a failing command gets a PASS round; the binary must compute a bl row's row-verdict from the run's observed values against that row's expect  _(producer:I3/r1)_
 - [ ] I20 — the check-list format did not say that a row covering a change must name the file it covers: R10's coverage is a literal comparison, so a list written to drive a binary left every hunk uncovered and no round could be recorded at all. The design now says the path belongs in the command - verify that the design says it, and make the loop's own check lists carry the path  _(supervisor:I3/r1)_
 - [ ] I21 — a row's command can satisfy its expectation from a statement other than its own assertion - the row added to item I3 passed while the defect it was written for was still in the code. The design now says one assertion per row - verify that it says it, and that the loop's own rows do it  _(supervisor:I3/r1)_
@@ -17,6 +16,8 @@
 - [ ] I29 — the verbs bl brief, bl checks, bl claims, bl rebaseline, bl second-check and bl close refuse an item that is not in flight but name no rule, and section 4's precedence lists and section 6's refusal counts do not account for those refusals; the design must say which rule refuses there - R35 widened to every verb that takes an item, or a rule of its own - and the counts must follow  _(verifier:I17/r2)_
 - [ ] I30 — section 6's refusal counts are stale: the row for 'bl checks' lists six rules and omits R34, which the code does raise; the counts must be re-derived from the code  _(verifier:I17/r2)_
 - [ ] I31 — a verifier's FAIL that the frozen rows do not corroborate cannot be recorded: the round's verdict is derived from the rows (R12), so item I17's round 1 - where all seven rows passed and the verifier failed the item for a defect outside the rows - has no representation in the ledger; the design must say how a verifier's verdict that disagrees with the rows is recorded  _(verifier:I17/r2)_
+- [ ] I32 — the frozen row T4 of item I12 does not bind its clause: SKILL.md's heading 'Compact on every 250k crossing' already satisfies the row, so changing the body to 'the first crossing' leaves every row passing; a row whose clause is about the body's words must assert on the body's words  _(verifier:I12/r1)_
+- [ ] I33 — SKILL.md's verb table omits two verbs the binary has - bl import and bl lint - although the design requires the skill to document every verb the binary has; the table must list all of them  _(verifier:I12/r1)_
 
 ## Blocked (0)
 
@@ -30,7 +31,7 @@ _none_
 
 - [x] I14 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(the item was opened with an empty scope, so R28 watched every ignored file in the repository, including the gate binary scripts/bl, and the producer's rebuild of that binary inside the repository made the round unrecordable. The item is re-filed as I25 with a scope naming the files under test; the code, the list and the verification are the same.; verifier:I11/r2)_
 
-## Closed (16)
+## Closed (17)
 
 - [x] I1 — bl checks + bl claims: the check-list row schema and the ordering rule (design R1-R8, R20, R24). Scope: scripts/cmd/bl/main.go, scripts/cmd/bl/main_test.go  _(commit a571e71)_
 - [x] I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)  _(commit 9e8f95a)_
@@ -42,6 +43,7 @@ _none_
 - [x] I9 — the precedence for the commands the design does not cover: bl rebaseline needs its own order (P1 names bl checks only, and rebaseline's validateChecks runs R1-R2-R3-R8 with no R5/R4), and bl checks must do its state checks (R5, R4) before it reads the list, so a frozen item is refused without waiting on stdin  _(commit 828d211)_
 - [x] I10 — the gate's verb set is a hard-coded list of 18 and omits the four verbs the binary grew in I1 (brief, checks, claims, rebaseline), so SKILL.md cannot document them and the check named the_documented_verbs_are_the_real_verbs is weaker than its name; the set must come from the binary  _(commit 7a6978b; verifier:I8/r1)_
 - [x] I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows  _(commit 0cf8e86; verifier:I8/r1)_
+- [x] I12 — compaction on every 250k crossing: whenever a session's token consumption crosses a multiple of 250k, the compaction must be triggered once the logical step that crossed it is complete - every crossing, not only the first - so a long session is compacted repeatedly instead of never  _(commit 6690a07; human)_
 - [x] I13 — the check-list format never says which dialect each field is written in, so the verifier keeps over-escaping: it writes a backslash-pipe where the shell wants a pipe and where Go's RE2 wants an alternation, and the row cannot run - it cost two harness rounds in I8 and one row in I9. The format must state the two dialects plainly (the cmd is a shell script run by /bin/sh -c, so its pipes are pipes; the expect pattern is Go's RE2, so an alternation is a bare pipe and a backslash-pipe is a literal pipe), and the binary must refuse a frozen list whose cmd contains an escaped pipe, so the mistake cannot reach a round. This must be closed before I2 begins  _(commit be4d18f; human)_
 - [x] I15 — R34 fires on the two characters backslash and pipe, so a command holding an escaped backslash followed by a real pipe is refused even though its pipe is not escaped; the shell reads the doubled backslash as one backslash and the pipe as a pipe. The refusal must count the backslashes and fire only when the pipe is actually escaped  _(commit 69aa5dd; verifier:I13/r1)_
 - [x] I16 — R25 says bl says so when .backlog/ is tracked by git, and the implementation does not: bl run excludes .backlog/ from the tree unconditionally and never says anything about it being tracked  _(commit e1e9f50; verifier:I2/r1)_
