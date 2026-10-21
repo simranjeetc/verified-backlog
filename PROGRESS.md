@@ -67,3 +67,10 @@ Verdict: PASS — closed at 828d2117abd352fba5cf4355f234ed836fc1984b
 - code failures: 0 / cap 3
 - note: the commit that closed this item said the design's P1 was amended in the same commit. It was not - the doc patch failed to apply that day and the commit touched only scripts/cmd/bl/. The design is amended in its own commit right after this one: P1 now puts the state guards first, P11 gives bl rebaseline its own order, and the sentence about the per-command lists is corrected.
 
+## I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows
+
+Status: open
+Source: verifier:I8/r1
+
+- note: measured, not assumed: 'bl round A1 --verdict FAIL --cause harness --rows rows.txt' is accepted (exit 0) and the recorded event carries NO rows and no rows_sha - the file is silently dropped, not attached. So no false evidence reaches the ledger; the defect is an unenforced rule and a silent no-op. The resolution: the binary must REFUSE, under R23, a harness round whose --rows file has content (exit 2, nothing written), and keep accepting a harness round with no --rows or an empty one, still recording no rows. The refusal belongs at P2's R23-harness step, right after R20 and before R6. The design needs no change: R23 already says a harness round is accepted only when the verdicts file is absent or contains no rows. The design's other R23 clause (no --finding on a harness round) is moot: the binary has no --finding flag.
+
