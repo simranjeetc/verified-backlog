@@ -67,6 +67,21 @@ Verdict: PASS — closed at 828d2117abd352fba5cf4355f234ed836fc1984b
 - code failures: 0 / cap 3
 - note: the commit that closed this item said the design's P1 was amended in the same commit. It was not - the doc patch failed to apply that day and the commit touched only scripts/cmd/bl/. The design is amended in its own commit right after this one: P1 now puts the state guards first, P11 gives bl rebaseline its own order, and the sentence about the per-command lists is corrected.
 
+## I10 — the gate's verb set is a hard-coded list of 18 and omits the four verbs the binary grew in I1 (brief, checks, claims, rebaseline), so SKILL.md cannot document them and the check named the_documented_verbs_are_the_real_verbs is weaker than its name; the set must come from the binary
+
+Verdict: PASS — closed at 7a6978be02a5ed097fe80390988e528380e3f283
+Source: verifier:I8/r1
+
+- r1 FAIL cause=harness — no rows
+- r2 FAIL cause=harness — no rows
+- r3 PASS — .backlog/evidence/I10-r3.txt (e2c1ce454584)
+- code failures: 0 / cap 3
+- note: supervisor correction, mechanical: the list's cmd column escaped the shell's own pipes (|| written as \|\|, and each pipe written as \|), so 7 of the 7 rows could not reach their assertion - the same slip as I8's and I9's lists, the fifth time. Every escaped pipe was unescaped; each one's intent was checked by hand (shell ors and pipes, and ERE alternations inside grep -E and sed -E arguments). Item I13 is filed to make this impossible mechanically.
+- note: round 1: the producer's work was right and one row was wrong. G2 expected 'ok' plus two spaces; the gate prints three, deliberately, so the ok and FAIL columns line up. The producer did not bend the gate's output to fit the row - correct, and the row was the thing that moved. The implementation was not changed between rounds.
+- note: round 2: my correction to G2 was wrong before it was right. The first fix widened the spacing to '+' in a BRE, where + is a literal - the row then still counted nothing, and the verifier said so plainly instead of passing it. The second fix uses grep -E. Two rounds on one row's regex: the same class of mistake as the escaped pipes, one level down. Item I13 is filed for the pipes; this one is a reminder that a correction needs the same care as the thing it corrects.
+- note: round 1 recorded late: this FAIL harness round happened BEFORE the first re-baseline. The premise was broken - G2 counted a gate line by its exact spacing - and the code was right. Recorded now so the ledger's round count is the truth.
+- note: round 2 recorded late: this FAIL harness round happened BEFORE the second re-baseline. The premise was still broken - the supervisor's own correction used a BRE where + is literal - and the code was right.
+
 ## I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows
 
 Status: open
