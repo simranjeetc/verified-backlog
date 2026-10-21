@@ -2540,6 +2540,180 @@ func TestR23AHarnessRoundWithNoRowsOrAnEmptyRowsFileIsAccepted(t *testing.T) {
 	}
 }
 
+// R23: absent means the flag was not given, or the path does not exist. A harness round whose
+// --rows path does not exist is accepted and recorded with no rows, and the status shows it as
+// one harness round.
+func TestR23AHarnessRoundWithARowsPathThatDoesNotExistIsAccepted(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	missing := filepath.Join(t.TempDir(), "nope.tsv")
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", missing); err != nil {
+		t.Fatalf("a harness round whose rows path does not exist: %v", err)
+	}
+	events, _ := readLedger(dir)
+	var rounds []Event
+	for _, ev := range events {
+		if ev.T == "round" {
+			rounds = append(rounds, ev)
+		}
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("want 1 round recorded, got %d", len(rounds))
+	}
+	if rounds[0].Verdict != "FAIL" || rounds[0].Cause != "harness" {
+		t.Fatalf("round event = %+v", rounds[0])
+	}
+	if rounds[0].Rows != "" || rounds[0].RowsSHA != "" {
+		t.Errorf("a harness round carries no rows: %+v", rounds[0])
+	}
+	if files := evidenceFiles(t, dir); len(files) != 0 {
+		t.Errorf("a harness round wrote an evidence file: %v", files)
+	}
+	// the status shows the round as one harness round
+	out := capture(t, func() {
+		if err := call(t, cmdStatus, dir); err != nil {
+			t.Fatalf("status: %v", err)
+		}
+	})
+	if !strings.Contains(out, "harness 1") {
+		t.Errorf("the status must show one harness round: %s", out)
+	}
+}
+
+// R23: a harness round whose --rows file is empty is accepted and recorded with no rows.
+func TestR23AHarnessRoundWithAnEmptyRowsFileIsAcceptedAndRecorded(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	empty := writeFile(t, t.TempDir(), "empty.tsv", "")
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", empty); err != nil {
+		t.Fatalf("a harness round with an empty rows file: %v", err)
+	}
+	events, _ := readLedger(dir)
+	var rounds []Event
+	for _, ev := range events {
+		if ev.T == "round" {
+			rounds = append(rounds, ev)
+		}
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("want 1 round recorded, got %d", len(rounds))
+	}
+	if rounds[0].Verdict != "FAIL" || rounds[0].Cause != "harness" {
+		t.Fatalf("round event = %+v", rounds[0])
+	}
+	if rounds[0].Rows != "" || rounds[0].RowsSHA != "" {
+		t.Errorf("a harness round carries no rows: %+v", rounds[0])
+	}
+	if files := evidenceFiles(t, dir); len(files) != 0 {
+		t.Errorf("a harness round wrote an evidence file: %v", files)
+	}
+}
+
+// R23: a harness round whose --rows file holds rows is refused under R23, as it always was — the
+// verifier did not run, so the round carries no rows.
+func TestR23AHarnessRoundWithARowsFileHoldingRowsIsRefused(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	rows := writeFile(t, t.TempDir(), "rows.tsv", "S1\tFAIL\n")
+	before, _ := readLedger(dir)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", rows))
+	if r.rule != "R23" {
+		t.Fatalf("want a refusal under R23, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "no rows") {
+		t.Errorf("the refusal must say a harness round carries no rows: %s", r.msg)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused harness round appended %d events", len(after)-len(before))
+	}
+}
+
+// R23: a path that exists and cannot be read as a file is refused, not treated as empty. A
+// harness round whose --rows path is a DIRECTORY is refused under R23 — a caller who meant to
+// hand over rows and handed over something else has made a mistake — and the refusal writes
+// nothing: the ledger is unchanged, no evidence file, no round.
+func TestR23AHarnessRoundWithADirectoryAsRowsIsRefused(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	rows := t.TempDir() // a directory, not a file
+	ledger := filepath.Join(dir, ".backlog", "ledger.jsonl")
+	before, _ := readLedger(dir)
+	beforeBytes, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := evidenceFiles(t, dir)
+
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", rows))
+	if r.rule != "R23" {
+		t.Fatalf("want a refusal under R23, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "directory") {
+		t.Errorf("the refusal must say the rows path is a directory: %s", r.msg)
+	}
+
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused harness round appended %d events", len(after)-len(before))
+	}
+	afterBytes, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("a refused harness round changed the ledger:\n%s", afterBytes)
+	}
+	if got := evidenceFiles(t, dir); len(got) != len(files) {
+		t.Fatalf("a refused harness round wrote an evidence file: %v", got)
+	}
+	_, byID, err := derive(after)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	it := byID["a1"]
+	if len(it.Rounds) != 0 {
+		t.Errorf("a refused harness round recorded %d rounds", len(it.Rounds))
+	}
+	if it.Status != "open" {
+		t.Errorf("the item is %s, want open", it.Status)
+	}
+	// the call exits 2 and the message names the rule
+	out := captureStderr(t, func() {
+		if code := run([]string{"--root", dir, "round", "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", rows}); code != 2 {
+			t.Errorf("bl round: exit = %d, want 2", code)
+		}
+	})
+	if !strings.Contains(out, "refused (R23)") {
+		t.Errorf("the refusal must name R23: %s", out)
+	}
+}
+
+// R23: a file that cannot be opened is refused like a directory is: the path exists, so it is not
+// absent, and a file that cannot be read as a file cannot be empty either.
+func TestR23AHarnessRoundWithAFileThatCannotBeOpenedIsRefused(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens every file")
+	}
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	rows := writeFile(t, t.TempDir(), "rows.tsv", "")
+	if err := os.Chmod(rows, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := readLedger(dir)
+
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "harness", "--rows", rows))
+	if r.rule != "R23" {
+		t.Fatalf("want a refusal under R23, got %s: %s", r.rule, r.msg)
+	}
+
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused harness round appended %d events", len(after)-len(before))
+	}
+}
+
 // R23: a code round is a verdict about rows, so a rows file with content is still accepted, and
 // the round is recorded with the rows and their hash.
 func TestR23ACodeRoundWithRowsIsStillAccepted(t *testing.T) {

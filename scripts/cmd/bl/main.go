@@ -3456,9 +3456,11 @@ func recordHarnessRound(root string, it *Item, a args) error {
 // a finding is never silently ignored (R13). A `--finding`, or a `# finding:` line in the rows
 // file, is refused under R23 for the same reason the rows are.
 //
-// The rows file is read to see whether it holds rows. A file that cannot be read holds none, so
-// it is the design's "absent" case: the round is accepted and recorded with no rows, as it was
-// before.
+// The rows file is read to see whether it holds rows. ABSENT means the flag was not given, or
+// the path does not exist: an absent file holds no rows, and the round is accepted and recorded
+// with no rows. A path that exists and cannot be read as a file — a directory, or a file that
+// cannot be opened — is refused, not treated as empty: a caller who meant to hand over rows and
+// handed over something else has made a mistake, and a mistake is not a run that never happened.
 func harnessRowsRefused(a args) error {
 	if strings.ToLower(strings.TrimSpace(a.get("cause"))) != "harness" {
 		return nil
@@ -3473,20 +3475,63 @@ func harnessRowsRefused(a args) error {
 	}
 	path := a.get("rows")
 	if path == "" {
+		// absent: the flag was not given
 		return nil
-	}
-	rows, err := a.rows()
-	if err != nil || strings.TrimSpace(rows) == "" {
-		return nil
-	}
-	if hasFindingComment(rows) {
-		return refuseRule("R23", "a harness round carries no finding — the verifier did not run, so it found nothing")
 	}
 	what := "the rows file " + path
 	if path == "-" {
 		what = "the rows on stdin"
 	}
+	rows, err := harnessRowsText(path)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(rows) == "" {
+		return nil
+	}
+	if hasFindingComment(rows) {
+		return refuseRule("R23", "a harness round carries no finding — the verifier did not run, so it found nothing")
+	}
 	return refuseRule("R23", "a harness round carries no rows — the verifier did not run, so %s must be empty", what)
+}
+
+// harnessRowsText reads the rows a harness round was handed, or refuses under R23 when the path
+// exists and cannot be read as a file.
+//
+// Absent means the flag was not given, or the path does not exist: a path that does not exist
+// holds no rows, and it is not a mistake. A path that exists and cannot be read as a file — a
+// directory, or a file that cannot be opened — is refused: a caller who meant to hand over rows
+// and handed over something else has made a mistake, and a mistake is not a run that never
+// happened.
+func harnessRowsText(path string) (string, error) {
+	if path == "-" {
+		// stdin is not a path: it is read as it comes, and the design's clause is about a path.
+		// A stdin that cannot be read holds no rows, as it did before.
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", nil
+		}
+		return string(data), nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// absent: the path does not exist
+			return "", nil
+		}
+		return "", refuseRule("R23", "the rows file %s cannot be read as a file (%v) — a harness round reads its rows from a file, and a path that exists but cannot be read as a file is refused, not absent", path, err)
+	}
+	if info.IsDir() {
+		return "", refuseRule("R23", "the rows file %s is a directory — a harness round reads its rows from a file, and a path that exists but cannot be read as a file is refused, not absent", path)
+	}
+	if !info.Mode().IsRegular() {
+		return "", refuseRule("R23", "the rows file %s is not a regular file — a harness round reads its rows from a file, and a path that exists but cannot be read as a file is refused, not absent", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", refuseRule("R23", "the rows file %s cannot be opened (%v) — a harness round reads its rows from a file, and a path that exists but cannot be read as a file is refused, not absent", path, err)
+	}
+	return string(data), nil
 }
 
 // hasFindingComment reports whether a text carries a `# finding:` comment line — the line R13
