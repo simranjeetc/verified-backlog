@@ -43,6 +43,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl checks A1 --file checks.tsv` | yes | freezes the verifier's check list; written once, and `--amend` may only reclassify a row (judge → bl) |
 | `bl rebaseline A1 --file checks.tsv --reason "…"` | yes | replaces the frozen list with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
+| `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with the exit code and the full output of each row, and records the file's hash |
 | `bl round A1 --verdict FAIL --cause code --rows -` | yes | records one round; rows come from stdin or a file |
 | `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round, a clean tree, a real commit |
 | `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |

@@ -270,6 +270,31 @@ def round_refuses_after_pass():
     refused(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", "-", stdin="x\n", match="already passed")
 
 
+# ── run ──────────────────────────────────────────────────────────────────────
+
+
+@test
+def run_writes_the_run_file_and_records_the_event():
+    root = fresh()
+    ok(root, "file", "--id", "A1", "--text", "first")
+    ok(root, "open", "A1")
+    listing = root / "checks.tsv"
+    listing.write_text(
+        "id\tdecider\tseverity\tbrief_ref\tcmd\texpect\tfail_if\twhy_not_mech\tcriterion\n"
+        "S1\tbl\tblocking\tB1\techo hi\texit 0\t\t\tone row\n",
+        encoding="utf-8",
+    )
+    ok(root, "checks", "A1", "--file", str(listing))
+    claims = root / "claims.md"
+    claims.write_text("claims\n", encoding="utf-8")
+    ok(root, "claims", "A1", "--file", str(claims))
+    ok(root, "run", "A1")
+    run_file = root / ".backlog" / "evidence" / "A1-run1.json"
+    assert run_file.exists() and run_file.stat().st_size > 0, "the run wrote no run file"
+    ledger = (root / ".backlog" / "ledger.jsonl").read_text(encoding="utf-8")
+    assert '"run"' in ledger, "the ledger holds no run event"
+
+
 # ── close ────────────────────────────────────────────────────────────────────
 
 
@@ -473,7 +498,7 @@ def show_and_schema_emit_valid_json():
     assert schema["causes"] == ["code", "harness", "dispute"], schema
     assert sorted(schema["events"]) == [
         "brief", "checks", "claims", "close", "defer", "drop",
-        "file", "note", "open", "rebaseline", "reopen", "round",
+        "file", "note", "open", "rebaseline", "reopen", "round", "run",
     ], schema
 
 

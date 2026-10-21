@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -195,15 +196,15 @@ func TestSchemaIsJSON(t *testing.T) {
 		t.Errorf("version = %v", s["version"])
 	}
 	events := s["events"].(map[string]map[string][]string)
-	if len(events) != 12 {
-		t.Errorf("want 12 event kinds, got %d", len(events))
+	if len(events) != 13 {
+		t.Errorf("want 13 event kinds, got %d", len(events))
 	}
 	for _, kind := range []string{"checks", "claims"} {
 		if _, ok := events[kind]; !ok {
 			t.Errorf("schema is missing event kind %q", kind)
 		}
 	}
-	for _, kind := range []string{"brief", "rebaseline"} {
+	for _, kind := range []string{"brief", "rebaseline", "run"} {
 		if _, ok := events[kind]; !ok {
 			t.Errorf("schema is missing event kind %q", kind)
 		}
@@ -269,10 +270,10 @@ func TestSchemaListsEveryKind(t *testing.T) {
 			kinds[f[0]] = true
 		}
 	}
-	if len(kinds) != 12 {
-		t.Errorf("want 12 event kinds in the schema output, got %d: %v", len(kinds), kinds)
+	if len(kinds) != 13 {
+		t.Errorf("want 13 event kinds in the schema output, got %d: %v", len(kinds), kinds)
 	}
-	for _, kind := range []string{"brief", "rebaseline"} {
+	for _, kind := range []string{"brief", "rebaseline", "run"} {
 		if !kinds[kind] {
 			t.Errorf("the schema output is missing event kind %q", kind)
 		}
@@ -280,7 +281,7 @@ func TestSchemaListsEveryKind(t *testing.T) {
 }
 
 // The schema output reports how many event kinds it lists, so a reader (and a grep) can tell
-// 12 from 11 without counting the lines.
+// 13 from 12 without counting the lines.
 func TestSchemaReportsTheNumberOfEventKinds(t *testing.T) {
 	var err error
 	out := capture(t, func() { err = call(t, cmdSchema, t.TempDir()) })
@@ -1222,6 +1223,13 @@ var frozenVerbs = []struct {
 		argv: func(t *testing.T, dir string) []string {
 			return []string{"claims", "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")}
 		},
+	},
+	{
+		verb:  "run",
+		label: "run",
+		rule:  "R20",
+		setup: func(t *testing.T, dir string) { checksOK(t, dir, goodList) },
+		argv:  func(t *testing.T, dir string) []string { return []string{"run", "A1"} },
 	},
 	{
 		verb:  "round",
@@ -2605,5 +2613,333 @@ func TestR34NamesTheFirstBrokenRowOnly(t *testing.T) {
 	}
 	if strings.Contains(r.msg, "X2") {
 		t.Errorf("the refusal must not name the later broken row: %s", r.msg)
+	}
+}
+
+// ── the run ──────────────────────────────────────────────────────────────────
+
+// oneRowList is a well-formed list with one row: the smallest thing a run can be over.
+const oneRowList = checksHeader + "S1\tbl\tblocking\tB1\techo hi\texit 0\t\t\tone row\n"
+
+// runItem prepares an item with a frozen check list and frozen claims, ready to run.
+func runItem(t *testing.T, list string) string {
+	t.Helper()
+	dir := openItem(t)
+	checksOK(t, dir, list)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	return dir
+}
+
+// readRunFile reads one run file and the bytes it holds.
+func readRunFile(t *testing.T, dir, name string) (runFile, []byte) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "evidence", name))
+	if err != nil {
+		t.Fatalf("run file %s: %v", name, err)
+	}
+	var rf runFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		t.Fatalf("run file %s is not JSON: %v", name, err)
+	}
+	return rf, data
+}
+
+// A run over a one-row list writes the run file and records the run event with the file's hash.
+func TestRunWritesTheRunFileAndRecordsTheEvent(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, data := readRunFile(t, dir, "A1-run1.json")
+	if rf.ID != "A1" || rf.Run != "run1" {
+		t.Fatalf("run file = %+v, want item A1 and run run1", rf)
+	}
+	if rf.TreeStart == "" || rf.TreeStart != rf.TreeEnd {
+		t.Fatalf("the trees must be present and equal: %+v", rf)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "run" || ev.ID != "A1" || ev.Run != "run1" {
+		t.Fatalf("run event = %+v", ev)
+	}
+	if ev.RunSHA != shaHex(data) {
+		t.Fatalf("the run event carries %s, want the file's hash %s", ev.RunSHA, shaHex(data))
+	}
+}
+
+// The run file holds the row's cmd, its exit code, its output and the hash of that output.
+func TestRunRecordsTheRowItRan(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo OUT; echo ERR >&2\texit 0\t\t\tstreams\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if len(rf.Rows) != 1 {
+		t.Fatalf("want one row, got %d", len(rf.Rows))
+	}
+	row := rf.Rows[0]
+	if row.ID != "S1" || row.Cmd != "echo OUT; echo ERR >&2" {
+		t.Errorf("row = %+v, want the row's id and cmd", row)
+	}
+	if row.Exit != 0 || row.TimedOut {
+		t.Errorf("row = %+v, want exit 0 and no timeout", row)
+	}
+	if row.Stdout != "OUT\n" || row.Stderr != "ERR\n" {
+		t.Errorf("row = %+v, want the full output of both streams", row)
+	}
+	if row.StdoutSHA != shaHex([]byte("OUT\n")) || row.StderrSHA != shaHex([]byte("ERR\n")) {
+		t.Errorf("row = %+v, want the hash of each stream", row)
+	}
+}
+
+// A row that exits non-zero is recorded as a failure, with its code and its output, and the
+// run file still exists. The next row still runs.
+func TestRunRecordsAFailingRowAndStillWritesTheFile(t *testing.T) {
+	dir := runItem(t, checksHeader+
+		"S1\tbl\tblocking\tB1\techo BADOUT >&2; exit 211\texit 0\t\t\tfails\n"+
+		"S2\tbl\tblocking\tB1\techo AFTER_FAIL\texit 0\t\t\tstill runs\n")
+	err := call(t, cmdRun, dir, "A1")
+	if !errors.Is(err, errFailed) {
+		t.Fatalf("a failing row must be reported: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if len(rf.Rows) != 2 {
+		t.Fatalf("want two rows, got %d", len(rf.Rows))
+	}
+	if rf.Rows[0].Exit != 211 {
+		t.Errorf("exit = %d, want 211", rf.Rows[0].Exit)
+	}
+	if !strings.Contains(rf.Rows[0].Stderr, "BADOUT") {
+		t.Errorf("the failing row's output must be recorded: %q", rf.Rows[0].Stderr)
+	}
+	if rf.Rows[1].Exit != 0 || !strings.Contains(rf.Rows[1].Stdout, "AFTER_FAIL") {
+		t.Errorf("the next row must still run: %+v", rf.Rows[1])
+	}
+	// and the failure was recorded in the ledger too
+	events, _ := readLedger(dir)
+	if ev := events[len(events)-1]; ev.T != "run" {
+		t.Fatalf("the run event must be recorded even when a row failed: %+v", ev)
+	}
+}
+
+// A command that cannot be run at all is recorded as 127, and a death by a signal as
+// 128+signal — the two are distinguishable from a command that exits with that code itself.
+func TestRunRecordsAnUnrunnableCommandAndASignalDeath(t *testing.T) {
+	dir := runItem(t, checksHeader+
+		"S1\tbl\tblocking\tB1\t/nonexistent/bin_xyz\texit 0\t\t\tunrunnable\n"+
+		"S2\tbl\tblocking\tB1\tkill -KILL $$\texit 0\t\t\tsignal death\n")
+	err := call(t, cmdRun, dir, "A1")
+	if !errors.Is(err, errFailed) {
+		t.Fatalf("the failures must be reported: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if rf.Rows[0].Exit != 127 {
+		t.Errorf("exit = %d, want 127 for a command that cannot run", rf.Rows[0].Exit)
+	}
+	if rf.Rows[0].Signalled {
+		t.Errorf("a command that cannot run is not a signal death: %+v", rf.Rows[0])
+	}
+	if rf.Rows[1].Exit != 137 {
+		t.Errorf("exit = %d, want 128+9 for a death by SIGKILL", rf.Rows[1].Exit)
+	}
+	if !rf.Rows[1].Signalled {
+		t.Errorf("a death by a signal must say so: %+v", rf.Rows[1])
+	}
+}
+
+// A row that hangs is killed with its process group and recorded as a timeout: exit = -1,
+// which is distinct from any command's own exit code, so a timeout can never be written up as
+// a pass.
+func TestRunRecordsATimeoutAsATimeout(t *testing.T) {
+	old := runTimeout
+	runTimeout = 300 * time.Millisecond
+	defer func() { runTimeout = old }()
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\tsleep 30\texit 0\t\t\thangs\n")
+	err := call(t, cmdRun, dir, "A1")
+	if !errors.Is(err, errFailed) {
+		t.Fatalf("a timeout must be reported: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if !rf.Rows[0].TimedOut {
+		t.Fatalf("the row must be recorded as timed out: %+v", rf.Rows[0])
+	}
+	if rf.Rows[0].Exit != -1 {
+		t.Errorf("exit = %d, want -1 for a timeout", rf.Rows[0].Exit)
+	}
+}
+
+// Every row runs, in the order of the frozen list, whatever the decider.
+func TestRunRunsEveryRowInFileOrder(t *testing.T) {
+	order := filepath.Join(t.TempDir(), "order")
+	dir := runItem(t, checksHeader+
+		"S1\tbl\tblocking\tB1\techo a >> "+order+"\texit 0\t\t\tfirst\n"+
+		"J1\tjudge\tadvisory\t\techo b >> "+order+"\t\tfail if b is wrong\treading needed not a match\tjudge row\n"+
+		"S2\tbl\tblocking\tB1\techo c >> "+order+"\texit 0\t\t\tthird\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got, err := os.ReadFile(order)
+	if err != nil {
+		t.Fatalf("order: %v", err)
+	}
+	if strings.Join(strings.Fields(string(got)), "") != "abc" {
+		t.Fatalf("the rows ran in the wrong order: %q", got)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if len(rf.Rows) != 3 {
+		t.Fatalf("want three rows, got %d", len(rf.Rows))
+	}
+	for i, want := range []string{"S1", "J1", "S2"} {
+		if rf.Rows[i].ID != want {
+			t.Errorf("row %d = %s, want %s", i, rf.Rows[i].ID, want)
+		}
+	}
+}
+
+// The environment is fixed: HOME and TMPDIR sit outside the repository and are removed after the
+// run, PATH is inherited and recorded, LANG=C and TZ=UTC.
+func TestRunRecordsTheFixedEnvironment(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\tenv\texit 0\t\t\tenvironment probe\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	home, tmpdir := rf.Env["HOME"], rf.Env["TMPDIR"]
+	if home == "" || tmpdir == "" {
+		t.Fatalf("the environment must record HOME and TMPDIR: %+v", rf.Env)
+	}
+	if inside(dir, home) || inside(dir, tmpdir) {
+		t.Fatalf("HOME and TMPDIR must sit outside the repository: %s %s", home, tmpdir)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Errorf("the scratch directory must be removed after the run: %s", home)
+	}
+	if rf.Env["PATH"] != os.Getenv("PATH") {
+		t.Errorf("PATH must be inherited and recorded: %q", rf.Env["PATH"])
+	}
+	if rf.Env["LANG"] != "C" || rf.Env["TZ"] != "UTC" {
+		t.Errorf("LANG must be C and TZ must be UTC: %+v", rf.Env)
+	}
+}
+
+// No variable of the caller's reaches the rows — in particular no GIT_*.
+func TestRunGivesTheRowsNoCallerVariable(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "leak")
+	t.Setenv("LEAK_ME", "1")
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\tenv\texit 0\t\t\tenvironment probe\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	out := rf.Rows[0].Stdout
+	if strings.Contains(out, "GIT_") {
+		t.Errorf("a GIT_* variable reached the row: %q", out)
+	}
+	if strings.Contains(out, "LEAK_ME") {
+		t.Errorf("a variable of the caller's reached the row: %q", out)
+	}
+	if !strings.Contains(out, "LANG=C") || !strings.Contains(out, "TZ=UTC") {
+		t.Errorf("the fixed environment did not reach the row: %q", out)
+	}
+}
+
+// R26: a row that changes a file moves the tree, so the run is refused — with no run file and
+// no ledger event.
+func TestRunRefusesWhenTheTreeMoves(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo more >> f.txt\texit 0\t\t\tmoves the tree\n")
+	writeFile(t, dir, "f.txt", "hi\n")
+	before, _ := readLedger(dir)
+	wantRule(t, call(t, cmdRun, dir, "A1"), "R26")
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+		t.Error("a refused run must write no run file")
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Errorf("a refused run must write no ledger event: %d events, was %d", len(after), len(before))
+	}
+}
+
+// A timestamp-only change is not a change of content, so it does not trip R26.
+func TestRunATouchDoesNotMoveTheTree(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\ttouch f.txt\texit 0\t\t\ttouches a timestamp\n")
+	writeFile(t, dir, "f.txt", "hi\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
+// R27: a row that writes under .backlog is refused — with no run file and no ledger event.
+func TestRunRefusesARowThatWritesUnderBacklog(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo x > .backlog/junk.txt\texit 0\t\t\twrites under .backlog\n")
+	before, _ := readLedger(dir)
+	wantRule(t, call(t, cmdRun, dir, "A1"), "R27")
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+		t.Error("a refused run must write no run file")
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Errorf("a refused run must write no ledger event: %d events, was %d", len(after), len(before))
+	}
+}
+
+// R20: a frozen artefact edited after the freeze is refused at the point of use, and no run
+// file is written.
+func TestRunRefusesAnEditedArtefact(t *testing.T) {
+	for _, what := range []string{"brief.md", "checks.tsv", "claims.md"} {
+		t.Run(what, func(t *testing.T) {
+			dir := runItem(t, oneRowList)
+			stored := filepath.Join(dir, ".backlog", "items", "A1", what)
+			data, err := os.ReadFile(stored)
+			if err != nil {
+				t.Fatalf("%s: %v", what, err)
+			}
+			if err := os.WriteFile(stored, append(data, []byte("edited\n")...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			wantRule(t, call(t, cmdRun, dir, "A1"), "R20")
+			if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+				t.Error("a refused run must write no run file")
+			}
+		})
+	}
+}
+
+// The second run of an item is run2, and its file is A1-run2.json.
+func TestRunNumbersTheRunsOfAnItem(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	for n := 1; n <= 2; n++ {
+		if err := call(t, cmdRun, dir, "A1"); err != nil {
+			t.Fatalf("run %d: %v", n, err)
+		}
+		name := fmt.Sprintf("A1-run%d.json", n)
+		rf, _ := readRunFile(t, dir, name)
+		if rf.Run != fmt.Sprintf("run%d", n) {
+			t.Errorf("%s holds the run id %q", name, rf.Run)
+		}
+	}
+}
+
+// The run file is a frozen artefact: `bl check` re-hashes it, and a tampered one is a FAIL.
+func TestCheckRehashesTheRunFile(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	path := filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("tampered\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = call(t, cmdCheck, dir)
+	if !errors.Is(err, errFailed) {
+		t.Fatalf("a tampered run file must fail the check: %v", err)
 	}
 }

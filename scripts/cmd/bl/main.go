@@ -16,6 +16,7 @@
 //	bl checks A1 [--file checks.tsv] [--amend]            (list from stdin without --file)
 //	bl rebaseline A1 --file checks.tsv --reason "..."      (replaces the frozen list)
 //	bl claims A1 --file claims.md
+//	bl run A1                                            (runs the frozen rows; writes the run file)
 //	bl round A1 --verdict FAIL --cause code --rows -      (rows from stdin)
 //	bl round A1 --verdict PASS --rows checks.txt
 //	bl close A1 --commit 6742cf6
@@ -34,12 +35,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +51,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -110,6 +116,9 @@ type Event struct {
 	PrevSHA   string `json:"prev_checks_sha,omitempty"`
 	Claims    string `json:"claims,omitempty"`
 	ClaimsSHA string `json:"claims_sha,omitempty"`
+	// The run (R7): the run id, and the sha256 of the run file it names.
+	Run    string `json:"run,omitempty"`
+	RunSHA string `json:"run_sha,omitempty"`
 }
 
 // Item is the derived state of one backlog entry.
@@ -121,6 +130,7 @@ type Item struct {
 	Status    string // open, closed, declined, parked
 	BlockedBy string
 	Rounds    []Event
+	Runs      []Event
 	Notes     []string
 	Opened    bool
 	Commit    string
@@ -369,6 +379,8 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Claims, it.ClaimsSHA = ev.Claims, ev.ClaimsSHA
 		case "round":
 			it.Rounds = append(it.Rounds, ev)
+		case "run":
+			it.Runs = append(it.Runs, ev)
 		case "close":
 			it.Status, it.Commit, it.Opened = "closed", ev.Commit, false
 		case "drop":
@@ -1476,6 +1488,565 @@ func cmdClaims(root string, a args) error {
 	return nil
 }
 
+// ── the run ──────────────────────────────────────────────────────────────────
+
+// runTimeout is the timeout of §2: after it the process GROUP is killed, and the row is
+// recorded with timed_out = true and exit = -1, which is distinct from any command's own exit
+// code — a timeout can never be written up as a pass. It is a variable so a test can shorten it.
+var runTimeout = 120 * time.Second
+
+// runRow is one row's record in the run file (§2).
+type runRow struct {
+	ID           string `json:"id"`
+	Cmd          string `json:"cmd"`
+	Exit         int    `json:"exit"`
+	TimedOut     bool   `json:"timed_out"`
+	Signalled    bool   `json:"signalled"`
+	Stdout       string `json:"stdout"`
+	StdoutSHA    string `json:"stdout_sha256"`
+	StdoutBinary bool   `json:"stdout_binary"`
+	Stderr       string `json:"stderr"`
+	StderrSHA    string `json:"stderr_sha256"`
+	StderrBinary bool   `json:"stderr_binary"`
+}
+
+// runFile is the run file (§2): the item, the run id, the verified tree at the start and at the
+// end of the run, the environment the rows ran in, and every row's record.
+type runFile struct {
+	ID        string            `json:"id"`
+	Run       string            `json:"run"`
+	TreeStart string            `json:"tree_start"`
+	TreeEnd   string            `json:"tree_end"`
+	Env       map[string]string `json:"env"`
+	Rows      []runRow          `json:"rows"`
+}
+
+// cmdRun executes every row of the frozen check list under the fixed environment (§2, R21),
+// writes the run file, and records the run event (R7).
+//
+// The order is P3's: R20 (the frozen artefacts are what they were) → R26 (the tree did not
+// move) → R27 (the ledger did not move) → R1 (the list still parses) → R7 (every row ran). A
+// run is refused on the first of these that fails, and no run file is written.
+//
+// R26 and R27 are comparisons, so they are made once the rows have run; the list is parsed
+// before them, because the rows come out of the list and a list that does not parse cannot be
+// run at all.
+func cmdRun(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := liveItem(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	// R20: the frozen artefacts are what they were. The brief, the check list and the claims are
+	// re-hashed and compared with the hash of the latest event that recorded each of them, so a
+	// frozen artefact that was edited after the freeze is refused at the point of use.
+	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	// R1: the frozen list still parses.
+	if it.Checks == "" {
+		return refuseRule("R1", "%s has no check list to run", it.ID)
+	}
+	list, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+	if err != nil {
+		return err
+	}
+	rows, err := parseChecks(string(list))
+	if err != nil {
+		return err
+	}
+	if err := validateR1(rows); err != nil {
+		return err
+	}
+	// The state before the run: the verified tree, computed from the FILESYSTEM, and the hash of
+	// the whole of .backlog/.
+	treeStart, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	ledgerBefore, err := backlogHash(root)
+	if err != nil {
+		return err
+	}
+	// The scratch directory: outside the repository, and removed after the run.
+	scratch, err := scratchDir(root)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+	home := filepath.Join(scratch, "home")
+	tmpdir := filepath.Join(scratch, "tmp")
+	for _, d := range []string{home, tmpdir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+	}
+	// R21: the environment is fixed. PATH is inherited from the caller and recorded; HOME and
+	// TMPDIR point at the scratch directory; LANG=C; TZ=UTC; and nothing else — in particular no
+	// GIT_* and no other variable of the caller's.
+	path := os.Getenv("PATH")
+	env := []string{"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir, "LANG=C", "TZ=UTC"}
+	// R7: every row runs, in the order of the frozen list, whatever the decider.
+	records := make([]runRow, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, execRow(root, row, env, runTimeout))
+	}
+	// The state after the run.
+	treeEnd, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	ledgerAfter, err := backlogHash(root)
+	if err != nil {
+		return err
+	}
+	// R26: the tree did not move under the run. A row's command changed the tree, so the rows
+	// were verified against a state that no longer exists.
+	if treeEnd != treeStart {
+		return refuseRule("R26", "the tree moved under the run: %s before, %s after — a row's command changed the tree the rows ran against", treeStart, treeEnd)
+	}
+	// R27: the ledger did not move under the run. A row's command wrote to the ledger, the
+	// evidence or the item files, and the run's own record would have been written by the thing
+	// it is recording.
+	if ledgerAfter != ledgerBefore {
+		return refuseRule("R27", "the %s directory changed under the run: %s before, %s after — a row's command wrote to the ledger, the evidence or the item files", backlogDir, ledgerBefore, ledgerAfter)
+	}
+	// The run file: .backlog/evidence/<id>-run<N>.json, N being the run's number for the item.
+	n := len(it.Runs) + 1
+	runID := fmt.Sprintf("run%d", n)
+	name := fmt.Sprintf("%s-run%d.json", it.ID, n)
+	rf := runFile{
+		ID: it.ID, Run: runID,
+		TreeStart: treeStart, TreeEnd: treeEnd,
+		Env: map[string]string{
+			"PATH": path, "HOME": home, "TMPDIR": tmpdir, "LANG": "C", "TZ": "UTC",
+		},
+		Rows: records,
+	}
+	data, err := encodeRun(rf)
+	if err != nil {
+		return err
+	}
+	p := newPaths(root)
+	if err := os.MkdirAll(p.evidence, 0o755); err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(p.evidence, name), string(data)); err != nil {
+		return err
+	}
+	// The ledger records the run and the hash of the file it names (R20).
+	ev := Event{T: "run", ID: it.ID, Run: runID, RunSHA: shaHex(data)}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	failed := 0
+	for _, r := range records {
+		if r.Exit != 0 || r.TimedOut {
+			failed++
+		}
+	}
+	if failed > 0 {
+		fmt.Printf("bl: %s %s written (%d rows, %d failed)\n", it.ID, runID, len(records), failed)
+		return errFailed
+	}
+	fmt.Printf("bl: %s %s written (%d rows)\n", it.ID, runID, len(records))
+	return nil
+}
+
+// encodeRun writes the run file as JSON: indented, and without HTML escaping, so the bytes the
+// judge reads are the bytes the row produced.
+func encodeRun(rf runFile) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// execRow runs one row's command and records what it saw: the exit code, whether it timed out,
+// the full output of each stream, and the sha256 of each.
+//
+// A command that exits non-zero, a command that cannot be run at all and a death by a signal are
+// each recorded as what they are — never swallowed, never turned into a pass.
+func execRow(root string, row checkRow, env []string, timeout time.Duration) runRow {
+	rec := runRow{ID: row.f["id"], Cmd: row.f["cmd"]}
+	cmd := exec.Command("/bin/sh", "-c", row.f["cmd"])
+	cmd.Dir = root
+	cmd.Env = env
+	cmd.Stdin = nil // /dev/null
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	// Its own process group, so a timeout kills the children too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		// the command could not be run at all
+		rec.Exit = 127
+		rec.Stderr = err.Error() + "\n"
+		rec.StderrSHA = shaHex([]byte(rec.Stderr))
+		return rec
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		rec.Exit, rec.Signalled = exitCodeOf(err)
+	case <-time.After(timeout):
+		// the process GROUP is killed, and the row is recorded as a timeout: exit = -1, which
+		// is distinct from any command's own exit code.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		rec.Exit = -1
+		rec.TimedOut = true
+	}
+	rec.Stdout, rec.StdoutBinary = encodeStream(out.Bytes())
+	rec.Stderr, rec.StderrBinary = encodeStream(errOut.Bytes())
+	rec.StdoutSHA = shaHex(out.Bytes())
+	rec.StderrSHA = shaHex(errOut.Bytes())
+	return rec
+}
+
+// exitCodeOf reads the exit code of a finished command. A process killed by a signal is
+// recorded as 128+signal, and a command that exits 137 on its own is recorded as 137 — the
+// signalled flag is what tells the two apart.
+func exitCodeOf(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return 127, false
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal()), true
+	}
+	code := ee.ExitCode()
+	if code < 0 {
+		return 127, false
+	}
+	return code, false
+}
+
+// encodeStream stores a captured stream as text. Output that is not valid UTF-8 is stored
+// base64, with the binary flag set (§2).
+func encodeStream(data []byte) (string, bool) {
+	if utf8.Valid(data) {
+		return string(data), false
+	}
+	return base64.StdEncoding.EncodeToString(data), true
+}
+
+// scratchDir creates the run's scratch directory: outside the repository, and removed after the
+// run (§2). HOME and TMPDIR point into it, so a tool that caches under HOME cannot write into
+// the tree.
+func scratchDir(root string) (string, error) {
+	for _, base := range []string{os.TempDir(), "/tmp", "/private/tmp"} {
+		if base == "" {
+			continue
+		}
+		dir, err := os.MkdirTemp(base, "bl-run-")
+		if err != nil {
+			continue
+		}
+		if inside(root, dir) {
+			os.RemoveAll(dir)
+			continue
+		}
+		return dir, nil
+	}
+	return "", refuse("cannot create a scratch directory outside the repository")
+}
+
+// inside reports whether path lies under root.
+func inside(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// backlogHash hashes the whole of .backlog/ — every file's path and content — so that a row
+// that writes to the ledger, the evidence or the item files is caught (R27).
+func backlogHash(root string) (string, error) {
+	base := filepath.Join(root, backlogDir)
+	var files []string
+	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		files = append(files, p)
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, p := range files {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return "", err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%s\x00%s\n", filepath.ToSlash(rel), shaHex(data))
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ── the verified tree ────────────────────────────────────────────────────────
+
+// The modes git writes in a tree.
+const (
+	treeMode = "40000"  // a directory
+	fileMode = "100644" // a regular file
+	execMode = "100755" // a regular file with the owner's execute bit
+	linkMode = "120000" // a symbolic link
+)
+
+// treeEntry is one entry of a tree: its mode, its name, and the sha of what it points at.
+type treeEntry struct {
+	name string
+	mode string
+	sha  string
+}
+
+// verifiedTree computes the verified tree from the FILESYSTEM (§2): every file of the working
+// directory — except .git/, the artefacts of R25, and the paths .gitignore excludes — is hashed
+// with `git hash-object`, and the entries are written as a tree.
+//
+// The index is never consulted, so a staged-but-unstaged path, a skip-worktree path and an
+// assume-unchanged path cannot hide a change from the tree (R26).
+func verifiedTree(root string) (string, error) {
+	b := &treeBuilder{root: root, ignored: map[string]bool{}}
+	if err := b.findIgnored(); err != nil {
+		return "", err
+	}
+	sha, ok, err := b.tree("")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		// an empty working tree is git's empty tree
+		return gitStdin(root, "tree", nil)
+	}
+	return sha, nil
+}
+
+// treeBuilder computes a tree from the files on disk.
+type treeBuilder struct {
+	root    string
+	ignored map[string]bool
+}
+
+// findIgnored asks git which of the working tree's paths .gitignore excludes. They are asked
+// for in one call: `git check-ignore -z --stdin`.
+func (b *treeBuilder) findIgnored() error {
+	var paths []string
+	err := filepath.WalkDir(b.root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || (p == filepath.Join(b.root, backlogDir)) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(b.root, p)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	cmd := exec.Command("git", "check-ignore", "-z", "--stdin")
+	cmd.Dir = b.root
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && (ee.ExitCode() == 1 || ee.ExitCode() == 128) {
+			// 1: nothing is ignored. 128: not a git repository, so there are no rules.
+			return nil
+		}
+		return err
+	}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			b.ignored[p] = true
+		}
+	}
+	return nil
+}
+
+// tree computes the tree of one directory, from the files on disk. It returns false when the
+// directory holds nothing git can store: git has no empty directories.
+func (b *treeBuilder) tree(rel string) (string, bool, error) {
+	dir := filepath.Join(b.root, filepath.FromSlash(rel))
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false, err
+	}
+	var list []treeEntry
+	for _, e := range ents {
+		name := e.Name()
+		if rel == "" && name == backlogDir {
+			continue
+		}
+		if e.IsDir() && name == ".git" {
+			// git's own metadata is never part of a tree
+			continue
+		}
+		child := name
+		if rel != "" {
+			child = rel + "/" + name
+		}
+		if b.ignored[child] {
+			continue
+		}
+		if e.IsDir() {
+			sha, ok, err := b.tree(child)
+			if err != nil {
+				return "", false, err
+			}
+			if !ok {
+				continue
+			}
+			list = append(list, treeEntry{name, treeMode, sha})
+			continue
+		}
+		sha, mode, err := b.blob(child)
+		if err != nil {
+			return "", false, err
+		}
+		list = append(list, treeEntry{name, mode, sha})
+	}
+	if len(list) == 0 {
+		return "", false, nil
+	}
+	sortTree(list)
+	var buf bytes.Buffer
+	for _, e := range list {
+		fmt.Fprintf(&buf, "%s %s\x00", e.mode, e.name)
+		raw, err := hex.DecodeString(e.sha)
+		if err != nil {
+			return "", false, err
+		}
+		buf.Write(raw)
+	}
+	sha, err := gitStdin(b.root, "tree", buf.Bytes())
+	if err != nil {
+		return "", false, err
+	}
+	return sha, true, nil
+}
+
+// blob hashes one file with `git hash-object` and names the mode git stores it under. A
+// symbolic link is stored as the blob of its target.
+func (b *treeBuilder) blob(rel string) (string, string, error) {
+	full := filepath.Join(b.root, filepath.FromSlash(rel))
+	st, err := os.Lstat(full)
+	if err != nil {
+		return "", "", err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(full)
+		if err != nil {
+			return "", "", err
+		}
+		sha, err := gitStdin(b.root, "blob", []byte(target))
+		if err != nil {
+			return "", "", err
+		}
+		return sha, linkMode, nil
+	}
+	if !st.Mode().IsRegular() {
+		return "", "", refuse("%s is not a regular file — git cannot store it", rel)
+	}
+	mode := fileMode
+	if st.Mode().Perm()&0o100 != 0 {
+		mode = execMode
+	}
+	out, code := git(b.root, "hash-object", "--", rel)
+	if code != 0 {
+		return "", "", refuse("git hash-object %s: exit %d", rel, code)
+	}
+	return strings.TrimSpace(out), mode, nil
+}
+
+// sortTree orders the entries of a tree the way git does: by name, and a directory is compared
+// as if its name ended in a slash, so "foo.bar" sorts before the directory "foo".
+func sortTree(list []treeEntry) {
+	sort.Slice(list, func(i, j int) bool {
+		a, b := list[i], list[j]
+		n := len(a.name)
+		if len(b.name) < n {
+			n = len(b.name)
+		}
+		if c := strings.Compare(a.name[:n], b.name[:n]); c != 0 {
+			return c < 0
+		}
+		ca, cb := byte(0), byte(0)
+		if len(a.name) > n {
+			ca = a.name[n]
+		} else if a.mode == treeMode {
+			ca = '/'
+		}
+		if len(b.name) > n {
+			cb = b.name[n]
+		} else if b.mode == treeMode {
+			cb = '/'
+		}
+		return ca < cb
+	})
+}
+
+// gitStdin hashes data as a git object of the given type WITHOUT writing it: `git hash-object
+// -t <type> --stdin` computes the id and leaves the object store alone.
+func gitStdin(root, typ string, data []byte) (string, error) {
+	cmd := exec.Command("git", "hash-object", "-t", typ, "--stdin")
+	cmd.Dir = root
+	cmd.Stdin = bytes.NewReader(data)
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return "", fmt.Errorf("git hash-object -t %s: exit %d: %s", typ, ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func cmdRound(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
@@ -2056,6 +2627,21 @@ func cmdCheck(root string, a args) error {
 				problems = append(problems, it.ID+" round "+r.Rows+" does not match its hash")
 			}
 		}
+		// R20: the run file is a frozen artefact too — it is hashed into the ledger event that
+		// names it, and `bl check` re-hashes it.
+		for _, r := range it.Runs {
+			rel, ok := runFileRel(it.ID, r.Run)
+			if !ok {
+				problems = append(problems, it.ID+" run "+r.Run+" names no run file")
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(root, rel))
+			if err != nil {
+				problems = append(problems, it.ID+" run "+rel+" is missing")
+			} else if shaHex(data) != r.RunSHA {
+				problems = append(problems, it.ID+" run "+rel+" does not match its hash")
+			}
+		}
 		if it.BlockedBy != "" {
 			if _, ok := byID[strings.ToLower(it.BlockedBy)]; !ok {
 				problems = append(problems, it.ID+" waits on unknown item "+it.BlockedBy)
@@ -2114,6 +2700,16 @@ func mustRead(path string) []byte {
 // errFailed signals a check that found problems without refusing the call.
 var errFailed = errors.New("check found problems")
 
+// runFileRel is the path of a run file: .backlog/evidence/<id>-run<N>.json, derived from the run
+// id `run<N>`. The run event does not carry the path — it is derivable, and one derivation is
+// one thing to get right.
+func runFileRel(id, run string) (string, bool) {
+	if !strings.HasPrefix(run, "run") || strings.TrimPrefix(run, "run") == "" {
+		return "", false
+	}
+	return backlogDir + "/" + evidenceDir + "/" + id + "-" + run + ".json", true
+}
+
 // ── schema ───────────────────────────────────────────────────────────────────
 
 func schemaJSON() map[string]any {
@@ -2133,6 +2729,7 @@ func schemaJSON() map[string]any {
 			"checks":     {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
 			"rebaseline": {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
 			"claims":     {"required": {"id", "claims", "claims_sha"}, "optional": {}},
+			"run":        {"required": {"id", "run", "run_sha"}, "optional": {}},
 			"round":      {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha"}},
 			"close":      {"required": {"id", "commit"}, "optional": {}},
 			"drop":       {"required": {"id", "reason"}, "optional": {"by"}},
@@ -2149,10 +2746,10 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "round", "close", "drop", "defer", "reopen", "note"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "close", "drop", "defer", "reopen", "note"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
-	// The count is part of the output: a reader (and a grep) must be able to tell 12 kinds
-	// from 11 without counting the lines.
+	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
+	// from 12 without counting the lines.
 	fmt.Printf("bl schema v1 — %s/%s · %d event kinds\n", backlogDir, ledgerName, len(order))
 	for _, name := range order {
 		s := spec[name]
@@ -2686,6 +3283,7 @@ var handlers = map[string]func(string, args) error{
 	"checks":     cmdChecks,
 	"rebaseline": cmdRebaseline,
 	"claims":     cmdClaims,
+	"run":        cmdRun,
 	"round":      cmdRound,
 	"close":      cmdClose,
 	"drop":       cmdDrop,
@@ -2706,7 +3304,7 @@ var handlers = map[string]func(string, args) error{
 const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
-  init | file | open | brief | checks | rebaseline | claims | round | close | drop | defer
+  init | file | open | brief | checks | rebaseline | claims | run | round | close | drop | defer
   reopen | note | next | show | status | check | render | schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
