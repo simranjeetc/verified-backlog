@@ -117,8 +117,8 @@ each exactly once. A row must have exactly nine fields, in the header's order.
 | `decider` | `bl` or `judge` (R1) |
 | `severity` | `blocking` or `advisory` (R1) |
 | `brief_ref` | a clause id from the brief, or empty (R2, R3) |
-| `cmd` | a shell command; always run, for every row, whatever the decider (R7) |
-| `expect` | for `decider: bl` only; the machine-decidable expectation (R8) |
+| `cmd` | a shell script, run by `/bin/sh -c` from the repository root; always run, for every row, whatever the decider (R7); its pipes are pipes — a backslash before a pipe is refused (R34) |
+| `expect` | for `decider: bl` only; the machine-decidable expectation (R8); its pattern is Go's RE2 — two alternatives are separated by a pipe, and a backslash before a pipe means a LITERAL pipe |
 | `fail_if` | for `decider: judge` only; the frozen fail condition (R3) |
 | `why_not_mech` | for `decider: judge` only; why the row cannot be machine-decided (R3) |
 | `criterion` | one line, human-readable, the thing being checked |
@@ -424,7 +424,7 @@ The skill's one-item-in-flight rule is what keeps that from being a problem.
 
 ### 3.5 Rules added by running the loop
 
-These four rules were not in the first draft. They came out of five implementation rounds on the repository's own
+These five rules were not in the first draft. They came out of the implementation rounds on the repository's own
 backlog, where each one caught a hole that the design had not thought of. They are stated here because the
 implementation in `scripts/cmd/bl/` already enforces them and the design should not lag the code.
 
@@ -451,6 +451,14 @@ list whose rows point at clauses that no longer exist is not a passing list.
 are frozen. No verb may rewrite them: `bl brief`, `bl checks` and `bl open` all refuse with R5, and they refuse
 before they write anything. An item with claims cannot be re-opened, because re-opening would replace the brief
 that the claims were made against.
+
+
+**R34 — a command is a shell script, and a pattern is not a shell.** A `cmd` field is a script run by `/bin/sh -c`
+from the repository root, so a pipe in it is a pipe: `a | b` runs `b` on what `a` prints. A backslash before a pipe is
+refused in a frozen list, because the shell reads `\|` as a literal pipe and the row then does not do what it says.
+The same goes the other way: an `expect` pattern is Go's RE2, so two alternatives are separated by a pipe, and a
+backslash before a pipe there means a literal pipe rather than an alternation. The refusal names the row that holds
+the mistake.
 
 **P1 is a rule about the whole list, not about one row.** The precedence in §4 applies across the list: if one row
 breaks R1 and another breaks R8, the refusal names R1. Evaluating rule by rule and row by row lets the rule that
@@ -509,8 +517,10 @@ and the supplied one is refused (R12, R23), except that R13 overrides the derive
 **P9 — the earlier rule in this document wins** for any pair not covered by P1–P8.
 
 **P10 — one rule per command, one refusal per call.** A command that reaches a refusing rule stops there and reports
-that rule; it does not continue to later rules. A refusal writes nothing to the ledger, except the `misclassified`
-event in R16, which is not a round.
+that rule; it does not continue to later rules. A refusal writes nothing to the ledger, to the evidence and to the
+item's artefacts, except the `misclassified` event in R16, which is not a round. The run.log is the log of every
+call, refusals included, so it grows; that is not state.
+call, refusals included, so it grows; that is not state.
 
 ---
 
