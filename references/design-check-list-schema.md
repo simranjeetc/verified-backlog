@@ -2,9 +2,10 @@
 
 **Status:** proposal, and **not yet verified**. Nothing here is implemented; `bl` does not yet have `checks`, `claims`,
 `run`, or a derived verdict. Seven verification rounds are recorded in §8; the last one still found blocking defects,
-which are fixed in this revision but have not been through an eighth round. Two findings from round 7 are
-**structural, not textual** — the ledger is a file the agent can rewrite, and files outside the pinned tree can hold
-the fix — and both need a human decision. The trust root has four OS-agnostic options, costed, at the end of §7.
+which are fixed in this revision but have not been through an eighth round. One finding from round 7 is
+**structural, not textual** — files outside the pinned tree can hold the fix, and the fix is R28. The other, the
+trust root, is **parked** at the end of §7: the chain and the sequence number ship now, the anchor decision waits for
+real session logs.
 Treat this as a reviewed draft, not a finished design.
 **Date:** 2026-10-21
 **Inputs:** `references/opinions/2026-10-21-claude-opus-cost-cutting.md` (cost), `…-claude-opus-5-5-judgment-seam.md`
@@ -761,6 +762,36 @@ which the earlier options blurred:
 so one signature over the head covers every line before it. Signing every event is the heavier variant and buys one
 thing — proving a single event without the head, which is what a certificate-transparency log needs because its tree is
 huge and distributed, and what this ledger does not need.
+
+### Decision for now: the trust root is parked
+
+The trust root is **deferred**, deliberately, until the loop has run on real work. Until it is decided, the ledger uses
+the cheapest thing that still leaves an audit trail:
+
+- the hash chain with a sequence number (R29) — every event carries the previous event's hash, and every event
+  carries its position;
+- `bl anchor` prints the head and the sequence number for a human to keep, if they want one;
+- no signer, no remote, no hardware, no extra daemon.
+
+**What that means honestly.** This claims nothing about prevention. It says the record is reconstructable, that a
+rewrite after an anchor is visible, and that a rewrite before the first anchor is not caught. That is a weaker
+promise than the one the four options above could support, and it is written down here so nobody has to guess which
+promise is in force.
+
+**When to revisit.** After the loop has run on real items, look at the accumulated session logs and decide with data
+rather than with the abstract worry that motivated this section. The questions that decide it:
+
+1. how often would a rewrite actually have gone unnoticed — or was the fear of one driving work that no real item
+   needed?
+2. what did anchoring cost in human actions, per item?
+3. did any second party ever need to audit the record, or was it only ever me reading my own log?
+4. is the ledger growing into something that needs a service under it — many items, many sessions, many readers?
+
+**This is the third time this question has surfaced**, and parking it is a decision rather than an oversight: the
+design has to be implementable before it is provable, and a guarantee that only the author can check is worth less
+than a working loop that says plainly what it does and does not guarantee. The rules in §3 do not depend on the
+answer — the chain, the sequence number and the refusal rules all stand either way, and the signer or the anchor
+slots in where the decision is finally made.
 
 ---
 
