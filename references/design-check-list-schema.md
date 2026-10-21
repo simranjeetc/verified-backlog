@@ -56,6 +56,7 @@ All paths are relative to the repository root.
 | run | `.backlog/evidence/<id>-run<N>.json` | `bl run` | yes — `run_sha` |
 | verdicts | `.backlog/items/<id>/verdicts.tsv` | the verifier | no — an input to `bl round` |
 | evidence | `.backlog/evidence/<id>-r<N>.txt` | `bl round` | yes — `rows_sha` |
+| views | `TODO.md`, `PROGRESS.md` | `bl render` | no — artefacts (R25) |
 | ledger | `.backlog/ledger.jsonl` | `bl` | — |
 
 **Brief clauses.** A clause is a line of the brief matching `^(B[0-9]+):\s+(.+)$`. Its id is the captured group, its
@@ -117,7 +118,7 @@ each exactly once. A row must have exactly nine fields, in the header's order.
 | `decider` | `bl` or `judge` (R1) |
 | `severity` | `blocking` or `advisory` (R1) |
 | `brief_ref` | a clause id from the brief, or empty (R2, R3) |
-| `cmd` | a shell script, run by `/bin/sh -c` from the repository root; always run, for every row, whatever the decider (R7); its pipes are pipes — a backslash before a pipe is refused (R34) |
+| `cmd` | a shell script, run by `/bin/sh -c` from the repository root; always run, for every row, whatever the decider (R7); its pipes are pipes — a backslash before a pipe is refused (R34); a row that covers a change names the file it covers, so R10 can see the hunk covered |
 | `expect` | for `decider: bl` only; the machine-decidable expectation (R8); its pattern is Go's RE2 — two alternatives are separated by a pipe, and a backslash before a pipe means a LITERAL pipe |
 | `fail_if` | for `decider: judge` only; the frozen fail condition (R3) |
 | `why_not_mech` | for `decider: judge` only; why the row cannot be machine-decided (R3) |
@@ -148,6 +149,11 @@ id	row_verdict	anchor
 - **The tree the judge read.** The verdicts file's header is followed by a line `tree <40-hex>`, naming the verified
   tree the judge read when it wrote the file. `bl round` refuses if that tree is not the tree the round verifies
   (R6). Without it, a judge could sign off on a tree the producer has since changed.
+
+**One assertion per row.** A row's command asserts exactly one thing, and its `expect` is reachable only through
+that assertion. A command that runs several statements can satisfy its expectation from one of the others — a
+refusal from an earlier statement, a line of output that happens to match — so the row then tests nothing it
+claims to test. A row that needs a second statement runs it in a separate row.
 
 **Evidence format** (what `bl round` writes). One line per frozen check id, in the order the check list was frozen:
 
@@ -189,6 +195,10 @@ all.
 **Artefacts (R25).** `.backlog/` is an artefact directory: it is expected to be untracked, and it is excluded from the
 clean-tree test in R18. It is never part of a verified tree, because `git add -A` skips ignored files and `.backlog/`
 is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repository error and `bl` says so.
+The two rendered views, `TODO.md` and `PROGRESS.md`, are artefacts as well: every event in the ledger rewrites
+them, so they are excluded from the verified tree and from the round's diff. Without that, a tree pin would
+refuse every round after the ledger moved — and the ledger moves in the item's own flow, because R14 files the
+advisory items between the run and the round.
 
 **Init.** `bl init` creates `.backlog/`, the empty ledger, and the two views, and reports — but does not change — the
 fact that `.backlog/` is not in `.gitignore`. It is the only command that creates the directory.
@@ -289,6 +299,10 @@ command's output — is a refusal.
 decider. A row covers a hunk if either:
 - it is a `decider: judge` row whose source anchor lies in that hunk's new-side range; or
 - its `cmd` contains the hunk's file path as a literal substring.
+
+The comparison is literal: a row that exercises a file without naming it covers nothing. A check list written to
+drive a binary never names a source file, so on its own it leaves every hunk uncovered and no round can be recorded
+at all. The path belongs in the command, next to the thing it exercises.
 
 A file that is added, deleted, or mode-changed without any textual hunk (a binary file, an empty file) is covered
 only by a blocking row whose `cmd` names that path.
