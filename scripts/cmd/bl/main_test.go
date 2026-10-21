@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -1782,9 +1783,16 @@ const (
 	rowBreaksR8 = "X8\tbl\tblocking\tB1\tx\tstdout contains foo\t\t\tc\n"
 )
 
-// p1Order is the order §4 gives for `bl checks`: the rules are evaluated over the whole list, in
-// this order, and the first broken rule ends the command.
-var p1Order = []string{"R1", "R5", "R4", "R2", "R3", "R8"}
+// p1Order is the order `bl checks` evaluates its rules in: the STATE guards first — R5 (the
+// claims freeze the list), then R4 (the list is written once) — and then the list's own rules, in
+// the order the list's rules: R1 (the schema), R2 (the brief clause), R3 (the judge's
+// justification), R8 (the expectation form). The first broken rule ends the command.
+//
+// I9 changed this order, and this table with it. I7 put R1 first, so a list that broke R1 was
+// refused under R1 even on a claims-frozen item. Now the state guards come first, so such a
+// command is refused under R5 — it was never allowed to write a list, so the list is not read at
+// all.
+var p1Order = []string{"R5", "R4", "R1", "R2", "R3", "R8"}
 
 // p1Row is the row that breaks one rule. R5 and R4 are the state rules: they are broken by the
 // item's state, not by a row.
@@ -1802,8 +1810,9 @@ func p1Row(rule string) string {
 	return ""
 }
 
-// P1: where two rules can both match, the one that comes first in the order wins — over the
-// whole list, and whatever order the rows sit in.
+// The precedence: where two rules can both match, the one that comes first in the order wins —
+// over the whole list, and whatever order the rows sit in. The state rules (R5, R4) are broken by
+// the item's state, so they are set up here and not by a row.
 func TestChecksPrecedenceNamesTheEarliestBrokenRule(t *testing.T) {
 	for i, earlier := range p1Order {
 		for _, later := range p1Order[i+1:] {
@@ -2091,5 +2100,269 @@ func TestR24TheRuleIdInTheMessageIsR24AtUseAndR2AtWrite(t *testing.T) {
 	}
 	if strings.Contains(out, "R24") {
 		t.Errorf("the write path must not refuse under R24: %s", out)
+	}
+}
+
+// ── I9: the precedence the design does not cover ──────────────────────────────
+
+// `bl checks` does its STATE checks first — R5 (the claims freeze the list), then R4 (the list is
+// written once) — so a frozen item is refused without waiting on stdin, and a list that was never
+// allowed to be written is not read at all.
+
+// The claims freeze the list: the command is refused under R5, and the list is not read. The file
+// does not exist, so a command that read it first would say so instead.
+func TestChecksRefusesUnderR5WithoutReadingTheList(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", filepath.Join(t.TempDir(), "no-such-list.tsv")))
+	if r.rule != "R5" {
+		t.Fatalf("want a refusal under R5, got %s: %s", r.rule, r.msg)
+	}
+	// nothing was written
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "claims" {
+		t.Fatalf("a refusal wrote %+v", last)
+	}
+}
+
+// The refusal comes back at once: stdin is a fifo whose writer never delivers a byte, so a
+// command that read the list would wait for it.
+func TestChecksRefusesUnderR5WithoutWaitingOnStdin(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+
+	fifo := filepath.Join(t.TempDir(), "list.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	go func() {
+		w, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		if err != nil {
+			return
+		}
+		<-release
+		w.Close()
+	}()
+	// the reader's open waits for the writer; it must not hang the test
+	opened := make(chan *os.File, 1)
+	go func() {
+		f, err := os.OpenFile(fifo, os.O_RDONLY, 0)
+		if err != nil {
+			opened <- nil
+			return
+		}
+		opened <- f
+	}()
+	var stdin *os.File
+	select {
+	case stdin = <-opened:
+		if stdin == nil {
+			t.Fatal("the fifo could not be opened")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fifo could not be opened")
+	}
+	defer stdin.Close()
+	defer close(release)
+
+	old := os.Stdin
+	os.Stdin = stdin
+	defer func() { os.Stdin = old }()
+
+	a, err := parseArgs([]string{"A1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmdChecks(dir, a) }()
+	select {
+	case err := <-done:
+		r := wantRefusal(t, err)
+		if r.rule != "R5" {
+			t.Fatalf("want a refusal under R5, got %s: %s", r.rule, r.msg)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bl checks waited on stdin: the state guards come before the list is read")
+	}
+}
+
+// The list is written once: with a frozen list and no --amend the command is refused under R4,
+// and the list is not read.
+func TestChecksRefusesUnderR4WithoutReadingTheList(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", filepath.Join(t.TempDir(), "no-such-list.tsv")))
+	if r.rule != "R4" {
+		t.Fatalf("want a refusal under R4, got %s: %s", r.rule, r.msg)
+	}
+	// nothing was written
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "checks" {
+		t.Fatalf("a refusal wrote %+v", last)
+	}
+}
+
+// With no claims and no list there is nothing to freeze: the command is refused, and it records
+// nothing.
+func TestChecksWithNoListIsRefusedAndRecordsNothing(t *testing.T) {
+	dir := openItem(t)
+	// stdin is empty: there is no list to read
+	empty, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer empty.Close()
+	old := os.Stdin
+	os.Stdin = empty
+	defer func() { os.Stdin = old }()
+
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1"))
+	if r.rule != "R1" {
+		t.Fatalf("want a refusal under R1, got %s: %s", r.rule, r.msg)
+	}
+	// nothing was written, and no list was stored
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "open" {
+		t.Fatalf("a refusal wrote %+v", last)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv")); !os.IsNotExist(err) {
+		t.Fatal("a refused list must not be stored")
+	}
+}
+
+// A well-formed list is accepted by `bl checks`, and `bl claims` is accepted afterwards.
+func TestChecksAWellFormedListIsAcceptedAndTheClaimsAfterIt(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "claims" {
+		t.Fatalf("the claims event = %+v", last)
+	}
+}
+
+// `bl rebaseline` evaluates the LIST's rules before the state rules: a list that breaks R1, R2 or
+// R8 is refused under that rule, even when the claims freeze the item.
+func TestRebaselineRefusesABadListUnderItsOwnRuleWithClaims(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	cases := []struct {
+		name, list, rule string
+	}{
+		{"R1", checksHeader + "S1\tmodel\tblocking\tB1\tx\texit 0\t\t\tc\n", "R1"},
+		{"R2", checksHeader + "S1\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n", "R2"},
+		{"R8", checksHeader + "S1\tbl\tblocking\tB1\tx\texit 999\t\t\tc\n", "R8"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := wantRefusal(t, call(t, cmdRebaseline, dir, "A1",
+				"--file", writeFile(t, t.TempDir(), "c.tsv", c.list), "--reason", "the premise moved"))
+			if r.rule != c.rule {
+				t.Fatalf("want a refusal under %s, got %s: %s", c.rule, r.rule, r.msg)
+			}
+			// the frozen list is untouched, and nothing was written
+			data, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+			if string(data) != goodList {
+				t.Fatalf("a refused re-baseline changed the list: %q", data)
+			}
+			events, _ := readLedger(dir)
+			if last := events[len(events)-1]; last.T != "claims" {
+				t.Fatalf("a refusal wrote %+v", last)
+			}
+		})
+	}
+}
+
+// A list that is good on its own reaches the state rules: with claims the re-baseline is refused
+// under R5 (the claims freeze the list).
+func TestRebaselineRefusesAValidListUnderR5WithClaims(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	r := wantRefusal(t, call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c.tsv", rebaselinedList), "--reason", "the premise moved"))
+	if r.rule != "R5" {
+		t.Fatalf("want a refusal under R5, got %s: %s", r.rule, r.msg)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+	if string(data) != goodList {
+		t.Fatalf("a refused re-baseline changed the list: %q", data)
+	}
+}
+
+// The same list without claims is accepted, and the re-baseline is recorded.
+func TestRebaselineAcceptsAValidListWithoutClaims(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	if err := call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c.tsv", rebaselinedList), "--reason", "the premise moved"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+	if err != nil || string(data) != rebaselinedList {
+		t.Fatalf("checks.tsv = %q, %v", data, err)
+	}
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "rebaseline" {
+		t.Fatalf("the re-baseline event = %+v", last)
+	}
+}
+
+// The list's own rules keep their order: a list that breaks R1 and R8 is refused under R1, one
+// that breaks R2 and R3 under R2, and within one rule the first broken row in file order is the
+// one named.
+func TestTheListRulesKeepTheirOrder(t *testing.T) {
+	cases := []struct {
+		name, list, rule, names, notNames string
+	}{
+		{
+			"R1 before R8",
+			checksHeader + rowBreaksR8 + rowBreaksR1,
+			"R1", "X1", "X8",
+		},
+		{
+			"R2 before R3",
+			checksHeader + rowBreaksR3 + rowBreaksR2,
+			"R2", "X2", "X3",
+		},
+		{
+			"the first broken row of one rule",
+			checksHeader + "Y1\tbl\tblocking\tB8\tx\texit 0\t\t\tc\n" + "Y2\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n",
+			"R2", "Y1", "Y2",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := openItem(t)
+			r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", c.list)))
+			if r.rule != c.rule {
+				t.Fatalf("want a refusal under %s, got %s: %s", c.rule, r.rule, r.msg)
+			}
+			if !strings.Contains(r.msg, c.names) {
+				t.Errorf("the refusal must name the row %s: %s", c.names, r.msg)
+			}
+			if strings.Contains(r.msg, c.notNames) {
+				t.Errorf("the refusal must not name the later row %s: %s", c.notNames, r.msg)
+			}
+		})
 	}
 }

@@ -1034,20 +1034,54 @@ func parseChecks(text string) ([]checkRow, error) {
 	return rows, nil
 }
 
-// validateChecks applies R1, R2, R3 and R8 to every row, in the order §4 gives: a rule is
-// evaluated over the whole list before the next rule is, so the refusal names the earliest broken
-// rule and not the first broken row. clauses are the brief's clause ids.
-func validateChecks(rows []checkRow, clauses map[string]bool) error {
+// validateChecks applies the LIST's own rules to every row, in the order §4 gives: R1 (the
+// schema), then R4 (the amend scope), then R2 (the brief clause), then R3 (the judge's
+// justification), then R8 (the expectation form). A rule is evaluated over the whole list before
+// the next rule is, so the refusal names the earliest broken rule and not the first broken row.
+//
+// The brief is read at R2's place: it is re-hashed (R20) and its clauses are what a row's
+// brief_ref may cite. amend says the list is an amendment of the frozen one — the scope of an
+// amendment is R4's, and it is checked between R1 and R2. The frozen list's hash is returned so
+// the caller can record it as the previous hash of the amendment.
+//
+// This is the one sweep over a list: `bl checks` and `bl rebaseline` both use it, so the two
+// commands cannot drift apart on what a list may say.
+func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string, error) {
 	if err := validateR1(rows); err != nil {
-		return err
+		return "", err
 	}
-	if err := validateR2(rows, clauses); err != nil {
-		return err
+	prevSHA := ""
+	if amend {
+		prev, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+		if err != nil {
+			return "", err
+		}
+		old, err := parseChecks(string(prev))
+		if err != nil {
+			return "", err
+		}
+		if err := checkAmendment(old, rows); err != nil {
+			return "", err
+		}
+		prevSHA = it.ChecksSHA
+	}
+	if it.Brief == "" {
+		return "", refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
+	}
+	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	if err != nil {
+		return "", err
+	}
+	if err := validateR2(rows, briefClauses(string(brief))); err != nil {
+		return "", err
 	}
 	if err := validateR3(rows); err != nil {
-		return err
+		return "", err
 	}
-	return validateR8(rows)
+	if err := validateR8(rows); err != nil {
+		return "", err
+	}
+	return prevSHA, nil
 }
 
 // validateR1 applies R1 — the row schema — to every row: the id, the severity, the command, and
@@ -1240,10 +1274,22 @@ func cmdChecks(root string, a args) error {
 	if err := requireInFlight(order, it); err != nil {
 		return err
 	}
-	// P1: the rules are evaluated over the whole list in one fixed global order — R1 (the
-	// schema), R5 (the claims freeze the list), R4 (the list is written once), R2 (the brief
-	// clause), R3 (the judge's justification), R8 (the expectation form) — so the refusal names
-	// the earliest broken rule, and within one rule the first broken row in file order.
+	// The state guards come FIRST, before the list is read: the claims freeze the list (R5) and
+	// the list is written once (R4). A frozen item is therefore refused without waiting on
+	// stdin, and a list that was never allowed to be written is not read at all.
+	amend := a.flag("amend")
+	// R5: the claims freeze the list.
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
+	}
+	// R4: the list is written once, and only --amend may change it.
+	if it.Checks != "" && !amend {
+		return refuseRule("R4", "%s already has a check list — it is written once; only --amend may change it", it.ID)
+	}
+	if it.Checks == "" && amend {
+		return refuseRule("R4", "%s has no check list to amend", it.ID)
+	}
+	// Only now is the list read — from --file, or from stdin.
 	text, err := a.input("file")
 	if err != nil {
 		return err
@@ -1252,54 +1298,12 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := validateR1(rows); err != nil {
-		return err
-	}
-	// R5: the claims freeze the list.
-	if it.Claims != "" {
-		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
-	}
-	// R4: the list is written once, and only --amend may change it.
-	amend := a.flag("amend")
-	if it.Checks != "" && !amend {
-		return refuseRule("R4", "%s already has a check list — it is written once; only --amend may change it", it.ID)
-	}
-	if it.Checks == "" && amend {
-		return refuseRule("R4", "%s has no check list to amend", it.ID)
-	}
-	// R4 again: an amendment may do exactly two things.
-	prevSHA := ""
-	if amend {
-		prev, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
-		if err != nil {
-			return err
-		}
-		old, err := parseChecks(string(prev))
-		if err != nil {
-			return err
-		}
-		if err := checkAmendment(old, rows); err != nil {
-			return err
-		}
-		prevSHA = it.ChecksSHA
-	}
-	// R2: a blocking row cites a clause of the brief.
-	if it.Brief == "" {
-		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
-	}
-	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	// The list's own rules, in the order §4 gives: R1 (the schema) across all rows, then R4
+	// (the amend scope), then R2 (the brief clause), then R3 (the judge's justification), then
+	// R8 (the expectation form) — so the refusal names the earliest broken rule, and within one
+	// rule the first broken row in file order.
+	prevSHA, err := validateChecks(root, it, rows, amend)
 	if err != nil {
-		return err
-	}
-	if err := validateR2(rows, briefClauses(string(brief))); err != nil {
-		return err
-	}
-	// R3: a judge row justifies itself.
-	if err := validateR3(rows); err != nil {
-		return err
-	}
-	// R8: an expectation is one of five forms.
-	if err := validateR8(rows); err != nil {
 		return err
 	}
 	rel := itemFile(it.ID, checksName)
@@ -1326,6 +1330,13 @@ func cmdChecks(root string, a args) error {
 // and the new hash; the earlier checks event keeps its own hash (R24). A re-baseline is a NEW
 // PREMISE: it is visible in the ledger, it does not erase the rounds that came before it, and it
 // resets the code-round counter so the new premise is not judged against the old one's rounds.
+//
+// The order is the design's, and it is the other way round from `bl checks`: the LIST's rules come
+// before the state rules. A bad list is refused under its own rule — R1, R2, R3 or R8 — even
+// when the claims freeze the item; only a list that is good on its own reaches the state rules,
+// and is then refused under R5 (the claims freeze the list) or R4 (the list is written once).
+// R20 (the frozen artefacts are what they were) keeps its place: it is checked before anything
+// else on this path.
 func cmdRebaseline(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
@@ -1345,26 +1356,16 @@ func cmdRebaseline(root string, a args) error {
 	if err := requireInFlight(order, it); err != nil {
 		return err
 	}
-	if it.Claims != "" {
-		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
-	}
-	if it.Checks == "" {
-		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
+	// R20: the frozen artefacts are what they were — before anything else on this path.
+	if err := verifyFrozen(root, it); err != nil {
+		return err
 	}
 	reason, err := cleanText(a.get("reason"), "reason")
 	if err != nil {
 		return err
 	}
-	if err := verifyFrozen(root, it); err != nil {
-		return err
-	}
-	if it.Brief == "" {
-		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
-	}
-	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
-	if err != nil {
-		return err
-	}
+	// The list's own rules first, in the order §4 gives: R1 (the schema) across all rows, then
+	// R2 (the brief clause), then R3 (the judge's justification), then R8 (the expectation form).
 	text, err := a.input("file")
 	if err != nil {
 		return err
@@ -1373,8 +1374,15 @@ func cmdRebaseline(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := validateChecks(rows, briefClauses(string(brief))); err != nil {
+	if _, err := validateChecks(root, it, rows, false); err != nil {
 		return err
+	}
+	// Then the state rules: the claims freeze the list (R5), and the list is written once (R4).
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
+	}
+	if it.Checks == "" {
+		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
 	}
 	rel := itemFile(it.ID, checksName)
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
