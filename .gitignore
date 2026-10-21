@@ -1,0 +1,2 @@
+# built artifact: cd scripts && go build -o bl ./cmd/bl
+scripts/bl
