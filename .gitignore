@@ -1,2 +1,5 @@
 # built artifact: cd scripts && go build -o bl ./cmd/bl
 scripts/bl
+
+# lavish review artifacts (local, not part of the skill)
+.lavish/
