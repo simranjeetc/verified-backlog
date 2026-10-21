@@ -442,8 +442,13 @@ def show_and_schema_emit_valid_json():
     shown = json.loads(ok(root, "show", "A1", "--json").stdout)
     assert shown["ID"] == "A1" and shown["Status"] == "open", shown
     schema = json.loads(ok(root, "schema", "--json").stdout)
-    assert schema["version"] == 1 and len(schema["events"]) == 8, schema
-    assert schema["round_cap"] == 3 and schema["causes"] == ["code", "harness"]
+    assert schema["version"] == 1, schema
+    assert schema["round_cap"] == 3, schema
+    assert schema["causes"] == ["code", "harness", "dispute"], schema
+    assert sorted(schema["events"]) == [
+        "brief", "checks", "claims", "close", "defer", "drop",
+        "file", "note", "open", "rebaseline", "reopen", "round",
+    ], schema
 
 
 @test
