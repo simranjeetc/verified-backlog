@@ -1035,9 +1035,10 @@ func parseChecks(text string) ([]checkRow, error) {
 }
 
 // validateChecks applies the LIST's own rules to every row, in the order §4 gives: R1 (the
-// schema), then R4 (the amend scope), then R2 (the brief clause), then R3 (the judge's
-// justification), then R8 (the expectation form). A rule is evaluated over the whole list before
-// the next rule is, so the refusal names the earliest broken rule and not the first broken row.
+// schema), then R34 (the command's dialect), then R4 (the amend scope), then R2 (the brief
+// clause), then R3 (the judge's justification), then R8 (the expectation form). A rule is
+// evaluated over the whole list before the next rule is, so the refusal names the earliest
+// broken rule and not the first broken row.
 //
 // The brief is read at R2's place: it is re-hashed (R20) and its clauses are what a row's
 // brief_ref may cite. amend says the list is an amendment of the frozen one — the scope of an
@@ -1048,6 +1049,13 @@ func parseChecks(text string) ([]checkRow, error) {
 // commands cannot drift apart on what a list may say.
 func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string, error) {
 	if err := validateR1(rows); err != nil {
+		return "", err
+	}
+	// R34: the command's dialect. A cmd is a script run by /bin/sh -c, so a pipe in it is a
+	// pipe; a backslash before a pipe is read by the shell as a literal pipe, and the row then
+	// does not do what it says. The list is refused here, before it is frozen, so the mistake
+	// cannot reach a round.
+	if err := validateR34(rows); err != nil {
 		return "", err
 	}
 	prevSHA := ""
@@ -1125,6 +1133,23 @@ func validateR1(rows []checkRow) error {
 			}
 		default:
 			return refuseRule("R1", "row %s: decider %q must be bl or judge", id, r.f["decider"])
+		}
+	}
+	return nil
+}
+
+// validateR34 applies R34 — a command is a shell script, and a pattern is not a shell — to
+// every row. A cmd is run by /bin/sh -c, so a pipe in it is a pipe; a backslash before a pipe
+// is read by the shell as a literal pipe, so the row does not do what it says and the list is
+// refused before it can reach a round.
+//
+// Only the cmd field is checked. An expect pattern is Go's RE2, where a backslash before a
+// pipe means a literal pipe — and there that is what the pattern says, not a fault.
+func validateR34(rows []checkRow) error {
+	for _, r := range rows {
+		if strings.Contains(r.f["cmd"], `\|`) {
+			return refuseRule("R34", "row %s: the command holds a backslash before a pipe — the shell reads that as a literal pipe; write the pipe as a pipe",
+				r.f["id"])
 		}
 	}
 	return nil
@@ -1298,10 +1323,10 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	// The list's own rules, in the order §4 gives: R1 (the schema) across all rows, then R4
-	// (the amend scope), then R2 (the brief clause), then R3 (the judge's justification), then
-	// R8 (the expectation form) — so the refusal names the earliest broken rule, and within one
-	// rule the first broken row in file order.
+	// The list's own rules, in the order §4 gives: R1 (the schema) across all rows, then R34
+	// (the command's dialect), then R4 (the amend scope), then R2 (the brief clause), then R3
+	// (the judge's justification), then R8 (the expectation form) — so the refusal names the
+	// earliest broken rule, and within one rule the first broken row in file order.
 	prevSHA, err := validateChecks(root, it, rows, amend)
 	if err != nil {
 		return err
@@ -1326,13 +1351,14 @@ func cmdChecks(root string, a args) error {
 }
 
 // cmdRebaseline replaces the frozen check list. The new list is validated with the same rules
-// `bl checks` uses (R1, R2, R3, R8), and the re-baseline is recorded as a new event with the old
-// and the new hash; the earlier checks event keeps its own hash (R24). A re-baseline is a NEW
-// PREMISE: it is visible in the ledger, it does not erase the rounds that came before it, and it
-// resets the code-round counter so the new premise is not judged against the old one's rounds.
+// `bl checks` uses (R1, R34, R2, R3, R8), and the re-baseline is recorded as a new event with
+// the old and the new hash; the earlier checks event keeps its own hash (R24). A re-baseline is
+// a NEW PREMISE: it is visible in the ledger, it does not erase the rounds that came before it,
+// and it resets the code-round counter so the new premise is not judged against the old one's
+// rounds.
 //
 // The order is the design's, and it is the other way round from `bl checks`: the LIST's rules come
-// before the state rules. A bad list is refused under its own rule — R1, R2, R3 or R8 — even
+// before the state rules. A bad list is refused under its own rule — R1, R34, R2, R3 or R8 — even
 // when the claims freeze the item; only a list that is good on its own reaches the state rules,
 // and is then refused under R5 (the claims freeze the list) or R4 (the list is written once).
 // R20 (the frozen artefacts are what they were) keeps its place: it is checked before anything
@@ -1365,7 +1391,8 @@ func cmdRebaseline(root string, a args) error {
 		return err
 	}
 	// The list's own rules first, in the order §4 gives: R1 (the schema) across all rows, then
-	// R2 (the brief clause), then R3 (the judge's justification), then R8 (the expectation form).
+	// R34 (the command's dialect), then R2 (the brief clause), then R3 (the judge's
+	// justification), then R8 (the expectation form).
 	text, err := a.input("file")
 	if err != nil {
 		return err

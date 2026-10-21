@@ -1781,18 +1781,26 @@ const (
 	rowBreaksR2 = "X2\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n"
 	rowBreaksR3 = "X3\tjudge\tblocking\tB1\tx\t\tit fails\ttbd\tc\n"
 	rowBreaksR8 = "X8\tbl\tblocking\tB1\tx\tstdout contains foo\t\t\tc\n"
+	// R34: the row is good on every other rule — it is a decider bl row with a brief_ref that
+	// exists and an expectation of one of the five forms — and its cmd holds a backslash
+	// before a pipe.
+	rowBreaksR34 = "X34\tbl\tblocking\tB1\tgrep a\\|b f\texit 0\t\t\tc\n"
 )
 
 // p1Order is the order `bl checks` evaluates its rules in: the STATE guards first — R5 (the
 // claims freeze the list), then R4 (the list is written once) — and then the list's own rules, in
-// the order the list's rules: R1 (the schema), R2 (the brief clause), R3 (the judge's
-// justification), R8 (the expectation form). The first broken rule ends the command.
+// the order the list's rules: R1 (the schema), R34 (the command's dialect), R2 (the brief
+// clause), R3 (the judge's justification), R8 (the expectation form). The first broken rule ends
+// the command.
 //
 // I9 changed this order, and this table with it. I7 put R1 first, so a list that broke R1 was
 // refused under R1 even on a claims-frozen item. Now the state guards come first, so such a
 // command is refused under R5 — it was never allowed to write a list, so the list is not read at
 // all.
-var p1Order = []string{"R5", "R4", "R1", "R2", "R3", "R8"}
+//
+// I13 added R34 to the list's own rules, between R1 and R2: a cmd is a script run by /bin/sh -c,
+// so a pipe in it is a pipe, and a backslash before one is refused before the list is frozen.
+var p1Order = []string{"R5", "R4", "R1", "R34", "R2", "R3", "R8"}
 
 // p1Row is the row that breaks one rule. R5 and R4 are the state rules: they are broken by the
 // item's state, not by a row.
@@ -1806,6 +1814,8 @@ func p1Row(rule string) string {
 		return rowBreaksR3
 	case "R8":
 		return rowBreaksR8
+	case "R34":
+		return rowBreaksR34
 	}
 	return ""
 }
@@ -1861,6 +1871,7 @@ func TestChecksNamesTheFirstBrokenRowOfOneRule(t *testing.T) {
 		{"R2", "Y1\tbl\tblocking\tB8\tx\texit 0\t\t\tc\n", "Y2\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n"},
 		{"R3", "W1\tjudge\tblocking\tB1\tx\t\tit fails\ttbd\tc\n", "W2\tjudge\tblocking\tB1\tx\t\tit fails\tnope\tc\n"},
 		{"R8", "V1\tbl\tblocking\tB1\tx\tstdout contains foo\t\t\tc\n", "V2\tbl\tblocking\tB1\tx\treturns 0\t\t\tc\n"},
+		{"R34", "Z1\tbl\tblocking\tB1\tgrep a\\|b\texit 0\t\t\tc\n", "Z2\tbl\tblocking\tB1\tgrep c\\|d\texit 0\t\t\tc\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.rule, func(t *testing.T) {
@@ -1885,7 +1896,7 @@ func TestChecksNamesTheFirstBrokenRowOfOneRule(t *testing.T) {
 // Each rule on its own still refuses under its own name: the order only decides between two
 // rules, it does not change what a rule says.
 func TestChecksEachRuleStillRefusesAlone(t *testing.T) {
-	for _, rule := range []string{"R1", "R2", "R3", "R8"} {
+	for _, rule := range []string{"R1", "R34", "R2", "R3", "R8"} {
 		t.Run(rule, func(t *testing.T) {
 			checksRefused(t, openItem(t), checksHeader+p1Row(rule), rule)
 		})
@@ -2488,5 +2499,111 @@ func TestR20OutranksR23OnTheHarnessPath(t *testing.T) {
 	after, _ := readLedger(dir)
 	if len(after) != len(before) {
 		t.Fatalf("a refused round appended %d events", len(after)-len(before))
+	}
+}
+
+// ── R34: a command is a shell script, and a pattern is not a shell ────────────
+
+// r34BadRow is a row whose cmd holds a backslash before a pipe: the shell reads that as a
+// literal pipe, so the row does not do what it says.
+const r34BadRow = "X34\tbl\tblocking\tB1\tgrep a\\|b f\texit 0\t\t\tc\n"
+
+// r34GoodRow is a row whose cmd holds a plain pipe: the shell reads that as a pipe, which is
+// what the row means.
+const r34GoodRow = "S1\tbl\tblocking\tB1\techo ab | grep a\texit 0\t\t\tc\n"
+
+// `bl checks` refuses a list whose row holds a backslash before a pipe: the refusal names R34
+// and the offending row, and nothing is written.
+func TestChecksR34RefusesABackslashBeforeAPipe(t *testing.T) {
+	dir := openItem(t)
+	list := checksHeader + r34GoodRow + r34BadRow
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+	if r.rule != "R34" {
+		t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "X34") {
+		t.Errorf("the refusal must name the offending row: %s", r.msg)
+	}
+	if strings.Contains(r.msg, "S1") {
+		t.Errorf("the refusal must not name the good row: %s", r.msg)
+	}
+	// nothing is written: no list event and no list file
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "open" {
+		t.Fatalf("a refusal wrote %+v", last)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv")); err == nil {
+		t.Fatal("a refused list must not be stored")
+	}
+	// and a good list can still be frozen for the item
+	checksOK(t, dir, checksHeader+r34GoodRow)
+}
+
+// `bl rebaseline` refuses the same way: a new list is a frozen list too.
+func TestRebaselineR34RefusesABackslashBeforeAPipe(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	r := wantRefusal(t, call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c.tsv", checksHeader+r34BadRow), "--reason", "the premise moved"))
+	if r.rule != "R34" {
+		t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "X34") {
+		t.Errorf("the refusal must name the offending row: %s", r.msg)
+	}
+	// the frozen list is untouched and nothing was written
+	data, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+	if string(data) != goodList {
+		t.Fatalf("a refused re-baseline changed the list: %q", data)
+	}
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T != "checks" {
+		t.Fatalf("a refusal wrote %+v", last)
+	}
+	// and a good list can still be re-baselined
+	if err := call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c2.tsv", checksHeader+r34GoodRow), "--reason", "the premise moved"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+}
+
+// A list whose commands use plain pipes is still accepted: the shell reads a plain pipe as a
+// pipe, and that is what the row means.
+func TestChecksR34AcceptsPlainPipes(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, checksHeader+
+		"S1\tbl\tblocking\tB1\techo ab | grep a\texit 0\t\t\tc\n"+
+		"S2\tbl\tblocking\tB1\techo ab | grep -E 'a|b' | wc -l\texit 0\t\t\tc\n"+
+		"S3\tbl\tblocking\tB1\ttrue || false\texit 0\t\t\tc\n")
+}
+
+// A list with no pipe at all is still accepted.
+func TestChecksR34AcceptsAListWithNoPipe(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\tc\n")
+}
+
+// R34 is about the cmd field only: an expect pattern is Go's RE2, where a backslash before a
+// pipe means a literal pipe, and that is what the pattern says.
+func TestChecksR34DoesNotRefuseAnEscapedPipeInAnExpect(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\techo \"a|b\"\tstdout matches a\\|b\t\t\tc\n")
+}
+
+// Within R34 the refusal names the first broken row in file order, and that row only.
+func TestR34NamesTheFirstBrokenRowOnly(t *testing.T) {
+	dir := openItem(t)
+	list := checksHeader +
+		"X1\tbl\tblocking\tB1\tgrep a\\|b f\texit 0\t\t\tc\n" +
+		"X2\tbl\tblocking\tB1\tgrep c\\|d f\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+	if r.rule != "R34" {
+		t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
+	}
+	if !strings.Contains(r.msg, "X1") {
+		t.Errorf("the refusal must name the first broken row: %s", r.msg)
+	}
+	if strings.Contains(r.msg, "X2") {
+		t.Errorf("the refusal must not name the later broken row: %s", r.msg)
 	}
 }
