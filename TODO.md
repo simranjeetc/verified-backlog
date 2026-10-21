@@ -2,12 +2,13 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (4)
+## Queue (5)
 
 - [ ] I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I10 — the gate's verb set is a hard-coded list of 18 and omits the four verbs the binary grew in I1 (brief, checks, claims, rebaseline), so SKILL.md cannot document them and the check named the_documented_verbs_are_the_real_verbs is weaker than its name; the set must come from the binary  _(verifier:I8/r1)_
 - [ ] I11 — the binary accepts --cause harness with a rows file, but R23 says a harness round is accepted only when the verdicts file is absent or has no rows, and is recorded with no rows  _(verifier:I8/r1)_
+- [ ] I12 — compaction on every 250k crossing: whenever a session's token consumption crosses a multiple of 250k, the compaction must be triggered once the logical step that crossed it is complete - every crossing, not only the first - so a long session is compacted repeatedly instead of never  _(human)_
 
 ## Blocked (1)
 

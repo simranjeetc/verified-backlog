@@ -59,4 +59,5 @@ Verdict: PASS — closed at 828d2117abd352fba5cf4355f234ed836fc1984b
 
 - r1 PASS — .backlog/evidence/I9-r1.txt (04a44e05823a)
 - code failures: 0 / cap 3
+- note: the commit that closed this item said the design's P1 was amended in the same commit. It was not - the doc patch failed to apply that day and the commit touched only scripts/cmd/bl/. The design is amended in its own commit right after this one: P1 now puts the state guards first, P11 gives bl rebaseline its own order, and the sentence about the per-command lists is corrected.
 
