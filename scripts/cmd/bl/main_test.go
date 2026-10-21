@@ -4019,14 +4019,34 @@ func TestR13ANonHarnessRoundStillAcceptsAFinding(t *testing.T) {
 
 // ── I3, round 2: a nested .git is skipped from the verified tree ─────────────
 
+// hermeticGit runs a git command that does not read the machine's git configuration: the global
+// and the system config are switched off, so the test does not depend on the user it runs as.
+func hermeticGit(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	home := t.TempDir()
+	cmd := exec.Command("git", args...)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+home,
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	return cmd
+}
+
 // A nested `.git` — a submodule's gitfile, or a nested repository — is skipped from the
 // verified tree, the way git skips it: git refuses a tree that holds a .git entry, so hashing
 // one would fail the whole tree. The tree is computed, and the run succeeds.
+//
+// The nested repository is a REAL one — a git init, a file and a commit in it — so that the
+// case binds: a tree computation that stopped skipping a nested `.git` directory would hold
+// the nested repository's metadata, and the tree would hold a .git entry.
 func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 	for _, kind := range []string{"file", "dir"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
-			if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+			if out, err := hermeticGit(t, "init", "-q", dir).CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v: %s", err, out)
 			}
 			sub := filepath.Join(dir, "sub")
@@ -4039,9 +4059,23 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				// a nested repository
-				if err := os.MkdirAll(filepath.Join(sub, ".git", "refs"), 0o755); err != nil {
-					t.Fatal(err)
+				// a nested repository: git init, a file, and a commit — the identity is given
+				// in the invocation, so the commit needs no global one
+				if out, err := hermeticGit(t, "init", "-q", sub).CombinedOutput(); err != nil {
+					t.Fatalf("git init (nested): %v: %s", err, out)
+				}
+				writeFile(t, sub, "keep.txt", "nested\n")
+				if out, err := hermeticGit(t, "-C", sub, "add", "keep.txt").CombinedOutput(); err != nil {
+					t.Fatalf("git add (nested): %v: %s", err, out)
+				}
+				if out, err := hermeticGit(t, "-C", sub,
+					"-c", "user.name=bl test", "-c", "user.email=bl@test.invalid",
+					"-c", "commit.gpgsign=false", "commit", "-q", "-m", "nested commit").CombinedOutput(); err != nil {
+					t.Fatalf("git commit (nested): %v: %s", err, out)
+				}
+				// the nested repository really holds a commit
+				if out, err := hermeticGit(t, "-C", sub, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+					t.Fatalf("the nested repository holds no commit: %v: %s", err, out)
 				}
 			}
 			writeFile(t, dir, "a.txt", "hi\n")
@@ -4056,6 +4090,13 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 			}
 			if strings.Contains(out, ".git") {
 				t.Errorf("the tree must not hold a .git entry:\n%s", out)
+			}
+			if kind == "dir" {
+				// only the nested .git is skipped: the nested repository's other files are
+				// part of the tree
+				if !strings.Contains(out, "sub/keep.txt") {
+					t.Errorf("the tree must hold the nested repository's file:\n%s", out)
+				}
 			}
 			// and the run succeeds: the item is opened, the list is frozen, the claims are
 			// recorded, and the rows run.
