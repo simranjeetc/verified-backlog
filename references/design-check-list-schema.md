@@ -459,14 +459,25 @@ open implementation item (I7) — the design states it, the code does not yet do
 
 ## 4. Precedence
 
-Where two rules can both match, the winner is named here, not left to the implementation. P1, P2, P3 and P4 are per
+Where two rules can both match, the winner is named here, not left to the implementation. P1, P2, P3, P4 and P5 are per
 command: the checks below are the order in which a command evaluates its rules, and a rule that refuses stops the
-command there. P6, P7, P8, P9 and P10 are general rules that apply to every command.
+command there. P6, P7, P8, P9 and P10 are general rules that apply to every command, and P11 is the sixth per-command
+list, added by item I9 when the implementation found the gap.
 
-**P1 — `bl checks` order.** R1 (schema) → R5 (ordering) → R4 (single list, amend scope) → R2 (brief clause) → R3
-(judge justification) → R8 (expectation form).
+**P1 — `bl checks` order.** R5 (the claims freeze the list) → R4 (the list is written once) → *the list is read* → R1
+(schema) → R4 (the amend scope, when `--amend` is given) → R2 (brief clause) → R3 (judge justification) → R8
+(expectation form). The state guards come first because a command that is not allowed to write a list has no use for
+the list, and refusing before the input is read means a doomed command never waits on stdin. Within one rule, the
+first broken row in file order is named, and only that one. Item I9 changed this order: before it, R1 came before R5
+and R4, so item I7's brief said "R1 across all rows, then R5, R4" - that wording is superseded.
 
-The five per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4) and `bl close` (P5).
+**P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were) → R1 (schema) → R2 (brief clause) → R3
+(judge justification) → R8 (expectation form) → R5 (the claims freeze the list) → R4 (the list is written once, and
+the amend scope). The list's rules come first here because the list IS the proposal: a re-baseline that names a
+broken list is refused for the list's own fault, not for the state of the item.
+
+The six per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4), `bl close` (P5) and
+`bl rebaseline` (P11).
 
 **P2 — `bl round` order.** R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
 list, names the latest run, and names the run's tree, which is the current tree) → R28 (no ignored file under the scope
