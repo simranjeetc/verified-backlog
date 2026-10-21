@@ -42,3 +42,14 @@ Verdict: PASS — closed at 5475ae5cf20fc4ee69fb0a902b02259641f31e1d
 - r1 PASS — .backlog/evidence/I7-r1.txt (196747c23f9f)
 - code failures: 0 / cap 3
 
+## I8 — the python gate's stale expectations: scripts/bl.test.py hard-codes 8 event kinds and the causes [code, harness], but the schema now has 12 kinds and three causes, so the gate has been failing since I1
+
+Verdict: PASS — closed at 0d31559f0867d7e7c50de3975de7ccbd7b0764eb
+
+- r1 FAIL cause=harness — no rows
+- r2 FAIL cause=harness — no rows
+- r3 PASS — .backlog/evidence/I8-r3.txt (4a2fdfb2eb5c)
+- code failures: 0 / cap 3
+- note: round 1: the premise was broken, not the code. The producer's run was 9/10 and the one failure was G9, whose mutation target is a word SKILL.md does not contain. Recorded as a harness round with no rows, because a run that never happened cannot carry a finding (R23). The implementation was not changed between rounds; round 2 runs against the re-based list.
+- note: round 2: the premise was broken again, the code was not. The verifier's verdict was FAIL with the finding that the frozen cmd column escaped the shell's pipes. The implementation was left alone; the list was re-based a second time. Two harness rounds spent on one item's premise - the check list, not the code, is where this loop's rounds go.
+
