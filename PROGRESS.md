@@ -93,3 +93,12 @@ Source: verifier:I8/r1
 - note: round 1: the implementation was right, one row was wrong, and the gate's own check asserted the old behaviour. H3 hashed run.log, which the binary appends to on every call by design. The gate's check cap_counts_code_only recorded a harness round WITH rows, which R23 now refuses - so the item's blast radius grows to that one check in scripts/bl.test.py: the harness round there must carry no rows, keeping the check's intent (the cap counts code rounds only).
 - note: two advisories from the round, both recorded rather than fixed in place: (1) a refusal writes nothing to the ledger, the evidence or the item's artefacts, but the run.log still grows - the binary logs every call, refusals included, and the gate's own run_log_records_every_call wants that; the design's phrase 'writes nothing' should say so; (2) a --rows path that cannot be read is accepted and recorded with no rows, on the reading that a file that cannot be read holds none - the design's 'absent' is ambiguous there. The second is filed as I14.
 
+## I13 — the check-list format never says which dialect each field is written in, so the verifier keeps over-escaping: it writes a backslash-pipe where the shell wants a pipe and where Go's RE2 wants an alternation, and the row cannot run - it cost two harness rounds in I8 and one row in I9. The format must state the two dialects plainly (the cmd is a shell script run by /bin/sh -c, so its pipes are pipes; the expect pattern is Go's RE2, so an alternation is a bare pipe and a backslash-pipe is a literal pipe), and the binary must refuse a frozen list whose cmd contains an escaped pipe, so the mistake cannot reach a round. This must be closed before I2 begins
+
+Verdict: PASS — closed at be4d18ff5c8836f8b960e7cf7e9a4147961c1e17
+Source: human
+
+- r1 PASS — .backlog/evidence/I13-r1.txt (805d6711a9e8)
+- code failures: 0 / cap 3
+- note: the spec half of this item was written first, by the supervisor, so the check list could pin it: the design's field table now says what each field is written in (the cmd is a shell script run by /bin/sh -c, the expect pattern is Go's RE2), and rule R34 says a frozen list whose command holds a backslash before a pipe is refused. The producer's job is the enforcement: the binary must refuse such a list, on bl checks and on bl rebaseline, naming R34 and the row, and writing nothing.
+
