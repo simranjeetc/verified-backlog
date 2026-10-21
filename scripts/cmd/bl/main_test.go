@@ -362,9 +362,10 @@ func checksRefused(t *testing.T, dir, list, rule string, extra ...string) {
 	wantRule(t, call(t, cmdChecks, dir, argv...), rule)
 }
 
-const goodList = checksHeader +
-	"S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n" +
+const goodRows = "S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n" +
 	"J1\tjudge\tadvisory\t\tgit diff\t\tthe diff renames a public verb\tnaming quality is a reading of the diff\tnames stay stable\n"
+
+const goodList = checksHeader + goodRows
 
 func TestOpenWritesBriefAndRecordsHash(t *testing.T) {
 	dir := openItem(t)
@@ -1766,5 +1767,143 @@ func TestAPassRoundIsRecordedWithoutRows(t *testing.T) {
 	// and the ledger still verifies: a round with no rows has no evidence file to check
 	if err := call(t, cmdCheck, dir2); err != nil {
 		t.Fatalf("check: %v", err)
+	}
+}
+
+// ── P1: the precedence is over the whole list, not over one row ───────────────
+
+// The rows that break exactly one rule each, and nothing else. A list that carries two of them
+// is refused under the rule that comes first in P1 — not under the rule whose row happens to sit
+// higher in the file.
+const (
+	rowBreaksR1 = "X1\tmodel\tblocking\tB1\tx\texit 0\t\t\tc\n"
+	rowBreaksR2 = "X2\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n"
+	rowBreaksR3 = "X3\tjudge\tblocking\tB1\tx\t\tit fails\ttbd\tc\n"
+	rowBreaksR8 = "X8\tbl\tblocking\tB1\tx\tstdout contains foo\t\t\tc\n"
+)
+
+// p1Order is the order §4 gives for `bl checks`: the rules are evaluated over the whole list, in
+// this order, and the first broken rule ends the command.
+var p1Order = []string{"R1", "R5", "R4", "R2", "R3", "R8"}
+
+// p1Row is the row that breaks one rule. R5 and R4 are the state rules: they are broken by the
+// item's state, not by a row.
+func p1Row(rule string) string {
+	switch rule {
+	case "R1":
+		return rowBreaksR1
+	case "R2":
+		return rowBreaksR2
+	case "R3":
+		return rowBreaksR3
+	case "R8":
+		return rowBreaksR8
+	}
+	return ""
+}
+
+// P1: where two rules can both match, the one that comes first in the order wins — over the
+// whole list, and whatever order the rows sit in.
+func TestChecksPrecedenceNamesTheEarliestBrokenRule(t *testing.T) {
+	for i, earlier := range p1Order {
+		for _, later := range p1Order[i+1:] {
+			t.Run(earlier+" before "+later, func(t *testing.T) {
+				dir := openItem(t)
+				// the state rules are broken by the item's state
+				switch {
+				case earlier == "R5" || later == "R5":
+					// the claims are recorded after a check list, so the item has one too
+					checksOK(t, dir, goodList)
+					claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+					if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+						t.Fatalf("claims: %v", err)
+					}
+				case earlier == "R4" || later == "R4":
+					checksOK(t, dir, goodList)
+				}
+				// the later rule's row sits higher in the file, so the file order cannot be
+				// what decides
+				rows := ""
+				if row := p1Row(later); row != "" {
+					rows += row
+				}
+				if row := p1Row(earlier); row != "" {
+					rows += row
+				}
+				if rows == "" {
+					rows = goodRows
+				}
+				list := checksHeader + rows
+				r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+				if r.rule != earlier {
+					t.Fatalf("want a refusal under %s, got %s: %s", earlier, r.rule, r.msg)
+				}
+			})
+		}
+	}
+}
+
+// Within one rule the refusal names the first broken row in file order, and that row only.
+func TestChecksNamesTheFirstBrokenRowOfOneRule(t *testing.T) {
+	cases := []struct {
+		rule, first, second string
+	}{
+		{"R1", "Z1\tbl\turgent\tB1\tx\texit 0\t\t\tc\n", "Z2\tmodel\tblocking\tB1\tx\texit 0\t\t\tc\n"},
+		{"R2", "Y1\tbl\tblocking\tB8\tx\texit 0\t\t\tc\n", "Y2\tbl\tblocking\tB9\tx\texit 0\t\t\tc\n"},
+		{"R3", "W1\tjudge\tblocking\tB1\tx\t\tit fails\ttbd\tc\n", "W2\tjudge\tblocking\tB1\tx\t\tit fails\tnope\tc\n"},
+		{"R8", "V1\tbl\tblocking\tB1\tx\tstdout contains foo\t\t\tc\n", "V2\tbl\tblocking\tB1\tx\treturns 0\t\t\tc\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.rule, func(t *testing.T) {
+			dir := openItem(t)
+			list := checksHeader + c.first + c.second
+			r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+			if r.rule != c.rule {
+				t.Fatalf("want a refusal under %s, got %s: %s", c.rule, r.rule, r.msg)
+			}
+			first := strings.SplitN(c.first, "\t", 2)[0]
+			second := strings.SplitN(c.second, "\t", 2)[0]
+			if !strings.Contains(r.msg, first) {
+				t.Errorf("the refusal must name the first broken row %s: %s", first, r.msg)
+			}
+			if strings.Contains(r.msg, second) {
+				t.Errorf("the refusal must not name the later broken row %s: %s", second, r.msg)
+			}
+		})
+	}
+}
+
+// Each rule on its own still refuses under its own name: the order only decides between two
+// rules, it does not change what a rule says.
+func TestChecksEachRuleStillRefusesAlone(t *testing.T) {
+	for _, rule := range []string{"R1", "R2", "R3", "R8"} {
+		t.Run(rule, func(t *testing.T) {
+			checksRefused(t, openItem(t), checksHeader+p1Row(rule), rule)
+		})
+	}
+	// the state rules refuse on the item's state
+	t.Run("R5", func(t *testing.T) {
+		dir := openItem(t)
+		checksOK(t, dir, goodList)
+		claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
+		if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
+			t.Fatalf("claims: %v", err)
+		}
+		checksRefused(t, dir, goodList, "R5")
+	})
+	t.Run("R4", func(t *testing.T) {
+		dir := openItem(t)
+		checksOK(t, dir, goodList)
+		checksRefused(t, dir, goodList, "R4")
+	})
+}
+
+// A well-formed list is still accepted, and stored.
+func TestChecksAWellFormedListIsStillAccepted(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv"))
+	if err != nil || string(data) != goodList {
+		t.Fatalf("checks.tsv = %q, %v", data, err)
 	}
 }

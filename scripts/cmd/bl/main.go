@@ -1030,8 +1030,26 @@ func parseChecks(text string) ([]checkRow, error) {
 	return rows, nil
 }
 
-// validateChecks applies R1, R2, R3 and R8 to every row. clauses are the brief's clause ids.
+// validateChecks applies R1, R2, R3 and R8 to every row, in the order §4 gives: a rule is
+// evaluated over the whole list before the next rule is, so the refusal names the earliest broken
+// rule and not the first broken row. clauses are the brief's clause ids.
 func validateChecks(rows []checkRow, clauses map[string]bool) error {
+	if err := validateR1(rows); err != nil {
+		return err
+	}
+	if err := validateR2(rows, clauses); err != nil {
+		return err
+	}
+	if err := validateR3(rows); err != nil {
+		return err
+	}
+	return validateR8(rows)
+}
+
+// validateR1 applies R1 — the row schema — to every row: the id, the severity, the command, and
+// the fields the row's decider requires. The FORM of an expectation is R8's business and the
+// judge's justification is R3's, so neither is refused here.
+func validateR1(rows []checkRow) error {
 	ids := map[string]bool{}
 	for _, r := range rows {
 		id := r.f["id"]
@@ -1058,9 +1076,6 @@ func validateChecks(rows []checkRow, clauses map[string]bool) error {
 			if r.f["fail_if"] != "" || r.f["why_not_mech"] != "" {
 				return refuseRule("R1", "row %s: a decider bl row must have empty fail_if and why_not_mech", id)
 			}
-			if err := checkExpect(id, r.f["expect"]); err != nil {
-				return err
-			}
 		case "judge":
 			if r.f["expect"] != "" {
 				return refuseRule("R1", "row %s: a decider judge row must have an empty expect", id)
@@ -1070,25 +1085,56 @@ func validateChecks(rows []checkRow, clauses map[string]bool) error {
 			if r.f["fail_if"] == "" {
 				return refuseRule("R1", "row %s: a judge row needs a non-empty fail_if", id)
 			}
-			why := r.f["why_not_mech"]
-			if why == "" {
-				return refuseRule("R3", "row %s: a judge row needs a non-empty why_not_mech", id)
-			}
-			if placeholderReasons[strings.ToLower(why)] {
-				return refuseRule("R3", "row %s: why_not_mech %q is a placeholder, not a reason", id, why)
-			}
-			if len([]rune(why)) < 12 {
-				return refuseRule("R3", "row %s: why_not_mech %q is shorter than 12 characters", id, why)
-			}
 		default:
 			return refuseRule("R1", "row %s: decider %q must be bl or judge", id, r.f["decider"])
 		}
-		ref := r.f["brief_ref"]
+	}
+	return nil
+}
+
+// validateR2 applies R2 — a blocking row cites the brief — to every row.
+func validateR2(rows []checkRow, clauses map[string]bool) error {
+	for _, r := range rows {
+		id, ref := r.f["id"], r.f["brief_ref"]
 		if ref == "" && r.f["severity"] == "blocking" {
 			return refuseRule("R2", "row %s: a blocking row needs a brief_ref naming a clause in the brief", id)
 		}
 		if ref != "" && !clauses[ref] {
 			return refuseRule("R2", "row %s: brief_ref %q names no clause in the brief", id, ref)
+		}
+	}
+	return nil
+}
+
+// validateR3 applies R3 — a judge row justifies itself — to every row.
+func validateR3(rows []checkRow) error {
+	for _, r := range rows {
+		if r.f["decider"] != "judge" {
+			continue
+		}
+		id, why := r.f["id"], r.f["why_not_mech"]
+		if why == "" {
+			return refuseRule("R3", "row %s: a judge row needs a non-empty why_not_mech", id)
+		}
+		if placeholderReasons[strings.ToLower(why)] {
+			return refuseRule("R3", "row %s: why_not_mech %q is a placeholder, not a reason", id, why)
+		}
+		if len([]rune(why)) < 12 {
+			return refuseRule("R3", "row %s: why_not_mech %q is shorter than 12 characters", id, why)
+		}
+	}
+	return nil
+}
+
+// validateR8 applies R8 — an expectation is one of five forms — to every row. Only a decider bl
+// row carries an expectation.
+func validateR8(rows []checkRow) error {
+	for _, r := range rows {
+		if r.f["decider"] != "bl" {
+			continue
+		}
+		if err := checkExpect(r.f["id"], r.f["expect"]); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1190,23 +1236,10 @@ func cmdChecks(root string, a args) error {
 	if err := requireInFlight(order, it); err != nil {
 		return err
 	}
-	if it.Claims != "" {
-		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
-	}
-	amend := a.flag("amend")
-	if it.Checks != "" && !amend {
-		return refuseRule("R4", "%s already has a check list — it is written once; only --amend may change it", it.ID)
-	}
-	if it.Checks == "" && amend {
-		return refuseRule("R4", "%s has no check list to amend", it.ID)
-	}
-	if it.Brief == "" {
-		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
-	}
-	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
-	if err != nil {
-		return err
-	}
+	// P1: the rules are evaluated over the whole list in one fixed global order — R1 (the
+	// schema), R5 (the claims freeze the list), R4 (the list is written once), R2 (the brief
+	// clause), R3 (the judge's justification), R8 (the expectation form) — so the refusal names
+	// the earliest broken rule, and within one rule the first broken row in file order.
 	text, err := a.input("file")
 	if err != nil {
 		return err
@@ -1215,11 +1248,23 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := validateChecks(rows, briefClauses(string(brief))); err != nil {
+	if err := validateR1(rows); err != nil {
 		return err
 	}
-	rel := itemFile(it.ID, checksName)
-	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text))}
+	// R5: the claims freeze the list.
+	if it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
+	}
+	// R4: the list is written once, and only --amend may change it.
+	amend := a.flag("amend")
+	if it.Checks != "" && !amend {
+		return refuseRule("R4", "%s already has a check list — it is written once; only --amend may change it", it.ID)
+	}
+	if it.Checks == "" && amend {
+		return refuseRule("R4", "%s has no check list to amend", it.ID)
+	}
+	// R4 again: an amendment may do exactly two things.
+	prevSHA := ""
 	if amend {
 		prev, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
 		if err != nil {
@@ -1232,7 +1277,31 @@ func cmdChecks(root string, a args) error {
 		if err := checkAmendment(old, rows); err != nil {
 			return err
 		}
-		ev.PrevSHA = it.ChecksSHA
+		prevSHA = it.ChecksSHA
+	}
+	// R2: a blocking row cites a clause of the brief.
+	if it.Brief == "" {
+		return refuseRule("R2", "%s has no brief to cite — it was opened before bl wrote briefs", it.ID)
+	}
+	brief, err := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+	if err != nil {
+		return err
+	}
+	if err := validateR2(rows, briefClauses(string(brief))); err != nil {
+		return err
+	}
+	// R3: a judge row justifies itself.
+	if err := validateR3(rows); err != nil {
+		return err
+	}
+	// R8: an expectation is one of five forms.
+	if err := validateR8(rows); err != nil {
+		return err
+	}
+	rel := itemFile(it.ID, checksName)
+	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text))}
+	if amend {
+		ev.PrevSHA = prevSHA
 	}
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
 		return err
