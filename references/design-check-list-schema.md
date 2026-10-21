@@ -725,8 +725,42 @@ C is the one that survives a machine being wiped. D is the only one that turns "
 guarantee rather than a detection.
 
 Whatever is chosen, the rules in §3 do not change: the ledger stays a hash chain, the artefacts stay hashed, and
+Whatever is chosen, the rules in §3 do not change: the ledger stays a hash chain, the artefacts stay hashed, and
 the anchor is an addition at the point where the head is recorded. This is why it is a decision and not a rule — the
 wording cannot pick it.
+
+### If the ledger is only ever written through a binary call
+
+The question deserves a precise answer, because it is easy to confuse two different claims.
+
+**As a convention, it is worth nothing against an agent that decides to disagree.** The shell writes the file just as
+well as the binary does, so "the agent agreed to use the binary" does not make the file trustworthy. What it does buy
+is honest and small: one writer, one format, no half-written lines, and a ledger that stays parseable for a
+cooperating agent.
+
+**As a guarantee, it is the right shape, and it needs one more thing.** For the binary to be the only producer of a
+*verifiable* event, it must hold something the agent cannot use: a key it cannot read, a signer it cannot call, or
+storage it cannot write. Then the agent's only power is to *ask*, and the binary answers the request by checking it
+against the rules in §3 — the tree, the hashes, the scope — and refusing when they do not hold. The ledger becomes the
+audit trail of decisions the binary made, not a file the agent maintains.
+
+The place for the key is a matter of mechanism, not of principle: an OS keychain item whose access list names the
+signed binary; a local signing service whose key the agent cannot read; a hardware token the agent can call but cannot
+forge without a human; or storage the agent cannot write at all. The shape — "a signer the agent cannot use directly"
+— is the same on every platform.
+
+**What this changes about the rest of the design.** The weight moves off the ledger and onto the binary: the refusals
+(R10, R18, R20, R28) become the defence, and the ledger becomes the receipt. It also splits the two problems apart,
+which the earlier options blurred:
+
+- A **signer** stops forgery and rewriting. A line without a valid signature is not an event, whatever the file says.
+- The **sequence number and an external copy** stop truncation. Dropping the last `k` events leaves a chain that
+  verifies perfectly, so no signature can catch it; only a copy of the head that the agent cannot reach can (R29).
+
+**Signed head, or every event signed?** A signed head is enough for a ledger this size: the chain binds the history,
+so one signature over the head covers every line before it. Signing every event is the heavier variant and buys one
+thing — proving a single event without the head, which is what a certificate-transparency log needs because its tree is
+huge and distributed, and what this ledger does not need.
 
 ---
 
