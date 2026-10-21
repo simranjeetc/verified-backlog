@@ -3,3 +3,6 @@ scripts/bl
 
 # lavish review artifacts (local, not part of the skill)
 .lavish/
+
+# the skill dogfooding itself: its own ledger
+.backlog/

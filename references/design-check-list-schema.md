@@ -701,6 +701,9 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | a row whose output depends on the time of day | implementation | the run records what it saw; the row is a record of that run, not a reproducible value |
 | the interface by which a verdict-time downgrade is requested | interface | R11 refuses the downgrade; the requester has no command to call, and files an item instead — that is deliberate, but it is a gap in the interface |
 | a round whose commands need the network | implementation | the environment has no proxy variables and `HOME` is scratch; a network command may behave differently from the developer's shell |
+| a check list that cannot run | process | a frozen list cannot be replaced (R4 allows only a narrow amend), so a list whose commands never reach an assertion spends a code round on its own defect. The loop needs a re-baseline path: a new premise, logged, with the round counter reset |
+| the granularity of the brief's clauses | interface | R2 makes a blocking row cite a clause that exists, and the clauses come from the item text. A check list written from the intent can therefore only cite ids the item text implies — so the brief must be readable by the check-list author, or the brief format must accept pre-numbered clauses (`B1: …`) instead of inventing ids |
+| the check list's commands must set up their own world | process | a row that drives the binary has to file the item before opening it, and needs a working directory the binary will accept. Nothing in the design says so; the list's author has to know it |
 
 ### The trust root, in options (all OS-agnostic)
 
