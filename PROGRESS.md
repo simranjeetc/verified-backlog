@@ -28,3 +28,10 @@ Verdict: PASS — closed at 102cf3fd1f2aba2818c45d159118dfaaed8764b2
 - note: the round-1 check list was written blind and three of its rows encoded assumptions the design contradicts: a re-baseline is refused once the claims exist (R5, R33), and the regex dialect is Go's RE2 where an escaped pipe is a literal pipe. The re-issued list fixes both, and the supervisor made one mechanical correction (the escaped pipe). Also learned: the budget's counts are per item over its whole life, so a re-baseline buys no fresh rounds, and a premise fault must be recorded as a harness round, not a code round - a code round spends the item's budget.
 - note: round 2: the producer relaxed the 'already passed' guard to satisfy an impossible row, and the legacy test scripts/bl.test.py::round_refuses_after_pass caught it. The guard goes back to its original meaning, named R18, checked before the budget; bl status must also count passes so the six-round total is visible. The verifier wrote the regex alternation as an escaped pipe twice, in both re-issues - a habit worth watching, and a supervisor correction each time.
 
+## I7 — P1 precedence ordering: the rules are evaluated in a fixed global order across the whole list (R1 across all rows, then R5, R4, R2, R3, R8), so the refusal names the earliest broken rule and not the first broken row
+
+Verdict: PASS — closed at 5475ae5cf20fc4ee69fb0a902b02259641f31e1d
+
+- r1 PASS — .backlog/evidence/I7-r1.txt (196747c23f9f)
+- code failures: 0 / cap 3
+
