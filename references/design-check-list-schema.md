@@ -57,6 +57,7 @@ All paths are relative to the repository root.
 | verdicts | `.backlog/items/<id>/verdicts.tsv` | the verifier | no — an input to `bl round` |
 | evidence | `.backlog/evidence/<id>-r<N>.txt` | `bl round` | yes — `rows_sha` |
 | views | `TODO.md`, `PROGRESS.md` | `bl render` | no — artefacts (R25) |
+| audit | `.backlog/audit/<date>.md`, `.backlog/audit/<date>.json` | `bl audit` | no — artefacts (R25) |
 | ledger | `.backlog/ledger.jsonl` | `bl` | — |
 
 **Brief clauses.** A clause is a line of the brief matching `^(B[0-9]+):\s+(.+)$`. Its id is the captured group, its
@@ -202,7 +203,9 @@ all.
 clean-tree test in R18. It is never part of a verified tree, because `git add -A` skips ignored files and `.backlog/`
 is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repository error and `bl` says so.
 The two rendered views, `TODO.md` and `PROGRESS.md`, are artefacts as well: every event in the ledger rewrites
-them, so they are excluded from the verified tree and from the round's diff. Without that, a tree pin would
+them, so they are excluded from the verified tree and from the round's diff. The audit report is an artefact as
+well: `bl audit` writes it under `.backlog/audit/`, inside the artefact directory, so a report of the ledger is never
+a file of the work and never lands in an item's diff. Without that, a tree pin would
 refuse every round after the ledger moved — and the ledger moves in the item's own flow, because R14 files the
 advisory items between the run and the round.
 
@@ -246,20 +249,34 @@ run. A `why_not_mech` that names a command result ("the tests failing is a comma
 must not ship — `bl` cannot detect it, and the record shows the text so a reader can.
 
 **R4 — the list is written once.** `bl checks` is refused if the item already has a check list, except with
-`--amend`, which may do exactly two things: reclassify a row from `decider: judge` to `decider: bl` — which also
+`--amend`, which may do exactly three things: reclassify a row from `decider: judge` to `decider: bl` — which also
 requires setting that row's `expect` and clearing its `fail_if` and `why_not_mech`, because R1 would otherwise refuse
-the result — and fill an empty `brief_ref` on an advisory row. An amendment never changes `id`, `severity`, `cmd`,
-`criterion`, `fail_if` or `why_not_mech` (except that clearing them is part of a `judge → bl` reclassification),
-never adds a row and never removes one. An amendment never reorders rows.
-Every amendment is an event in the ledger with the old and the new list hash. An amendment is refused if the item
-already has a `claims` event (R5).
+the result — fill an empty `brief_ref` on an advisory row, and ADD a row. An amendment never changes the `id`,
+`severity`, `cmd`, `expect`, `criterion`, `fail_if` or `why_not_mech` of a row that is already in the list (except
+that clearing them is part of a `judge → bl` reclassification), and it never removes a row. An amendment never
+reorders rows.
+A row added by an amendment is a row like any other: R1, R2, R3, R8 and R34 apply to it, and its `id` must not be
+one the list already holds. It is how a defective row is corrected — the added row asserts the thing the defective
+row was written for — and adding it can only tighten the round, because the derived verdict is the AND over the
+blocking rows (R12): a new blocking row that FAILs makes the round FAIL, and no row that is added can turn a FAIL
+into a PASS. That is why growth is allowed after the claims and a change is not (R5).
+Every amendment is an event in the ledger with the old and the new list hash. An amendment that CHANGES a row — a
+reclassification or a `brief_ref` — is refused if the item already has a `claims` event (R5); adding a row is not. An
+amendment is refused once the item has a PASS round: the verdict already rests on the list, and a later list cannot
+reopen it.
 
 **R5 — the list is frozen before the claims.** `bl claims A1 --file <path>` reads the producer's report from that
 path. A claim exists only if a `claims` event is in the ledger for that item; a hand-written `claims.md` is not a claim,
 and `bl claims` overwrites whatever is at that path.
 `bl claims` is refused if the item has no check list. `bl claims` is refused if the item already has a `claims`
-event — the claims are frozen once, like the list. `bl checks` is refused if the item already has a `claims` event. This is the ordering rule the whole design rests on, and
-it is the one thing not to trade away.
+event — the claims are frozen once. `bl checks` is refused if the item already has a `claims` event, except for an
+amendment that adds a row (R4). This is the ordering rule the whole design rests on, and the one thing not to trade
+away: what it freezes is the CONTENT of the list, so that a claim means the same rows when it was made and when the
+round is recorded. A row of a frozen list is never changed and never removed, so a claim made against the list
+still holds against it; and a list that grows can only make the round stricter (R4, R12), so a correction can never
+be a way to pass a broken implementation. A defective row — one whose command satisfies its expectation from
+something other than its own assertion — is corrected by adding a row that asserts the thing properly, not by
+editing the row that failed to assert it.
 
 **R6 — the verdicts file must match the frozen list, the run, and the tree.** `bl round` accepts a verdicts file only
 if it contains exactly one line per frozen check id, no line with an unknown id, and no frozen id missing; and if its
@@ -487,6 +504,10 @@ from the repository root, so a pipe in it is a pipe: `a | b` runs `b` on what `a
 number of backslashes precedes it: the shell reads `\|` as a literal pipe, so a row holding one does not do what it
 says, and such a row is refused in a frozen list. An even number of backslashes before a pipe is an escaped backslash
 followed by a real pipe, and the row is fine — the check counts the backslashes rather than looking for the pair.
+The check reads the command the way the shell reads it: inside a single-quoted or double-quoted string a `|` is not
+a pipe at all, it is text the pattern carries, so the check looks only at the pipes outside quotes. `grep -Eq
+'a\|b' file` is a working command and is not refused — the backslash there belongs to the pattern, not to the
+shell.
 The same goes the other way: an `expect` pattern is Go's RE2, so two alternatives are separated by a pipe, and a
 backslash before a pipe there means a literal pipe rather than an alternation. The refusal names the row that holds
 the mistake.
