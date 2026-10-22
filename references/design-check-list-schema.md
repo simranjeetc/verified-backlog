@@ -407,6 +407,19 @@ of the latest event that recorded it. A frozen artefact that was edited
 after the freeze is therefore refused at the point of use, not merely detected later by `bl check`. A run file that
 has no `run` event, or whose hash differs from that event's, is refused by R6.
 
+The ledger is a chain of the same hashes. The ledger file's **lines** are its non-blank lines in order, one event
+each; the bytes of a line are the bytes up to and including its terminating newline, or to the end of the file for a
+last line that has none. The **chain hash through event *n*** is `chain(0)` = the sha256 of the empty byte string, and
+`chain(n)` = the sha256 of the bytes of `chain(n-1)` followed by the bytes of the line holding event *n*. The **head** of
+the ledger is `chain` through its last event, and the head's **seq** is that event's `seq`. Every event written after
+this rule took effect carries `prev_sha`: the chain hash through the event before it — the genesis value, the sha256 of
+the empty byte string, for the first event in a ledger. An event written before this rule took effect carries no
+`prev_sha`; the first event that carries one commits to the whole history before it, because the chain hash through it
+folds in every line before it, and every event after the first that carries one must carry one. `bl check` recomputes
+the chain from the ledger file's bytes and refuses when an event's `prev_sha` is not the chain hash through the event
+before it, naming the seq; it refuses when a `prev_sha` is not 64 lowercase hex characters, and when an event after the
+first that carries one carries none.
+
 **R21 — the execution environment is fixed.** The environment in §2 is the whole environment, with one exception:
 `PATH` is inherited from the caller, and the inherited value is recorded in the run file so that the run can be
 reproduced. No other variable is inherited, in particular not `GIT_*`, and `HOME` and `TMPDIR` point outside the
@@ -441,12 +454,21 @@ file under the item's scope paths (§2). A round is refused if any of those hash
 in the item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that
 the scope did not declare is therefore refused, not silently dropped from the record.
 
-**R29 — the anchor covers a sequence number, not just a hash.** An `anchor` event records the ledger `seq` it covers
-and the checkpoint hash at that `seq`. `bl check` refuses when the ledger's `seq` is lower than the last anchored
-`seq`: a chain that verifies is not enough, because an attacker who can rewrite the file can also truncate its tail
-and leave a shorter chain that still verifies. The version counter is what makes truncation visible. (This is the
-lesson TUF/Uptane learned with its version and expiry metadata, and the reason certificate-transparency logs publish
-a signed tree head rather than just a tree.)
+**R29 — the anchor names a checkpoint in the chain, and the sequence number makes truncation visible.** A chain that
+verifies is not enough, because an attacker who can rewrite the file can also truncate its tail and leave a shorter
+chain that still verifies. The version counter is what makes truncation visible. (This is the lesson TUF/Uptane learned
+with its version and expiry metadata, and the reason certificate-transparency logs publish a signed tree head rather
+than just a tree.)
+
+The **anchor** is a checkpoint of the chain: the ledger `seq` it covers, and the chain hash through that seq.
+`bl anchor` writes it to `.backlog/anchor.json` — `{"seq": <n>, "chain_sha": "<64 hex>"}` — and prints the two values
+as `seq <n>` and `chain_sha <hex>` on separate lines, so that a human can keep them where the agent cannot reach. The
+anchor file is an artefact (R25): it is not part of any verified tree, and writing it never moves one. `bl check`
+refuses when the anchor file does not parse, when the ledger's last `seq` is lower than the anchor's `seq` (the tail
+was truncated), when the ledger holds no event with that `seq` (the ledger was rewritten), and when the chain hash
+recomputed through the anchor's `seq` differs from the anchor's `chain_sha` (the history before the anchor was
+rewritten). The anchor file lives inside the agent's write surface, so it catches accidental damage and a careless
+rewrite, not a determined one; the copy a human keeps is the anchor that holds. (The trust root is parked — §7.)
 
 **R25 — artefacts are excluded from the tree test.** `.backlog/` is excluded from the clean-tree test in R18, and
 never appears in a verified tree, because `.gitignore` keeps it untracked. If `.backlog/` is tracked in the
