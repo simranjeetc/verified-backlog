@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (15)
+## Queue (18)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
@@ -19,6 +19,9 @@
 - [ ] I39 — R34's new scanner does not model command substitution, backticks or here-documents: a pipe inside  or inside backticks is a real pipe to the shell - the substitution's content is parsed as a command - but the scanner treats everything after an opening quote as text, so an escaped pipe inside a substitution is missed; the design must say what the check does with , backticks and here-documents, and the check must model them  _(producer:I27/r1)_
 - [ ] I40 — the loop's own rows that read whichever list is newest - f=$(ls -t .backlog/items/*/checks.tsv | head -1) - bind whatever list happens to be newest rather than the item's own: I20's row Q6 and I21's row J1 are of this shape, so a later item's list can satisfy them. That is the same shape as item I3's defective row D1, and the design's own rule says a row that needs a second statement runs it in a separate row and names the file it reads  _(producer:I21/r1)_
 - [ ] I41 — the loop's own rows that pass on failures unrelated to what they test: item I17's row R3 cannot tell 'run wrote no evidence' from 'run failed' because the run's exit code is ignored, and item I8's rows G5 to G9 hold on any failure of the gate, including a broken wrapper; the one-assertion rule is enforced only by the prompt text, and the loop needs a mechanical way to check it  _(verifier:I21/r1)_
+- [ ] I42 — SKILL.md's compaction rule fires on a session crossing a multiple of 250k tokens, a crossing the agent cannot observe while it works, so no session has ever compacted and the context has grown unbounded; the rule must fire at the loop's own step boundaries - a round recorded, an item closed, a batch of findings filed - with a harness-agnostic mechanism, and it must name the fallback for a harness with no compaction primitive: a fresh session continuing from a handoff note in the repository, because the loop's state lives in the ledger and the artefacts and not in the conversation  _(human)_
+- [ ] I43 — the skill never tells the supervisor to keep its own context small: it pastes the item's rules and reads the child's output back into its own context, so the supervisor's context grows with every item; the skill must say the supervisor hands over paths - the item text, the brief, the frozen list, the design file - and that the child reads the sources, and that the supervisor reads back only the row table and the verdict  _(human)_
+- [ ] I44 — the skill's second-harness route is the fallback for the verifier, but nothing says the producer and the verifier must stay in different families, so a quota-limited primary harness pushed both through the same second family and the cross-family claim got weaker than it looks; the skill must require the split to survive the fallback, and require the family or harness that produced each verdict to be recorded with the round  _(human)_
 
 ## Blocked (0)
 
