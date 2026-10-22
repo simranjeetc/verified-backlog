@@ -2,11 +2,10 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (13)
+## Queue (14)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I21 — a row's command can satisfy its expectation from a statement other than its own assertion - the row added to item I3 passed while the defect it was written for was still in the code. The design now says one assertion per row - verify that it says it, and that the loop's own rows do it  _(supervisor:I3/r1)_
-- [ ] I26 — bl audit writes audit/<date>.md and audit/<date>.json into the repository and .gitignore does not ignore them, so the files land in the next item's diff and R10 demands a row covering them; the audit output is an artefact of the ledger like the rendered views, and must be written under .backlog/ or excluded from the verified tree  _(supervisor:I25/r1)_
 - [ ] I27 — R34's check counts the backslashes before every pipe in a cmd, including a pipe inside a single-quoted pattern, where the shell never reads it as a pipe at all: the command grep -Eq 'a\|b' file is a working command and is refused under R34; the check must skip the quoted parts of the command  _(verifier:I19/r1)_
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
 - [ ] I29 — the verbs bl brief, bl checks, bl claims, bl rebaseline, bl second-check and bl close refuse an item that is not in flight but name no rule, and section 4's precedence lists and section 6's refusal counts do not account for those refusals; the design must say which rule refuses there - R35 widened to every verb that takes an item, or a rule of its own - and the counts must follow  _(verifier:I17/r2)_
@@ -17,6 +16,8 @@
 - [ ] I34 — an item's scope can contradict its brief and nothing catches it: item I20's brief demanded a change in playbooks/item-loop.md while its recorded scope was references/, and the loop's rules make the scope review-based rather than enforced, so the mismatch was only found by the verifier; the design must say what the scope means when it disagrees with the brief  _(verifier:I20/r1)_
 - [ ] I35 — the verdicts file's format still requires the judge to write a row_verdict for every row, including the binary rows whose verdict the binary computes and the round ignores; the format must say that a binary row's row_verdict is the binary's and the judge's word for it is not read  _(verifier:I18/r1)_
 - [ ] I36 — bl second-check computes a row's verdict without the run's timeout rule, so a timed-out second-check can still be computed PASS; the timeout-to-FAIL rule must apply there too, and the verdict function should be shared with the run's  _(verifier:I18/r1)_
+- [ ] I37 — bl audit's --out flag lets the audit report be written outside the artefact directory, where nothing excludes it from the verified tree or from an item's diff, and the design does not say what an audit written there is; the flag must either be refused outside .backlog/ or the design must say that an audit written elsewhere is an ordinary file and not an artefact  _(producer:I26/r1)_
+- [ ] I38 — the gate's audit check would pass if bl audit wrote the report to BOTH the old path and the new one - it asserts that .backlog/audit holds a .md and a .json, but not that the old path at the root is gone; the item I26 row U3 pins that, but the gate should pin it too  _(verifier:I26/r1)_
 
 ## Blocked (0)
 
@@ -30,7 +31,7 @@ _none_
 
 - [x] I14 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(the item was opened with an empty scope, so R28 watched every ignored file in the repository, including the gate binary scripts/bl, and the producer's rebuild of that binary inside the repository made the round unrecordable. The item is re-filed as I25 with a scope naming the files under test; the code, the list and the verification are the same.; verifier:I11/r2)_
 
-## Closed (21)
+## Closed (22)
 
 - [x] I1 — bl checks + bl claims: the check-list row schema and the ordering rule (design R1-R8, R20, R24). Scope: scripts/cmd/bl/main.go, scripts/cmd/bl/main_test.go  _(commit a571e71)_
 - [x] I2 — bl run: execute every frozen row under the fixed environment, write the run file with full output and hashes, tree built from the filesystem (R7, R21, R26, R27)  _(commit 9e8f95a)_
@@ -53,4 +54,5 @@ _none_
 - [x] I22 — the nested-git test's directory case creates empty directories, so it passes even with the fix reverted and binds nothing; it must build a nested repository with content - a git init inside it and a commit - so the case fails when the tree computation stops skipping a nested .git directory  _(commit 05cddd4; verifier:I3/r2)_
 - [x] I23 — a defective row cannot be corrected once the claims are recorded: item I3's row D1 is satisfied by an earlier statement in its own command and does not bind the refusal it was written for, and R5 refuses the re-baseline that would fix it. The design must say how a defective row is corrected after the claims - a second judge, a re-recorded claim, or a rule that the freeze binds the list's content and not its corrections  _(commit 3597e06; verifier:I3/r2)_
 - [x] I25 — the design's word 'absent' in R23 is ambiguous: a harness round whose --rows path cannot be read (missing, or a directory) is accepted and recorded with no rows, on the reading that a file that cannot be read holds none. Decide whether 'absent' means the flag was not given, or the file cannot be read, and make the binary and the design say the same thing  _(commit ad60961; supervisor:I14/scope)_
+- [x] I26 — bl audit writes audit/<date>.md and audit/<date>.json into the repository and .gitignore does not ignore them, so the files land in the next item's diff and R10 demands a row covering them; the audit output is an artefact of the ledger like the rendered views, and must be written under .backlog/ or excluded from the verified tree  _(commit a86a3d1; supervisor:I25/r1)_
 
