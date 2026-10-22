@@ -529,13 +529,18 @@ command: the checks below are the order in which a command evaluates its rules, 
 command there. P6, P7, P8, P9 and P10 are general rules that apply to every command, and P11 is the sixth per-command
 list, added by item I9 when the implementation found the gap.
 
-**P1 — `bl checks` order.** R5 (the claims freeze the list) → R4 (the list is written once) → *the list is read* → R1
-(schema) → R34 (the command is a shell script, not a pattern) → R4 (the amend scope, when `--amend` is given) →
-R2 (brief clause) → R3 (judge justification) → R8
-(expectation form). The state guards come first because a command that is not allowed to write a list has no use for
-the list, and refusing before the input is read means a doomed command never waits on stdin. Within one rule, the
-first broken row in file order is named, and only that one. Item I9 changed this order: before it, R1 came before R5
-and R4, so item I7's brief said "R1 across all rows, then R5, R4" - that wording is superseded.
+**P1 — `bl checks` order.** R5 (the claims freeze the list's content) → R4 (the list is written once) →
+*the list is read* → R1 (schema) → R34 (the command is a shell script, not a pattern) → R4 (the amend scope, when
+`--amend` is given: the amendment may only add a row, and an amendment is refused once the item has a PASS round) →
+R5 (an amendment that CHANGES a row is refused once the claims exist) → R2 (brief clause) → R3 (judge
+justification) → R8 (expectation form). The state guards that do not depend on the rows come first, because a
+command that is not allowed to write a list has no use for the list, and refusing before the input is read means a
+doomed command never waits on stdin. The guards that do depend on the rows come after the rows are read: an
+amendment is judged on what it does to them, so an amendment that changes a row is refused under R5 whatever else
+is wrong with it. Within one rule, the first broken row in file order is named, and only that one. Item I9 changed
+this order: before it, R1 came before R5 and R4, so item I7's brief said "R1 across all rows, then R5, R4" - that
+wording is superseded. Item I23 changed it again: R5 moved to where the amendment's scope is judged, because the
+claims now freeze the list's content and not its corrections.
 
 **P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were) → R1 (schema) → R34 (the command is a shell script, not a pattern) → R2 (brief clause) → R3
 (judge justification) → R8 (expectation form) → R5 (the claims freeze the list) → R4 (the list is written once, and
@@ -694,6 +699,26 @@ not close — R18 requires a `PASS` round. The cap is not consumed (R19). A supp
 the bar. The comment line is not refused by R6, because comment lines are skipped.
 
 ### E11 — an amendment can only make a row stricter
+
+Frozen: `J3` is `judge`, `advisory`, `brief_ref` empty, with `fail_if` and `why_not_mech` filled.
+
+- An amendment that changes `severity` to `blocking` is **refused on R4** (an amendment may not change severity) and
+  on R11. P1 evaluates the amendment's scope (R4) before the claims' guard (R5), so the refusal names R4.
+- An amendment that fills the empty `brief_ref` with `B2` **is accepted** when the item has no claims event, and is
+  **refused on R5** when it has one: filling a `brief_ref` CHANGES a row, and the claims freeze the list's content.
+- An amendment that reclassifies the `bl` row `S1` to `decider: judge` is **refused on R1** — P1 runs R1 before R4, and
+  a judge row may not carry `expect`, which `S1` has. P7's "stricter wins" reaches the same outcome from the other
+  direction: the change is looser, and looser is refused.
+- An amendment that reclassifies `J3` to `decider: bl`, setting `expect: exit 0` and clearing `fail_if` and
+  `why_not_mech`, **is accepted**.
+- An amendment that ADDS a row `S2` to the list is **accepted**, and it is accepted even once the item has a claims
+  event (R4, R5): the claims freeze the list's content, and an added row can only tighten the round, because the
+  derived verdict is the AND over the blocking rows (R12). An amendment that only adds a row is not refused under
+  R5; an amendment that changes a row is.
+- An amendment is **refused on R4** once the item has a PASS round: the verdict already rests on the list, and a later
+  list cannot reopen it.
+
+**Must not hold:** the stored list is unchanged after a refused amendment; a refused amendment is not recorded.
 
 Frozen: `J3` is `judge`, `advisory`, `brief_ref` empty, with `fail_if` and `why_not_mech` filled.
 

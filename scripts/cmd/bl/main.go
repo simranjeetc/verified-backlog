@@ -401,7 +401,12 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 		case "brief":
 			it.Brief, it.BriefSHA = ev.Brief, ev.BriefSHA
 		case "checks":
-			if it.Claims != "" {
+			// An amendment records the hash of the list it amends (R4). After the claims it is
+			// the only checks event the ledger accepts (R5), and only over the current list.
+			if ev.PrevSHA != "" && ev.PrevSHA != it.ChecksSHA {
+				return nil, nil, corrupt("checks event for %s amends list %s, but the current list is %s", ev.ID, ev.PrevSHA, it.ChecksSHA)
+			}
+			if it.Claims != "" && ev.PrevSHA == "" {
 				return nil, nil, corrupt("checks event for %s after its claims", ev.ID)
 			}
 			it.Checks, it.ChecksSHA = ev.Checks, ev.ChecksSHA
@@ -1148,7 +1153,7 @@ func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string,
 		if err != nil {
 			return "", err
 		}
-		if err := checkAmendment(old, rows); err != nil {
+		if _, err := checkAmendment(old, rows); err != nil {
 			return "", err
 		}
 		prevSHA = it.ChecksSHA
@@ -1342,45 +1347,76 @@ func checkExpect(id, expect string) error {
 	return refuseRule("R8", "row %s: expect %q is not one of: exit <code>, stdout matches <regex>, stderr matches <regex>, file exists <path>, tree == <hash>", id, expect)
 }
 
-// checkAmendment allows exactly the two edits of R4: judge → bl, and filling an empty brief_ref
-// on an advisory row. old and next are both already valid lists.
-func checkAmendment(old, next []checkRow) error {
-	if len(old) != len(next) {
-		return refuseRule("R4", "an amendment never adds or removes a row (%d rows, was %d)", len(next), len(old))
+// checkAmendment allows exactly the three edits of R4: judge → bl, filling an empty brief_ref on
+// an advisory row, and ADDING a row at the end of the list. old and next are both already valid
+// lists, so an added row's id is already known not to repeat one the list holds (R1). It reports
+// whether the amendment CHANGES a row already in the list: the claims freeze the list's content
+// (R5), so only an amendment that changes a row is refused after them.
+func checkAmendment(old, next []checkRow) (bool, error) {
+	if len(next) < len(old) {
+		return false, refuseRule("R4", "an amendment never removes a row (%d rows, was %d)", len(next), len(old))
 	}
-	changed := false
+	changes := false
 	for i := range old {
 		o, n := old[i].f, next[i].f
 		if o["id"] != n["id"] {
-			return refuseRule("R4", "row %d: an amendment never changes or reorders ids (%s, was %s)", i+1, n["id"], o["id"])
+			return false, refuseRule("R4", "row %d: an amendment never changes or reorders ids (%s, was %s)", i+1, n["id"], o["id"])
 		}
 		id := o["id"]
 		for _, col := range []string{"severity", "cmd", "criterion"} {
 			if o[col] != n[col] {
-				return refuseRule("R4", "row %s: an amendment never changes %s", id, col)
+				return false, refuseRule("R4", "row %s: an amendment never changes %s", id, col)
 			}
 		}
 		switch {
 		case o["decider"] == n["decider"]:
 			for _, col := range []string{"expect", "fail_if", "why_not_mech"} {
 				if o[col] != n[col] {
-					return refuseRule("R4", "row %s: %s may change only when the row is reclassified from judge to bl", id, col)
+					return false, refuseRule("R4", "row %s: %s may change only when the row is reclassified from judge to bl", id, col)
 				}
 			}
 		case o["decider"] == "judge" && n["decider"] == "bl":
-			changed = true
+			changes = true
 		default:
-			return refuseRule("R4", "row %s: the only reclassification an amendment may make is judge → bl", id)
+			return false, refuseRule("R4", "row %s: the only reclassification an amendment may make is judge → bl", id)
 		}
 		if o["brief_ref"] != n["brief_ref"] {
 			if o["brief_ref"] != "" || o["severity"] != "advisory" {
-				return refuseRule("R4", "row %s: an amendment may only fill an empty brief_ref on an advisory row", id)
+				return false, refuseRule("R4", "row %s: an amendment may only fill an empty brief_ref on an advisory row", id)
 			}
-			changed = true
+			changes = true
 		}
 	}
-	if !changed {
-		return refuseRule("R4", "the amendment changes nothing")
+	if !changes && len(next) == len(old) {
+		return false, refuseRule("R4", "the amendment changes nothing")
+	}
+	return changes, nil
+}
+
+// amendGuards applies the state rules of an amendment once its scope is known: R5 (the claims
+// freeze the list's content, so an amendment that changes a row is refused after them — adding
+// a row is not), then R4 (an amendment is refused once the item has a PASS round). R5 comes
+// first, so an amendment that changes a row says R5 even after a PASS round.
+func amendGuards(root string, it *Item, rows []checkRow) error {
+	prev, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+	if err != nil {
+		return err
+	}
+	old, err := parseChecks(string(prev))
+	if err != nil {
+		return err
+	}
+	changes, err := checkAmendment(old, rows)
+	if err != nil {
+		return err
+	}
+	if changes && it.Claims != "" {
+		return refuseRule("R5", "%s already has a claims event — the check list's content is frozen; only an amendment that adds a row is allowed", it.ID)
+	}
+	for _, r := range it.Rounds {
+		if r.Verdict == "PASS" {
+			return refuseRule("R4", "%s already has a PASS round — an amendment is refused once the item has passed", it.ID)
+		}
 	}
 	return nil
 }
@@ -1408,8 +1444,9 @@ func cmdChecks(root string, a args) error {
 	// the list is written once (R4). A frozen item is therefore refused without waiting on
 	// stdin, and a list that was never allowed to be written is not read at all.
 	amend := a.flag("amend")
-	// R5: the claims freeze the list.
-	if it.Claims != "" {
+	// R5: the claims freeze the list. An amendment is judged on what it does to the rows, so it
+	// is refused below, once its list is read; a list written plainly is refused here.
+	if it.Claims != "" && !(amend && it.Checks != "") {
 		return refuseRule("R5", "%s already has a claims event — the check list is frozen", it.ID)
 	}
 	// R4: the list is written once, and only --amend may change it.
@@ -1427,6 +1464,19 @@ func cmdChecks(root string, a args) error {
 	rows, err := parseChecks(text)
 	if err != nil {
 		return err
+	}
+	if amend {
+		// The amendment's scope is read off the rows (R1, R34, R4) before the state rules, so an
+		// amendment that changes a row is refused under R5 after the claims, whatever else is wrong.
+		if err := validateR1(rows); err != nil {
+			return err
+		}
+		if err := validateR34(rows); err != nil {
+			return err
+		}
+		if err := amendGuards(root, it, rows); err != nil {
+			return err
+		}
 	}
 	// The list's own rules, in the order §4 gives: R1 (the schema) across all rows, then R34
 	// (the command's dialect), then R4 (the amend scope), then R2 (the brief clause), then R3

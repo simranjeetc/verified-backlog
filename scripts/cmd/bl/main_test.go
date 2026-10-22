@@ -502,8 +502,8 @@ func TestChecksR4WrittenOnce(t *testing.T) {
 
 	// an amendment may not change severity
 	checksRefused(t, dir, strings.Replace(goodList, "\tjudge\tadvisory\t", "\tjudge\tblocking\tB1", 1), "R4", "--amend")
-	// nor add a row, change cmd, or reclassify bl → judge
-	checksRefused(t, dir, goodList+"S2\tbl\tadvisory\t\tx\texit 0\t\t\tc\n", "R4", "--amend")
+	// nor remove a row, change cmd, or reclassify bl → judge
+	checksRefused(t, dir, checksHeader+"S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n", "R4", "--amend")
 	checksRefused(t, dir, strings.Replace(goodList, "go test ./...", "true", 1), "R4", "--amend")
 	checksRefused(t, dir, goodList, "R4", "--amend")
 
@@ -4493,5 +4493,161 @@ func TestR25TheRenderedViewsAreExcludedFromTheVerifiedTree(t *testing.T) {
 	}
 	if after != before {
 		t.Fatalf("the tree moved when the views were rewritten: %s before, %s after", before, after)
+	}
+}
+
+// ── I23: a defective row is corrected after the claims by adding a row ───────
+
+const amendAddedRow = "ADD1\tbl\tblocking\tB1\techo added\texit 0\t\t\tadded\n"
+
+// amendJudgeToBL is roundList's J1 row reclassified judge → bl.
+func amendJudgeToBL() string {
+	return strings.Replace(roundList, "J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\t",
+		"J1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\t", 1)
+}
+
+func amendList(t *testing.T, dir, list string) error {
+	t.Helper()
+	return call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "checks.tsv", list))
+}
+
+func TestAmendAddsARowAfterTheClaims(t *testing.T) {
+	dir := roundItem(t, roundList)
+	before := shaHex([]byte(roundList))
+	added := roundList + amendAddedRow
+	if err := amendList(t, dir, added); err != nil {
+		t.Fatalf("an amendment that adds a row is refused after the claims: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "checks" || ev.PrevSHA != before || ev.ChecksSHA != shaHex([]byte(added)) {
+		t.Fatalf("amend event = %+v", ev)
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, byID["a1"].Checks))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := parseChecks(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].f["id"] != "S1" || rows[1].f["id"] != "J1" || rows[2].f["id"] != "ADD1" {
+		t.Fatalf("the added row goes at the end, the others stay: %v", rows)
+	}
+	// the added row is the one the item then runs
+	if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+		t.Fatalf("run: %v", err)
+	}
+	var runFiles []string
+	for _, name := range evidenceFiles(t, dir) {
+		if strings.HasPrefix(name, "A1-run") && strings.HasSuffix(name, ".json") {
+			runFiles = append(runFiles, name)
+		}
+	}
+	if len(runFiles) == 0 {
+		t.Fatal("run wrote no evidence")
+	}
+	run, _ := os.ReadFile(filepath.Join(dir, ".backlog", "evidence", runFiles[len(runFiles)-1]))
+	if !strings.Contains(string(run), `"ADD1"`) {
+		t.Fatalf("the run does not hold the added row: %s", run)
+	}
+}
+
+func TestAmendAddedRowIsValidatedLikeAFreshRow(t *testing.T) {
+	dir := roundItem(t, roundList)
+	cases := map[string]struct{ row, rule string }{
+		"R2 clause":  {"ADD2\tbl\tblocking\tB9\techo a\texit 0\t\t\tbad ref\n", "R2"},
+		"R8 form":    {"ADD3\tbl\tblocking\tB1\techo a\tstatus 0\t\t\tbad form\n", "R8"},
+		"R3 judge":   {"ADD4\tjudge\tblocking\tB1\techo a\t\tif no a, FAIL\tshort\tbad why\n", "R3"},
+		"R34 pipe":   {"ADD5\tbl\tblocking\tB1\techo a \\| cat\texit 0\t\t\tescaped pipe\n", "R34"},
+		"R1 schema":  {"ADD6\tbl\tblocking\tB1\techo a\t\t\t\tno expect\n", "R1"},
+		"R1 same id": {"S1\tbl\tblocking\tB1\techo a\texit 0\t\t\tsame id\n", "R1"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			wantRule(t, amendList(t, dir, roundList+c.row), c.rule)
+		})
+	}
+	events, _ := readLedger(dir)
+	if last := events[len(events)-1]; last.T == "checks" && last.PrevSHA != "" {
+		t.Fatalf("a refused amendment wrote %+v", last)
+	}
+}
+
+func TestAmendThatChangesARowIsRefusedAfterTheClaims(t *testing.T) {
+	list := roundList + "V1\tbl\tadvisory\t\techo x\texit 0\t\t\tfine\n"
+	dir := roundItem(t, list)
+	reclass := strings.Replace(list, "J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\t",
+		"J1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\t", 1)
+	wantRule(t, amendList(t, dir, reclass), "R5")
+	wantRule(t, amendList(t, dir, strings.Replace(list, "V1\tbl\tadvisory\t\t", "V1\tbl\tadvisory\tB1\t", 1)), "R5")
+	// a change plus an added row is still a change
+	wantRule(t, amendList(t, dir, reclass+amendAddedRow), "R5")
+}
+
+func TestAmendIsRefusedOnceTheItemHasAPassRound(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
+		t.Fatalf("pass round: %v", err)
+	}
+	err := amendList(t, dir, roundList+amendAddedRow)
+	wantRule(t, err, "R4")
+	if !strings.Contains(err.Error(), "PASS round") {
+		t.Fatalf("the refusal must name the reason: %v", err)
+	}
+	// an amendment that changes a row still says R5
+	wantRule(t, amendList(t, dir, amendJudgeToBL()), "R5")
+}
+
+func TestAmendAddedFailingBlockingRowFailsTheRun(t *testing.T) {
+	dir := roundItem(t, roundList)
+	if err := amendList(t, dir, roundList+"ADD4\tbl\tblocking\tB1\tfalse\texit 0\t\t\tfails\n"); err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	if err := call(t, cmdRun, dir, "A1"); !errors.Is(err, errFailed) {
+		t.Fatalf("run = %v, want errFailed", err)
+	}
+}
+
+// The ledger tells an amendment from a forbidden checks event by the hash it records (R4, R5).
+func TestDeriveChecksEventAfterClaims(t *testing.T) {
+	base := func() []Event {
+		return []Event{
+			{T: "file", ID: "A1", Text: "x"},
+			{T: "checks", ID: "A1", Checks: "c.tsv", ChecksSHA: "h1"},
+			{T: "claims", ID: "A1", Claims: "claims.md", ClaimsSHA: "hc"},
+		}
+	}
+	withEvent := func(ev Event) error {
+		_, _, err := derive(append(base(), ev))
+		return err
+	}
+	// an amendment over the current list is accepted and becomes the current list
+	_, byID, err := derive(append(base(), Event{T: "checks", ID: "A1", Checks: "c.tsv", ChecksSHA: "h2", PrevSHA: "h1"}))
+	if err != nil {
+		t.Fatalf("an amendment over the current list is corrupt: %v", err)
+	}
+	if byID["a1"].ChecksSHA != "h2" {
+		t.Fatalf("the amendment must become the current list: %s", byID["a1"].ChecksSHA)
+	}
+	// a checks event with no previous hash after the claims is corrupt
+	if err := withEvent(Event{T: "checks", ID: "A1", Checks: "c.tsv", ChecksSHA: "h2"}); err == nil || !strings.Contains(err.Error(), "after its claims") {
+		t.Fatalf("a plain checks event after the claims must be corrupt: %v", err)
+	}
+	// an amendment over some other list is corrupt, after the claims or before them
+	if err := withEvent(Event{T: "checks", ID: "A1", Checks: "c.tsv", ChecksSHA: "h2", PrevSHA: "other"}); err == nil || !strings.Contains(err.Error(), "amends list other") {
+		t.Fatalf("an amendment over the wrong list must be corrupt: %v", err)
+	}
+	if _, _, err := derive(append(base()[:2], Event{T: "checks", ID: "A1", Checks: "c.tsv", ChecksSHA: "h2", PrevSHA: "other"})); err == nil {
+		t.Fatal("an amendment over the wrong list must be corrupt before the claims too")
+	}
+	// a rebaseline after the claims stays corrupt
+	if err := withEvent(Event{T: "rebaseline", ID: "A1", Checks: "c.tsv", ChecksSHA: "h2", PrevSHA: "h1"}); err == nil {
+		t.Fatal("a rebaseline after the claims must be corrupt")
 	}
 }
