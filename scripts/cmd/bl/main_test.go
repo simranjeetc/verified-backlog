@@ -2941,6 +2941,41 @@ func TestRebaselineR34AcceptsAnEvenNumberOfBackslashesBeforeAPipe(t *testing.T) 
 	}
 }
 
+// The check reads the command the way the shell reads it: a pipe inside quotes is text the
+// pattern carries, so a backslash before it is the pattern's, not the shell's.
+func TestChecksR34SkipsPipesInsideQuotes(t *testing.T) {
+	cases := []struct {
+		name    string
+		cmd     string
+		refused bool
+	}{
+		{"single quotes", "grep -Eq 'a\\|b' f", false},
+		{"double quotes", "grep -Eq \"a\\|b\" f", false},
+		{"escaped pipe outside quotes", "grep -Eq a\\|b f", true},
+		{"two backslashes outside quotes", "echo a\\\\|cat", false},
+		{"escaped pipe after a closed quote", "grep -Eq 'a' \\| b", true},
+		{"backslash inside quotes then a real pipe", "echo 'a\\'|cat", false},
+		{"escaped quote does not open a string", "echo \\'a\\|b", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := openItem(t)
+			list := checksHeader + "Q1\tbl\tblocking\tB1\t" + c.cmd + "\texit 0\t\t\tc\n"
+			if !c.refused {
+				checksOK(t, dir, list)
+				return
+			}
+			r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+			if r.rule != "R34" {
+				t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
+			}
+			if !strings.Contains(r.msg, "Q1") {
+				t.Errorf("the refusal must name the offending row: %s", r.msg)
+			}
+		})
+	}
+}
+
 // ── the run ──────────────────────────────────────────────────────────────────
 
 // oneRowList is a well-formed list with one row: the smallest thing a run can be over.

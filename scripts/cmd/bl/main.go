@@ -1245,22 +1245,37 @@ func validateR34(rows []checkRow) error {
 }
 
 // escapedPipe reports the number of backslashes immediately before the first pipe the shell
-// would read as a literal pipe, and whether there is one at all. A pipe is ESCAPED when an ODD
-// number of backslashes precedes it: the shell reads `\|` as a literal pipe. An EVEN number is
-// an escaped backslash followed by a real pipe, and a pipe with no backslash before it is a real
-// pipe too — so only the odd count is a fault.
+// would read as a literal pipe, and whether there is one at all. It reads the command the way
+// the shell does: inside a single-quoted or double-quoted string a pipe is text the pattern
+// carries, not a pipe, so it is ignored there along with any backslash before it. Outside quotes
+// a pipe is ESCAPED when an ODD number of backslashes precedes it: the shell reads `\|` as a
+// literal pipe. An EVEN number is an escaped backslash followed by a real pipe, and a pipe with
+// no backslash before it is a real pipe too — so only the odd count is a fault.
 func escapedPipe(cmd string) (int, bool) {
+	var quote byte // 0 outside quotes, else the quote that is open
+	run := 0       // backslashes immediately before this character, outside quotes
 	for i := 0; i < len(cmd); i++ {
-		if cmd[i] != '|' {
+		c := cmd[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if c == '\\' {
+				i++ // a backslash in double quotes escapes the next character
+			} else if c == '"' {
+				quote = 0
+			}
+		case c == '\\':
+			run++
 			continue
+		case (c == '\'' || c == '"') && run%2 == 0:
+			quote = c
+		case c == '|' && run%2 == 1:
+			return run, true
 		}
-		n := 0
-		for j := i - 1; j >= 0 && cmd[j] == '\\'; j-- {
-			n++
-		}
-		if n%2 == 1 {
-			return n, true
-		}
+		run = 0
 	}
 	return 0, false
 }
