@@ -104,7 +104,11 @@ Each check is a command with an expected result. A check that covers a change
 puts the covered file's path in the command, next to the thing it exercises:
 the command names the file it covers, because R10's coverage comparison is
 literal. Include the case that must still hold after the change, and the
-number you would re-derive.
+number you would re-derive. One assertion per row: a row's command asserts
+exactly one thing, and its expect must be reachable only through that
+assertion. A row whose expect an earlier statement in its own command can
+satisfy binds nothing, so do not write one; a second statement goes in a
+separate row.
 
 OUTPUT: the numbered check list, and nothing else.
 ```
@@ -122,6 +126,9 @@ Falsify each claim with your own checks, plus:
   - <the property, on a case you construct yourself>
   - a row that covers a change puts the covered file's path in the command,
     next to the thing it exercises
+  - one assertion per row: a row's command asserts exactly one thing, and its
+    expect must be reachable only through that assertion. A row that an earlier
+    statement in its own command can satisfy binds nothing, so do not ship one
   - test binding: when the item touches a test, mutate the code in a copy and
     confirm that test fails. Otherwise mark this row N/A with your reason
   - the repo's documented test command; if there is none, or it is slow, name the
