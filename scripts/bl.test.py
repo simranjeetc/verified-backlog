@@ -552,9 +552,10 @@ def audit_writes_report_and_json():
     rows = verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")
     ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     ok(root, "audit", "--since", "2d")
-    files = sorted(p.name for p in (root / "audit").iterdir())
+    audit_dir = root / ".backlog" / "audit"
+    files = sorted(p.name for p in audit_dir.iterdir())
     assert any(f.endswith(".md") for f in files) and any(f.endswith(".json") for f in files)
-    assert str(root / "audit") not in (root / "PROGRESS.md").read_text()
+    assert str(audit_dir) not in (root / "PROGRESS.md").read_text()
 
 
 @test

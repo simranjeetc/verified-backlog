@@ -4651,3 +4651,35 @@ func TestDeriveChecksEventAfterClaims(t *testing.T) {
 		t.Fatal("a rebaseline after the claims must be corrupt")
 	}
 }
+
+// R25: the audit report is an artefact of the ledger. It lives under .backlog/audit/, nothing
+// is written at the root, and an audit never changes the verified tree.
+func TestAuditWritesUnderBacklogAndLeavesTheTreeAlone(t *testing.T) {
+	dir := gitItem(t)
+	before, err := verifiedTree(dir)
+	if err != nil {
+		t.Fatalf("tree: %v", err)
+	}
+	if err := call(t, cmdAudit, dir, "--since", "2d"); err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	stamp := time.Now().UTC().Format("2006-01-02")
+	for _, ext := range []string{".md", ".json"} {
+		if _, err := os.Stat(filepath.Join(dir, ".backlog", "audit", stamp+ext)); err != nil {
+			t.Errorf("report %s not under .backlog/audit/: %v", ext, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "audit")); !os.IsNotExist(err) {
+		t.Errorf("an audit directory exists at the root of the working tree (err=%v)", err)
+	}
+	after, err := verifiedTree(dir)
+	if err != nil {
+		t.Fatalf("tree: %v", err)
+	}
+	if before != after {
+		t.Errorf("the audit changed the verified tree: %s -> %s", before, after)
+	}
+	if err := call(t, cmdAudit, dir, "--due"); err != nil {
+		t.Errorf("audit --due: %v", err)
+	}
+}

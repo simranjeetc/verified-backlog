@@ -25,7 +25,7 @@
 //	bl reopen O4
 //	bl note A1 --text "deferred because ..."
 //	bl next | bl show A1 | bl status | bl check [--views] | bl render
-//	bl audit [--since 2d] [--out audit]
+//	bl audit [--since 2d] [--out .backlog/audit]
 //	bl import TODO.md PROGRESS.md | bl lint TODO.md PROGRESS.md
 //	bl schema [--json]
 //
@@ -4325,6 +4325,9 @@ func readRunlog(root string) []runRecord {
 
 const auditCadence = 48 * time.Hour
 
+// auditDir is where `bl audit` writes its report, relative to the working tree.
+const auditDir = backlogDir + "/audit"
+
 // lastAudit finds the newest report in the audit directory.
 func lastAudit(dir string) (time.Time, bool) {
 	entries, err := os.ReadDir(dir)
@@ -4373,7 +4376,9 @@ func cmdAudit(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
 	}
-	outDir := filepath.Join(root, defaultStr(a.get("out"), "audit"))
+	// R25: the report is an artefact of the ledger, so it lives inside the artefact directory and
+	// never in the verified tree.
+	outDir := filepath.Join(root, defaultStr(a.get("out"), auditDir))
 	if a.flag("due") {
 		last, ok := lastAudit(outDir)
 		if !ok {
