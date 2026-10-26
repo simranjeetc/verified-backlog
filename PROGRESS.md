@@ -275,3 +275,73 @@ Source: human
 
 - note: three additions from the human, which widen the item. First, partitioning: several sessions run at once on this laptop, across harnesses, so every watcher instance must be bound to one (directory, worktree, session id) triple - it polls only that session, concludes only that session, and spawns only into that directory - and the binding must be seamless, so a watcher started in one worktree never concludes or replaces another worktree's session, and two watchers in different worktrees never collide over the baton file, which means the baton path is derived from the worktree, not a fixed name. Second, the handover must be graceful: the watcher asks the harness to end the session, and the harness ends it - not a kill. opencode's session.compact returns delivery steer and runs at the next step boundary, which is the graceful form there; claude's background sessions have claude stop, which stops a session and keeps its conversation, and the SessionEnd and Stop hooks are the harness-side completion points. A watcher that kills the process loses the transcript, and the transcript is where the harness's own context lives. Third, the utility may be the wrong mechanism and the item must not assume it: the alternatives are (a) lean on the harness's own auto-compaction - both harnesses have it - and change nothing, so the skill's rule becomes 'compact at the loop's step boundary' with the harness doing it, (b) make the loop end an item by ending its session, so session turnover is a property of the loop's shape rather than a watcher, and (c) the watcher. The item should settle which, and (a) is the cheapest if the skill's rule can be made harness-agnostic enough to be satisfied by each harness's own compaction. Prior art to read before deciding: /Users/simran/codebase/opencode-handoff-on-context, an opencode plugin that watches the root session's tokens, summarizes, writes .opencode-handoff/ and launches a fresh session, and /Users/simran/codebase/ctxed for cross-harness context accounting.
 
+## I47 — a frozen row can hold a command that breaks before it reaches its assertion - a shell syntax error, an option the tool does not have, a command not found - and nothing runs the rows before the freeze, so the break is found only after the claims: I3 s115 (git add -q does not exist in git 2.54), I8 s58 (7 of 10 rows had an escaped pipe under /bin/sh), I17 s184 (stderr redirected into stdout while the expect said stderr). A row whose command broke must be told apart from a row whose assertion was reached and was false, and refused at the freeze
+
+Status: open
+Source: supervisor:rebaseline-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): bl checks probes every row on the current tree and refuses a row whose command broke - sh exit 2 or 127, grep exit 2, an unknown-option message - rather than reached its assertion; needs a survey of the 25 frozen lists, because the meaning of exit codes differs from tool to tool
+
+## I48 — a frozen row's expect can be an RE2 pattern that no output can ever match, and a run before the work cannot show it, because the row fails then for two reasons at once - the work is not done, and the pattern is unreachable: I21 s274 (O6 held a backslash before its pipe, a literal pipe in RE2, and failed the pre-freeze run at s273 for the expected reason), I5 s32 (C11, the same escaped pipe). The freeze must prove each blocking row's expect can be satisfied at all
+
+Status: open
+Source: supervisor:rebaseline-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): add a witness column to checks.tsv - a sample output the row's expect must match; bl checks compiles the RE2 pattern and refuses the row if the witness does not match. Only adds refusals, so the guard gets stricter (E11)
+
+## I49 — R34 refuses an escaped pipe in a row's command, but not the other places where a pattern's dialect makes a row a no-op: I10 s79 (+ is a literal in a basic regular expression, so the grep counted zero lines), I8 s53 (a sed mutation whose target word is not in the file, so the mutation changed nothing), I23 s242 (a grep for a phrase the file does not contain). Rows that use a dialect's metacharacter where that dialect treats it as a literal, and mutations that change no byte, must be refused at the freeze
+
+Status: open
+Source: supervisor:rebaseline-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): extend the R34 scanner - refuse plain grep or sed patterns that contain + ? | or {} outside -E or -F, and steer rows to grep -E or -F; a mutation row must show its target occurs in the file (e.g. a preceding grep -c in a separate row). Only adds refusals (E11)
+
+## I50 — R10 makes a round cover each changed file only through a blocking row whose command names that file literally, but the verifier writes the list blind, before anyone knows which files the producer will change, so a correct change to one more file forces a rebaseline that adds the file name and nothing else: I18 s227 and s229, I23 s241, I26 s252, I3 s119 - 5 of the 18 rebaselines
+
+Status: open
+Source: supervisor:rebaseline-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): count a hunk as covered when a blocking row names its file OR the file lies within the item's scope recorded at bl open. This LOOSENS R10 - a file in scope would be covered with no row testing it - so the guard gets weaker, against E11. Run playbooks/design-doc.md and get the human's sign-off before the loop opens this item; an alternative to weigh there: allow an add-a-coverage-row amendment after the claims instead of a rebaseline
+
+## I51 — bl check fails: FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash. Round seq128 (2026-10-21 17:48:51Z, PASS) recorded rows_sha e1bd850e; the file was rewritten about a minute later (mtime 17:49Z) and now hashes 5a32ac16. The note at seq129 says the supervisor put the verifier's full table there and names .backlog/evidence/A1-r2.txt as the machine's own evidence, but A1-r2.txt does not exist. So the evidence for I3's PASS is not the evidence that was hashed, and no bl verb refused the overwrite or any later write while the ledger failed its own check
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): recover the hashed bytes if any copy exists (git objects, run3 json, editor backups); otherwise record the loss as a correction event naming both hashes rather than editing the file back, and decide whether I3's PASS stands on run3's evidence alone. Separately: evidence files are written once - bl could write them read-only, and every writing verb could refuse while bl check fails
+
+## I52 — the skill's principles have no single home and no ids: they are split between SKILL.md's numbered rules (SKILL.md:19-26), its Principles section (SKILL.md:92) and the P and R rules of references/design-check-list-schema.md section 3, so a change to the skill cannot say which principle it touches and nothing can check that a principle was weakened
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): one file, references/principles.md, eleven principles with stable ids P-style but distinct from the design's precedence ids (they already use P1-P11), never renumbered like brief clauses; SKILL.md and README link to it instead of restating
+
+## I53 — no record says which principle is enforced by which refusal and which test, so a principle can be left enforced only by prose without anyone noticing: one item in flight is enforced by bl open's lock, views by bl check --views, evidence by its hash (I51 shows the hash is checked but not protected), while independence, the value bar and proof on the real artifact have no mechanical guard at all. Every principle must be mapped to its guard and to a test that fails when the guard is removed, or be marked judge-only
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): a principle-to-guard table in references/principles.md - principle id, rule id, the refusal text, the test name in scripts/bl.test.py or main_test.go; bind each by deleting the guard and showing the test go red; principles with no mechanical guard are listed as judge-only so the gap is visible
+
+## I54 — nothing stops a change to the skill from weakening a principle: E11 (references/design-check-list-schema.md:723) lets an amendment only make a check-list row stricter, but there is no such rule for the principles themselves, and no verifier is asked whether an item's diff weakens or removes one
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): the verifier playbook adds a blocking judge row to every item that touches scripts/, SKILL.md, playbooks/ or references/ - does this diff weaken or remove any principle id; a yes is not a FAIL but routes the item to playbooks/design-doc.md and the human's sign-off, and a declined loosening is recorded with bl drop
+
+## I55 — the order of bl's verbs has no single home: it is enforced by refusals scattered through scripts/cmd/bl/main.go (R5 at 833, 1465, 1619, 1622; R6 at 2463, 3303, among others) and described separately in the prose of playbooks/item-loop.md (243 lines), so the two can drift without anything noticing; and no verb tells the agent what comes next - bl next names only the item and bl show prints only its status and rounds - so every session re-derives the next verb from the playbook
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): one declarative transition table in main.go - stage, derived from the item's event kinds (I45 already observes the stage is derivable), mapped to the verbs it allows - which drives both the out-of-order refusals and a 'next: bl <verb> <id>' line in bl show and bl next; the gate tests the table against every refusal, and the playbook keeps only the steps that need judgment
+
+## I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone
+
+Status: open
+Source: supervisor:ideology-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 audit): the gate lives inside bl, the one tool every harness must call - every writing verb runs bl check first and refuses with exit 2 on a FAIL, the way cargo publish verifies before uploading and terraform apply refuses a stale plan; bl close also runs the gate and refuses on red. A git hook calling bl check may be installed by bl init as a convenience, never as the guard. Unknown: the time the gate adds per close. Order: I51 first, or every write is refused until the I3 evidence is resolved
+
