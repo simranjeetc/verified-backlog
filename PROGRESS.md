@@ -298,6 +298,7 @@ Source: supervisor:rebaseline-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): add a witness column to checks.tsv - a sample output the row's expect must match; bl checks compiles the RE2 pattern and refuses the row if the witness does not match. Only adds refusals, so the guard gets stricter (E11)
 - note: second instance (verifier:I79/r1, 2026-10-26): the supervisor's own row main-go-gofmt in I79's frozen list had expect 'stdout matches ^gofmt-clean$', which RE2 cannot match against 'gofmt-clean' plus the trailing newline echo prints, so the row could never pass on correct code; it forced I79's restart as I80
+- note: decision (human, 2026-10-26): also fix the matcher - stdout and stderr expects ignore one trailing newline, so a pattern ending in $ matches what echo prints (I79 main-go-gofmt failed correct code on this)
 
 ## I49 — R34 refuses an escaped pipe in a row's command, but not the other places where a pattern's dialect makes a row a no-op: I10 s79 (+ is a literal in a basic regular expression, so the grep counted zero lines), I8 s53 (a sed mutation whose target word is not in the file, so the mutation changed nothing), I23 s242 (a grep for a phrase the file does not contain). Rows that use a dialect's metacharacter where that dialect treats it as a literal, and mutations that change no byte, must be refused at the freeze
 
@@ -466,4 +467,11 @@ Source: human
 - r1 PASS — .backlog/evidence/I80-r1.txt (33ab07a247d7)
 - code failures: 0 / cap 3
 - note: round 1 PASS (supervisor, 2026-10-26): run1 132/132; verifier dispatch 2 (claude sonnet subagent - single family with the producer, recorded as such) found no claim falsified, three mutations each fail go test and bl.test.py, 20 refusals leave the ledger byte-identical; supervisor re-ran M1g (tier-1 order removed in a copy) and got the frozen exit 1. Filed beyond I81-I83: rows B9e-B9j grep a single word in the design doc and B8a passes on HEAD too, so they bind weakly; bl unbump takes several ids and an empty ranking or a bump with no id is refused - accepted as extra strictness
+
+## I85 — rows that match words in a markdown file pass or fail on wording, not on whether the docs say the right thing: 48 of 558 frozen rows only grep docs text; I80's B9e-B9j each grep one word of the design doc and would pass on a wrong description, and I79's tests-name-order-py failed correct work because two words sat on different lines. The human's requirement: a blocking row must run code; a row that only matches text in docs is advisory and never blocks a round, and a docs clause is judged by the verifier reading the docs against the clause's example
+
+Status: open
+Source: human
+
+- note: depends on I78's coverage rule change: today R10 counts a file as covered only through a blocking row naming it, so making docs rows advisory would leave SKILL.md and design-doc changes uncovered
 

@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (49)
+## Queue (51)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
@@ -53,6 +53,8 @@
 - [ ] I81 — a dropped --after dependency unblocks its item: derive counts a declined item as done (main.go about line 448, unchanged by I79), while I79's brief B7 says an item whose --after dependency is not closed is never named; the design must say whether dropping a dependency releases the items that wait on it or blocks them until a human decides  _(verifier:I79/r1)_
 - [ ] I82 — bl unbump accepts an id that is not in tier 1 and appends an event that changes nothing in the order, so a mistyped unbump is silent; I79's brief has no clause for it  _(verifier:I79/r1)_
 - [ ] I83 — TODO.md renders open items in filing order while bl next orders them by tier (I79), so the human view of the queue disagrees with the order the loop works in  _(verifier:I79/r1)_
+- [ ] I84 — a brief clause can be read two ways, so the blind verifier and the producer each build a fair reading and a correct row fails correct code: I79 B3 said bl file --urgent must act 'exactly as if bl bump had run'; the verifier wrote a row requiring a bump event (urgent-writes-bump), the producer delivered the same order without one, and the item restarted as I80. The human's requirement: every brief clause states what can be observed (what a command prints, its exit code, what the ledger holds), never how it is built, and carries at least one worked example - a concrete input and the exact expected output - so that two readers cannot reach different goals; bl brief refuses a clause with no example  _(human)_
+- [ ] I85 — rows that match words in a markdown file pass or fail on wording, not on whether the docs say the right thing: 48 of 558 frozen rows only grep docs text; I80's B9e-B9j each grep one word of the design doc and would pass on a wrong description, and I79's tests-name-order-py failed correct work because two words sat on different lines. The human's requirement: a blocking row must run code; a row that only matches text in docs is advisory and never blocks a round, and a docs clause is judged by the verifier reading the docs against the clause's example  _(human)_
 
 ## Blocked (0)
 
