@@ -223,6 +223,34 @@ anchor exist for exactly that case, and for nothing else.
 non-empty person and a non-empty note. It is accepted only for an item that has no round yet, so it cannot override a
 failed round.
 
+**The order of work (I79).** Three events order the work; none changes an item's state, and a ledger without them
+parses as before.
+
+| event | written by | fields | `by` |
+|---|---|---|---|
+| `bump` | `bl bump <id> [<id> ...]` | `ids`: the ids in the order given | `human` |
+| `unbump` | `bl unbump <id>` | `ids`: the id taken out of tier 1 | `human` |
+| `rank` | `bl rank --file <tsv>` | `ranking`: every `{id, reason}` of the file, in rank order | `loop` |
+
+`bl file --urgent` records `urgent: true` and `by: human` on the item's own `file` event, and counts as a `bump` of
+that one id at the point it was filed — one call, one append. `bl bump` and `bl unbump` refuse an unknown, closed or
+declined id and an id named twice; `bl rank` refuses those too, plus a tier-1 id and a line with an empty reason. A
+refusal writes nothing.
+
+`bl next` names the item in flight if there is one. Otherwise it names the first eligible item (open, and not waiting
+on an unfinished `--after` dependency) in this order:
+
+1. **Tier 1, the human's priority list.** Every `bump` event newest first, and within one event the order given; each
+   id counts at its first appearance, so a later bump overrides an earlier one. An `unbump` newer than every bump of an
+   id takes it out of tier 1; a later bump puts it back.
+2. **Tier 2, the loop's ranking.** The ids of the latest `rank` event, in order. A later rank replaces the earlier
+   ranking as a whole; both stay in the ledger.
+3. **Tier 3, the rest.** Every other item, ordered by how many open items name it in `--after` (more first), then by
+   filing order.
+
+A parked, closed, declined or blocked item is never named, whatever its tier, and does not stop the next item from
+being named. The triage pass that produces a ranking is out of scope.
+
 ---
 
 ## 3. Rules

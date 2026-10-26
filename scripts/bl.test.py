@@ -487,6 +487,35 @@ def next_skips_blocked_items():
 
 
 @test
+def next_works_tier_one_then_two_then_three():
+    root = fresh()
+    for i in range(1, 5):
+        ok(root, "file", "--id", f"A{i}", "--text", f"item {i}")
+    ok(root, "file", "--id", "A5", "--text", "waits", "--after", "A4")
+    assert ok(root, "next").stdout.startswith("A4"), "tier 3: the waited-on item first"
+    ranking = root / "rank.tsv"
+    ranking.write_text("A3\tunblocks the release\n", encoding="utf-8")
+    ok(root, "rank", "--file", str(ranking))
+    assert ok(root, "next").stdout.startswith("A3"), "tier 2 before tier 3"
+    ok(root, "bump", "A2")
+    assert ok(root, "next").stdout.startswith("A2"), "tier 1 before tier 2"
+    ok(root, "file", "--id", "U1", "--text", "urgent", "--urgent")
+    assert ok(root, "next").stdout.startswith("U1"), "--urgent goes to the front of tier 1"
+    ok(root, "unbump", "U1")
+    assert ok(root, "next").stdout.startswith("A2")
+    events = [json.loads(ln) for ln in (root / ".backlog" / "ledger.jsonl").read_text().splitlines()]
+    by = {e["t"]: e.get("by") for e in events if e["t"] in ("bump", "unbump", "rank")}
+    assert by == {"bump": "human", "unbump": "human", "rank": "loop"}, by
+    ranking.write_text("A2\tbumped already\n", encoding="utf-8")
+    refused(root, "rank", "--file", str(ranking), match="tier 1")
+    ranking.write_text("A3\t\n", encoding="utf-8")
+    refused(root, "rank", "--file", str(ranking), match="empty reason")
+    refused(root, "bump", "Z9", match="unknown item")
+    refused(root, "bump", "A1", "a1", match="named twice")
+    ok(root, "check")
+
+
+@test
 def status_counts_every_state():
     root = fresh()
     ok(root, "file", "--id", "A1", "--text", "one")
@@ -590,10 +619,12 @@ def show_and_schema_emit_valid_json():
     assert schema["round_cap"] == 3, schema
     assert schema["causes"] == ["code", "harness", "dispute"], schema
     assert sorted(schema["events"]) == [
-        "brief", "checks", "claims", "close", "defer", "drop", "file",
-        "misclassified", "note", "open", "rebaseline", "reopen", "round", "run",
-        "second-check",
+        "brief", "bump", "checks", "claims", "close", "defer", "drop", "file",
+        "misclassified", "note", "open", "rank", "rebaseline", "reopen", "round", "run",
+        "second-check", "unbump",
     ], schema
+    assert schema["events"]["bump"]["required"] == ["ids", "by"], schema
+    assert schema["events"]["rank"]["required"] == ["ranking", "by"], schema
 
 
 @test

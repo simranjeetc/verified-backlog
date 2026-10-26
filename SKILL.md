@@ -38,7 +38,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | verb | writes | does |
 |---|---|---|
 | `bl init` | – | creates `.backlog/` and renders empty views; refuses over a foreign `TODO.md` |
-| `bl file --id A1 --text "…" [--after B2] [--source X]` | yes | adds one item; refuses a duplicate id or an unknown dependency |
+| `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
 | `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock |
 | `bl brief A1 --file brief.md` | yes | amends the item's brief; a new event with a new hash, and the old brief keeps its own |
 | `bl checks A1 --file checks.tsv` | yes | freezes the verifier's check list; written once, and `--amend` may only reclassify a row (judge → bl) |
@@ -52,8 +52,13 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl defer A1 --reason "…"` | yes | parked: visible, skipped by `next` |
 | `bl reopen A1` | yes | reverses a decline or a park |
 | `bl note A1 --text "…"` | yes | one note, scoped to an item |
+| `bl bump A3 A1` | yes | the human's priority list (tier 1), in the order given; a later bump goes in front of an earlier one; refuses an unknown, closed, dropped or repeated id |
+| `bl unbump A3` | yes | takes the id out of tier 1; a later `bl bump` puts it back |
+| `bl rank --file ranking.tsv` | yes | the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order, replacing the last ranking; refuses a tier-1, unknown, closed, dropped or repeated id and an empty reason |
 | `bl next`, `bl show`, `bl status`, `bl check [--views]`, `bl render`, `bl schema [--json]` | no | reads; `render` only rewrites the views, `schema` is the single source for the fields |
 | `bl audit [--since 2d]` | report only | arithmetic over the ledger and `run.log` |
+
+`bl next` names the item in flight; otherwise the first eligible item of tier 1 (the bumps, newest first), then tier 2 (the latest ranking), then tier 3 (everything else: the item the most open items wait on first, then filing order). A parked, closed, dropped or blocked item is never named, whatever its tier. Bumps and unbumps record `by: human`, a ranking `by: loop`.
 
 Exit status is the contract: **0** ok, **2** refused and nothing written, **3** the ledger is corrupt. A refusal prints `bl: refused: …` to stderr; read it, fix the argument, call again. A refusal is not a failed round — it never reaches the ledger and never counts against the round cap.
 

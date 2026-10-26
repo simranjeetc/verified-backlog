@@ -10,7 +10,7 @@
 // Usage:
 //
 //	bl init
-//	bl file --id A1 --text "..." [--after B2] [--source human]
+//	bl file --id A1 --text "..." [--after B2] [--source human] [--urgent]
 //	bl open A1                                            (writes .backlog/items/A1/brief.md)
 //	bl brief A1 --file brief.md                           (amends the brief; a new event)
 //	bl checks A1 [--file checks.tsv] [--amend]            (list from stdin without --file)
@@ -24,6 +24,8 @@
 //	bl defer O4 --reason "awaiting triage"
 //	bl reopen O4
 //	bl note A1 --text "deferred because ..."
+//	bl bump A3 A1 | bl unbump A3                          (the human's priority list: tier 1)
+//	bl rank --file ranking.tsv                            (the loop's ranking: tier 2)
 //	bl next | bl show A1 | bl status | bl check [--views] | bl render
 //	bl audit [--since 2d] [--out .backlog/audit]
 //	bl import TODO.md PROGRESS.md | bl lint TODO.md PROGRESS.md
@@ -109,6 +111,11 @@ type Event struct {
 	Commit  string `json:"commit,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	By      string `json:"by,omitempty"`
+	// The order of work (I79): the ids a bump or unbump names, in the order given; the ranking
+	// a rank records; and a file that puts its item at the front of tier 1.
+	IDs     []string `json:"ids,omitempty"`
+	Ranking []Ranked `json:"ranking,omitempty"`
+	Urgent  bool     `json:"urgent,omitempty"`
 	// Artefacts (R20): each event that references a file records its path and sha256.
 	Brief     string `json:"brief,omitempty"`
 	BriefSHA  string `json:"brief_sha,omitempty"`
@@ -136,6 +143,12 @@ type Event struct {
 	Computed string `json:"computed,omitempty"`
 	Cmd      string `json:"cmd,omitempty"`
 	Expect   string `json:"expect,omitempty"`
+}
+
+// Ranked is one line of the loop's ranking: an item and why it ranks where it does.
+type Ranked struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 // Item is the derived state of one backlog entry.
@@ -374,6 +387,14 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			byID[key] = it
 			order = append(order, it)
 			continue
+		case "bump", "unbump", "rank":
+			// These name items but change none: they only order the work (see workOrder).
+			for _, id := range namedIDs(ev) {
+				if _, ok := byID[strings.ToLower(id)]; !ok {
+					return nil, nil, corrupt("%s names unknown item %s", ev.T, id)
+				}
+			}
+			continue
 		}
 		it, ok := byID[strings.ToLower(ev.ID)]
 		if !ok {
@@ -481,6 +502,99 @@ func eligible(order []*Item) []*Item {
 		}
 	}
 	return out
+}
+
+// namedIDs is every id a bump, unbump or rank event names, in the order it names them.
+func namedIDs(ev Event) []string {
+	if ev.T != "rank" {
+		return ev.IDs
+	}
+	ids := make([]string, len(ev.Ranking))
+	for i, r := range ev.Ranking {
+		ids[i] = r.ID
+	}
+	return ids
+}
+
+// tierOne is the human's priority list, as lower-cased ids: every bump newest first, and within
+// one bump the order given, each id counted at its first appearance — so a later bump overrides
+// an earlier one, and an unbump newer than every bump of an id takes it out. `bl file --urgent`
+// counts as a bump of its item at the point it was filed.
+func tierOne(events []Event) []string {
+	seen := map[string]bool{}
+	var out []string
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		var ids []string
+		keep := true
+		switch {
+		case ev.T == "bump":
+			ids = ev.IDs
+		case ev.T == "unbump":
+			ids, keep = ev.IDs, false
+		case ev.T == "file" && ev.Urgent:
+			ids = []string{ev.ID}
+		default:
+			continue
+		}
+		for _, id := range ids {
+			key := strings.ToLower(id)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if keep {
+				out = append(out, key)
+			}
+		}
+	}
+	return out
+}
+
+// tierTwo is the loop's latest ranking. A later rank replaces an earlier one as a whole.
+func tierTwo(events []Event) []Ranked {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].T == "rank" {
+			return events[i].Ranking
+		}
+	}
+	return nil
+}
+
+// workOrder is every item in the order `bl next` works in: tier 1 (the human's bumps), then
+// tier 2 (the loop's ranking), then tier 3 — every other item, the ones the most open items wait
+// on first, then in filing order. It does not filter: eligible does.
+func workOrder(events []Event, order []*Item, byID map[string]*Item) []*Item {
+	var out []*Item
+	placed := map[*Item]bool{}
+	put := func(id string) {
+		if it, ok := byID[strings.ToLower(id)]; ok && !placed[it] {
+			placed[it] = true
+			out = append(out, it)
+		}
+	}
+	for _, id := range tierOne(events) {
+		put(id)
+	}
+	for _, r := range tierTwo(events) {
+		put(r.ID)
+	}
+	waiting := map[string]int{}
+	for _, it := range order {
+		if it.Status == "open" && it.After != "" {
+			waiting[strings.ToLower(it.After)]++
+		}
+	}
+	var rest []*Item
+	for _, it := range order {
+		if !placed[it] {
+			rest = append(rest, it)
+		}
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		return waiting[strings.ToLower(rest[i].ID)] > waiting[strings.ToLower(rest[j].ID)]
+	})
+	return append(out, rest...)
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -796,6 +910,10 @@ func cmdFile(root string, a args) error {
 			return err
 		}
 		ev.Source = s
+	}
+	// --urgent is a bump of the new item, recorded on its own file event: one call, one append.
+	if a.flag("urgent") {
+		ev.Urgent, ev.By = true, "human"
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
@@ -3944,6 +4062,117 @@ func cmdNote(root string, a args) error {
 	return nil
 }
 
+// rankable resolves an id a bump, unbump or rank may name: a known item that is neither closed nor
+// declined, named once in the call.
+func rankable(byID map[string]*Item, id string, seen map[string]bool) (*Item, error) {
+	it, err := lookup(byID, id)
+	if err != nil {
+		return nil, err
+	}
+	if it.Status == "closed" || it.Status == "declined" {
+		return nil, refuse("%s is %s — only an open or parked item can be ordered", it.ID, it.Status)
+	}
+	key := strings.ToLower(it.ID)
+	if seen[key] {
+		return nil, refuse("%s is named twice", it.ID)
+	}
+	seen[key] = true
+	return it, nil
+}
+
+// cmdBump records the human's priority list (tier 1), and cmdUnbump takes ids out of it. Both
+// write one event that names the ids in the order given.
+func cmdBump(root string, a args) error { return priorityEvent(root, a, "bump") }
+
+func cmdUnbump(root string, a args) error { return priorityEvent(root, a, "unbump") }
+
+func priorityEvent(root string, a args, kind string) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	if len(a.positional) == 0 {
+		return refuse("bl %s needs at least one id", kind)
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, id := range a.positional {
+		it, err := rankable(byID, id, seen)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, it.ID)
+	}
+	if _, err := appendEvent(root, Event{T: kind, IDs: ids, By: "human"}); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s %s\n", kind, strings.Join(ids, " "))
+	return nil
+}
+
+// cmdRank records the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order.
+// It may not name a tier-1 id — the human's order outranks the loop's.
+func cmdRank(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	if a.get("file") == "" {
+		return refuse("--file is required")
+	}
+	text, err := a.input("file")
+	if err != nil {
+		return err
+	}
+	bumped := map[string]bool{}
+	for _, key := range tierOne(events) {
+		bumped[key] = true
+	}
+	seen := map[string]bool{}
+	var ranking []Ranked
+	for n, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		id, reason, _ := strings.Cut(line, "\t")
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			return refuse("line %d: %s has an empty reason", n+1, strings.TrimSpace(id))
+		}
+		it, err := rankable(byID, strings.TrimSpace(id), seen)
+		if err != nil {
+			return err
+		}
+		if bumped[strings.ToLower(it.ID)] {
+			return refuse("%s is in the human's priority list (tier 1) — the loop may not rank it", it.ID)
+		}
+		ranking = append(ranking, Ranked{ID: it.ID, Reason: reason})
+	}
+	if len(ranking) == 0 {
+		return refuse("the ranking is empty")
+	}
+	if _, err := appendEvent(root, Event{T: "rank", Ranking: ranking, By: "loop"}); err != nil {
+		return err
+	}
+	fmt.Printf("bl: ranked %d items\n", len(ranking))
+	return nil
+}
+
 func cmdNext(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
@@ -3952,7 +4181,7 @@ func cmdNext(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	order, _, err := derive(events)
+	order, byID, err := derive(events)
 	if err != nil {
 		return err
 	}
@@ -3964,7 +4193,7 @@ func cmdNext(root string, a args) error {
 		fmt.Printf("%s\t%s\n", cur.ID, cur.Text)
 		return nil
 	}
-	rows := eligible(order)
+	rows := eligible(workOrder(events, order, byID))
 	if len(rows) == 0 {
 		fmt.Println("none")
 		return nil
@@ -4253,7 +4482,7 @@ func schemaJSON() map[string]any {
 		"round_cap":  roundCap,
 		"statuses":   []string{"open", "blocked", "closed", "declined", "parked"},
 		"events": map[string]map[string][]string{
-			"file":          {"required": {"id", "text"}, "optional": {"after", "source"}},
+			"file":          {"required": {"id", "text"}, "optional": {"after", "source", "urgent", "by"}},
 			"open":          {"required": {"id"}, "optional": {"brief", "brief_sha", "scope", "scope_ignored", "before_tree", "ignored_before"}},
 			"brief":         {"required": {"id", "brief", "brief_sha"}, "optional": {}},
 			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
@@ -4268,6 +4497,9 @@ func schemaJSON() map[string]any {
 			"defer":         {"required": {"id", "reason"}, "optional": {}},
 			"reopen":        {"required": {"id"}, "optional": {"reason"}},
 			"note":          {"required": {"id", "text"}, "optional": {}},
+			"bump":          {"required": {"ids", "by"}, "optional": {}},
+			"unbump":        {"required": {"ids", "by"}, "optional": {}},
+			"rank":          {"required": {"ranking", "by"}, "optional": {}},
 		},
 	}
 }
@@ -4278,7 +4510,7 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "note"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "note", "bump", "unbump", "rank"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
 	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
 	// from 12 without counting the lines.
@@ -4788,7 +5020,7 @@ func (a args) input(name string) (string, error) {
 	return string(data), nil
 }
 
-var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true}
+var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true}
 
 // repeatableFlagNames are the flags that may be given more than once: the item's scope is a
 // set of paths, and the scope-ignored list is a set of files.
@@ -4838,6 +5070,9 @@ var handlers = map[string]func(string, args) error{
 	"defer":        cmdDefer,
 	"reopen":       cmdReopen,
 	"note":         cmdNote,
+	"bump":         cmdBump,
+	"unbump":       cmdUnbump,
+	"rank":         cmdRank,
 	"next":         cmdNext,
 	"show":         cmdShow,
 	"status":       cmdStatus,
@@ -4853,8 +5088,8 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
-  drop | defer | reopen | note | next | show | status | check | render | schema | audit
-  import | lint
+  drop | defer | reopen | note | bump | unbump | rank | next | show | status | check | render
+  schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`
