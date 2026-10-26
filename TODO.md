@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (30)
+## Queue (31)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
@@ -34,6 +34,7 @@
 - [ ] I54 — nothing stops a change to the skill from weakening a principle: E11 (references/design-check-list-schema.md:723) lets an amendment only make a check-list row stricter, but there is no such rule for the principles themselves, and no verifier is asked whether an item's diff weakens or removes one  _(supervisor:ideology-audit)_
 - [ ] I55 — the order of bl's verbs has no single home: it is enforced by refusals scattered through scripts/cmd/bl/main.go (R5 at 833, 1465, 1619, 1622; R6 at 2463, 3303, among others) and described separately in the prose of playbooks/item-loop.md (243 lines), so the two can drift without anything noticing; and no verb tells the agent what comes next - bl next names only the item and bl show prints only its status and rounds - so every session re-derives the next verb from the playbook  _(supervisor:ideology-audit)_
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
+- [ ] I57 — the orchestrating session runs the whole backlog in one conversation, so its context grows with every item until the human compacts it by hand; the loop's state already lives in the repository (the ledger, .backlog/HANDOFF.md, git), so no session needs to outlive one item. Ship the smallest workable outer loop: a utility with no conversation context of its own that asks bl next for an item, starts a fresh harness session to work that one item through playbooks/item-loop.md, and starts the next fresh session when that one exits - stopping when bl next names no item, and refusing to start another session when the previous one left its item in flight without a recorded round. Later refinements are filed as their own items  _(human)_
 
 ## Blocked (0)
 
