@@ -6,3 +6,10 @@ scripts/bl
 
 # the skill dogfooding itself: its own ledger
 .backlog/
+
+# BMAD / OpenSpec: installer output and generated artifacts
+_bmad-output/
+skills/test-artifacts/
+
+# agent worktrees created by the harness inside .claude/
+.claude/worktrees/
