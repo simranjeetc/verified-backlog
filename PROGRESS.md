@@ -371,3 +371,52 @@ Source: human
 - code failures: 1 / cap 3
 - note: Round 1, single family (producer and verifier were Claude subagents; the verifier ran on Sonnet - the cross-family dispatch via claude -p with bypassed permissions was refused by the session's auto-mode classifier). 113 rows, 109 PASS, 4 FAIL: R18-close-wrong-tree, R18-close-records-tree, R18-close-evidence-edited, R28-created. The producer audited B1-B12: enforced B1 B4 B7 B8 B9 B11, partly B2 B3 B5 B6 B12, not B10; the verifier reproduced all ten gaps and falsified only B1 (filed as I68, a design conflict between R6 and R25 rather than a code gap). Supervisor re-ran R18-close-evidence-edited: close succeeded on tampered evidence, matching the run. Filed: I59-I69, G5 noted on I28. Gate: bl.test.py 43/43 and go test ok against a fresh binary (both agents). Not filed, below the bar: bl init silent about a missing .gitignore entry; a harness round without --verdict refused. I58 passes once I28, I59, I60 and I61 land; until then it stays open
 
+## I70 — every row of a check list repeats the same scenario setup - mktemp, go build of bl, git init, file, open, checks - because rows must be self-contained: all 113 rows of I58's list do it, the median command is 1220 characters and the list is 161546 bytes, so the verifier spent most of its 20.5 minutes generating boilerplate. The loop needs a shared, verifier-owned or bl-shipped scenario helper so a row states only its scenario and its one assertion; it must not be a fixture the producer wrote
+
+Status: open
+Source: supervisor:I58-timing
+
+- note: candidate fix (unverified): scripts/rowkit.sh <scenario> - prints the path of a fresh scratch repo with bl built and an item at a named stage (open, frozen, claimed, run, round); rows become one line such as d=$(sh scripts/rowkit.sh run) && cd $d && bl round A1 --rows v.tsv; the helper ships with bl and is tested by the gate, so it is neither the producer's fixture nor rewritten per item
+
+## I71 — the playbook runs the producer after the verifier's first dispatch, although the producer never needs the frozen list - only bl claims must come after bl checks (R5): in I58 the producer's 9.3 minutes ran after the verifier's 20.5 instead of beside them
+
+Status: open
+Source: supervisor:I58-timing
+
+- note: candidate fix (unverified): playbooks/item-loop.md dispatches the producer and verifier dispatch 1 together, producer told not to read checks.tsv; the supervisor records bl checks then bl claims in that order when both return
+
+## I72 — every row that drives bl builds its own binary: all 113 rows of I58's list run go build (0.13 to 0.53 s each), so bl run builds bl 113 times per run
+
+Status: open
+Source: supervisor:I58-timing
+
+- note: candidate fix (unverified): bl run builds the binary once from the tree under test into its run directory and exports its path (e.g. BL_UNDER_TEST) to every row under the fixed environment, so rows exercise the tree being verified without rebuilding
+
+## I73 — bl run executes the rows one after another: I58's 113 self-contained rows took 80398 ms (run.log), about 0.7 s each, on a 15-core machine
+
+Status: open
+Source: supervisor:I58-timing
+
+- note: candidate fix (unverified): bl run runs rows in parallel with a bounded worker pool, keeping the evidence file in frozen order; R26 and R27 still check the tree and .backlog before and after the whole run. Rows that are not self-contained would race, so the design must state that a row may not depend on another
+
+## I74 — the repository's test suites run once in every dispatch: bl.test.py (11 s) and go test (39 s) ran in verifier dispatch 1, in the producer and again in verifier dispatch 2 of I58, and the 113 rows ran three times (two dry runs by the verifier and bl run)
+
+Status: open
+Source: supervisor:I58-timing
+
+- note: candidate fix (unverified): the suites and the rows run once per round under bl run (a gate row in the frozen list), and dispatches read that run's evidence instead of re-running; a dispatch re-runs only the row it doubts
+
+## I75 — the run file an agent must read to judge a round is mostly the row commands copied back from the frozen list: .backlog/evidence/I58-run1.json is 81.4k tokens (o200k), of which .rows[].cmd is 55.9k (69%) and the sha256 fields 8.0k, while the rows' actual stdout and stderr are 2.8k; the round-2 verifier brief tells the verifier to read it (scratchpad I58/verify-d2.md:1), so every round pays for the whole check list a second time
+
+Status: open
+Source: supervisor:format-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 format audit): a read-only agent view, e.g. bl show <id> --run [runN], printing per row: id, decider, severity, exit, the derived row verdict and the first lines of stdout/stderr, with no cmd echo and no hashes; the JSON stays the hashed record for bl check. Adds no refusal and weakens none (E11 n/a); the briefs in playbooks/item-loop.md point the verifier at the view instead of the file
+
+## I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round
+
+Status: open
+Source: supervisor:format-audit
+
+- note: candidate fix (unverified, from the 2026-10-26 format audit): bl brief (or a read-only bl rules <id>) prints only the design sections and R-rules the item text and brief.md cite, extracted by rule id from the doc, so the dispatch pastes that slice instead of naming the whole file; risk to weigh: a verifier blind to an uncited rule may miss an interaction, so the slice should name the rules it left out
+

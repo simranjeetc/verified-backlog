@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (42)
+## Queue (49)
 
 - [ ] I4 — the anchor: ledger hash chain with seq, bl anchor printing the head, bl check refusing a ledger behind the anchored seq (R20, R29)
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
@@ -46,6 +46,13 @@
 - [ ] I67 — bl close does not require a blocking decider-bl row in the last round, and there is no bl signoff verb for R22, so an item whose PASS round held only a judge row closed (I58 r1, producer b10.sh last case, reproduced by the verifier; R15, R22)  _(producer:I58/r1)_
 - [ ] I68 — R6 and R25 disagree about the verdicts file's tree line: the design says the tree line must equal the run's tree (references/design-check-list-schema.md:283), but treesMatch accepts a tree that differs only in artefact paths (main.go:2759-2781, citing R25), so a verdicts file naming a tree with a hand-edited TODO.md was recorded PASS (I58 r1, verifier g.sh B1b); the design must say which comparison R6 uses  _(verifier:I58/r1)_
 - [ ] I69 — bl second-check runs its command with no tree guard: a second-check command that edited src/a.txt was accepted, and the next round was then refused under R6, because R26's tree check applies only to bl run (I58 r1, verifier); low value, since the round still refuses  _(verifier:I58/r1)_
+- [ ] I70 — every row of a check list repeats the same scenario setup - mktemp, go build of bl, git init, file, open, checks - because rows must be self-contained: all 113 rows of I58's list do it, the median command is 1220 characters and the list is 161546 bytes, so the verifier spent most of its 20.5 minutes generating boilerplate. The loop needs a shared, verifier-owned or bl-shipped scenario helper so a row states only its scenario and its one assertion; it must not be a fixture the producer wrote  _(supervisor:I58-timing)_
+- [ ] I71 — the playbook runs the producer after the verifier's first dispatch, although the producer never needs the frozen list - only bl claims must come after bl checks (R5): in I58 the producer's 9.3 minutes ran after the verifier's 20.5 instead of beside them  _(supervisor:I58-timing)_
+- [ ] I72 — every row that drives bl builds its own binary: all 113 rows of I58's list run go build (0.13 to 0.53 s each), so bl run builds bl 113 times per run  _(supervisor:I58-timing)_
+- [ ] I73 — bl run executes the rows one after another: I58's 113 self-contained rows took 80398 ms (run.log), about 0.7 s each, on a 15-core machine  _(supervisor:I58-timing)_
+- [ ] I74 — the repository's test suites run once in every dispatch: bl.test.py (11 s) and go test (39 s) ran in verifier dispatch 1, in the producer and again in verifier dispatch 2 of I58, and the 113 rows ran three times (two dry runs by the verifier and bl run)  _(supervisor:I58-timing)_
+- [ ] I75 — the run file an agent must read to judge a round is mostly the row commands copied back from the frozen list: .backlog/evidence/I58-run1.json is 81.4k tokens (o200k), of which .rows[].cmd is 55.9k (69%) and the sha256 fields 8.0k, while the rows' actual stdout and stderr are 2.8k; the round-2 verifier brief tells the verifier to read it (scratchpad I58/verify-d2.md:1), so every round pays for the whole check list a second time  _(supervisor:format-audit)_
+- [ ] I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round  _(supervisor:format-audit)_
 
 ## Blocked (0)
 
