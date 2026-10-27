@@ -25,8 +25,11 @@ for m in $chain; do
   rm -f "$out"
   echo "== $m $(date +%H:%M:%S)" >> "$log"
   if [ "$m" = claude:haiku ]; then
-    perl -e 'alarm shift; exec @ARGV' "$secs" \
+    # Claude Code's sandbox cannot write $TMPDIR, so mktemp and go build get a dir it can write
+    work=$outdir/.dispatch-tmp; mkdir -p "$work/gocache"
+    TMPDIR=$work GOCACHE=$work/gocache perl -e 'alarm shift; exec @ARGV' "$secs" \
       claude -p --model haiku --permission-mode acceptEdits --add-dir "$outdir" \
+        --allowedTools Bash Read Write Edit Grep Glob \
         --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}' \
         >> "$log" 2>&1 < "$prompt"
   elif [ "$m" = deepseek-v4.1-flash ]; then
