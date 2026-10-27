@@ -2,18 +2,21 @@
 # usage: scripts/dispatch.sh <role> <prompt file> <expected output file> [timeout secs]
 # Three cheap models only: gpt-6-luna via codex exec (Codex's workspace-write sandbox, no
 # approval prompts), claude:haiku via claude -p (Claude Code's bash sandbox, edits auto-accepted)
-# and deepseek-v4.1-flash via opencode run (opencode-go). Tries each model in the role's chain;
-# moves on when the run fails, times out, or leaves no output file. CHAIN="m1 m2" overrides it.
+# and deepseek-v4.1-flash via opencode run (opencode-go). Each chain is a primary and one
+# fallback; moves on when the run fails, times out, or leaves no output file. CHAIN="m1 m2"
+# overrides it (at most two models).
 role=$1; prompt=$2; out=$3; secs=${4:-1800}
 case $role in
-  design)   chain="gpt-6-luna deepseek-v4.1-flash claude:haiku" ;;
-  checks)   chain="claude:haiku deepseek-v4.1-flash gpt-6-luna" ;;
-  produce)  chain="gpt-6-luna deepseek-v4.1-flash claude:haiku" ;;
-  verify)   chain="deepseek-v4.1-flash claude:haiku gpt-6-luna" ;;
-  light)    chain="gpt-6-luna deepseek-v4.1-flash claude:haiku" ;;
+  design)   chain="gpt-6-luna deepseek-v4.1-flash" ;;
+  checks)   chain="claude:haiku deepseek-v4.1-flash" ;;
+  produce)  chain="gpt-6-luna deepseek-v4.1-flash" ;;
+  verify)   chain="deepseek-v4.1-flash gpt-6-luna" ;;
+  light)    chain="gpt-6-luna deepseek-v4.1-flash" ;;
   *) echo "dispatch.sh: role must be design, checks, produce, verify or light" >&2; exit 64 ;;
 esac
-chain=${CHAIN:-$chain}; log=$out.log; : > "$log"
+chain=${CHAIN:-$chain}
+set -- $chain; [ $# -le 2 ] || { echo "dispatch.sh: at most two models per chain (primary, fallback)" >&2; exit 64; }
+log=$out.log; : > "$log"
 outdir=$(cd "$(dirname "$out")" && pwd -P)   # the report may live outside the sandbox's roots
 # go build's default cache is outside the sandbox's writable roots
 export GOCACHE=${GOCACHE_DISPATCH:-${TMPDIR:-/tmp}/dispatch-gocache}
