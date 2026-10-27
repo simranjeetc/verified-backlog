@@ -286,7 +286,7 @@ Source: human
 
 ## I47 — a frozen row can hold a command that breaks before it reaches its assertion - a shell syntax error, an option the tool does not have, a command not found - and nothing runs the rows before the freeze, so the break is found only after the claims: I3 s115 (git add -q does not exist in git 2.54), I8 s58 (7 of 10 rows had an escaped pipe under /bin/sh), I17 s184 (stderr redirected into stdout while the expect said stderr). A row whose command broke must be told apart from a row whose assertion was reached and was false, and refused at the freeze
 
-Status: open
+Decision: parked — superseded by I89 (rows become named tests in a verifier-written test file; architecture review 2026-10-26) (not verified)
 Source: supervisor:rebaseline-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): bl checks probes every row on the current tree and refuses a row whose command broke - sh exit 2 or 127, grep exit 2, an unknown-option message - rather than reached its assertion; needs a survey of the 25 frozen lists, because the meaning of exit codes differs from tool to tool
@@ -299,10 +299,11 @@ Source: supervisor:rebaseline-audit
 - note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): add a witness column to checks.tsv - a sample output the row's expect must match; bl checks compiles the RE2 pattern and refuses the row if the witness does not match. Only adds refusals, so the guard gets stricter (E11)
 - note: second instance (verifier:I79/r1, 2026-10-26): the supervisor's own row main-go-gofmt in I79's frozen list had expect 'stdout matches ^gofmt-clean$', which RE2 cannot match against 'gofmt-clean' plus the trailing newline echo prints, so the row could never pass on correct code; it forced I79's restart as I80
 - note: decision (human, 2026-10-26): also fix the matcher - stdout and stderr expects ignore one trailing newline, so a pattern ending in $ matches what echo prints (I79 main-go-gofmt failed correct code on this)
+- note: after I89 most of this class is gone: only shell rows and stderr/stdout expects remain; keep the trailing-newline tolerance
 
 ## I49 — R34 refuses an escaped pipe in a row's command, but not the other places where a pattern's dialect makes a row a no-op: I10 s79 (+ is a literal in a basic regular expression, so the grep counted zero lines), I8 s53 (a sed mutation whose target word is not in the file, so the mutation changed nothing), I23 s242 (a grep for a phrase the file does not contain). Rows that use a dialect's metacharacter where that dialect treats it as a literal, and mutations that change no byte, must be refused at the freeze
 
-Status: open
+Decision: parked — superseded by I89 (rows become named tests in a verifier-written test file; architecture review 2026-10-26) (not verified)
 Source: supervisor:rebaseline-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): extend the R34 scanner - refuse plain grep or sed patterns that contain + ? | or {} outside -E or -F, and steer rows to grep -E or -F; a mutation row must show its target occurs in the file (e.g. a preceding grep -c in a separate row). Only adds refusals (E11)
@@ -325,21 +326,21 @@ Source: supervisor:ideology-audit
 
 ## I52 — the skill's principles have no single home and no ids: they are split between SKILL.md's numbered rules (SKILL.md:19-26), its Principles section (SKILL.md:92) and the P and R rules of references/design-check-list-schema.md section 3, so a change to the skill cannot say which principle it touches and nothing can check that a principle was weakened
 
-Status: open
+Decision: parked — inbox: after v1 (architecture review 2026-10-26: does not move the loop toward brief-in, unattended, verified-out) (not verified)
 Source: supervisor:ideology-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 audit): one file, references/principles.md, eleven principles with stable ids P-style but distinct from the design's precedence ids (they already use P1-P11), never renumbered like brief clauses; SKILL.md and README link to it instead of restating
 
 ## I53 — no record says which principle is enforced by which refusal and which test, so a principle can be left enforced only by prose without anyone noticing: one item in flight is enforced by bl open's lock, views by bl check --views, evidence by its hash (I51 shows the hash is checked but not protected), while independence, the value bar and proof on the real artifact have no mechanical guard at all. Every principle must be mapped to its guard and to a test that fails when the guard is removed, or be marked judge-only
 
-Status: open
+Decision: parked — inbox: after v1 (architecture review 2026-10-26: does not move the loop toward brief-in, unattended, verified-out) (not verified)
 Source: supervisor:ideology-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 audit): a principle-to-guard table in references/principles.md - principle id, rule id, the refusal text, the test name in scripts/bl.test.py or main_test.go; bind each by deleting the guard and showing the test go red; principles with no mechanical guard are listed as judge-only so the gap is visible
 
 ## I54 — nothing stops a change to the skill from weakening a principle: E11 (references/design-check-list-schema.md:723) lets an amendment only make a check-list row stricter, but there is no such rule for the principles themselves, and no verifier is asked whether an item's diff weakens or removes one
 
-Status: open
+Decision: parked — inbox: after v1 (architecture review 2026-10-26: does not move the loop toward brief-in, unattended, verified-out) (not verified)
 Source: supervisor:ideology-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 audit): the verifier playbook adds a blocking judge row to every item that touches scripts/, SKILL.md, playbooks/ or references/ - does this diff weaken or remove any principle id; a yes is not a FAIL but routes the item to playbooks/design-doc.md and the human's sign-off, and a declined loosening is recorded with bl drop
@@ -347,7 +348,7 @@ Source: supervisor:ideology-audit
 
 ## I55 — the order of bl's verbs has no single home: it is enforced by refusals scattered through scripts/cmd/bl/main.go (R5 at 833, 1465, 1619, 1622; R6 at 2463, 3303, among others) and described separately in the prose of playbooks/item-loop.md (243 lines), so the two can drift without anything noticing; and no verb tells the agent what comes next - bl next names only the item and bl show prints only its status and rounds - so every session re-derives the next verb from the playbook
 
-Status: open
+Decision: parked — inbox: after v1 (architecture review 2026-10-26: does not move the loop toward brief-in, unattended, verified-out) (not verified)
 Source: supervisor:ideology-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 audit): one declarative transition table in main.go - stage, derived from the item's event kinds (I45 already observes the stage is derivable), mapped to the verbs it allows - which drives both the out-of-order refusals and a 'next: bl <verb> <id>' line in bl show and bl next; the gate tests the table against every refusal, and the playbook keeps only the steps that need judgment
@@ -380,14 +381,14 @@ Source: human
 
 ## I68 — R6 and R25 disagree about the verdicts file's tree line: the design says the tree line must equal the run's tree (references/design-check-list-schema.md:283), but treesMatch accepts a tree that differs only in artefact paths (main.go:2759-2781, citing R25), so a verdicts file naming a tree with a hand-edited TODO.md was recorded PASS (I58 r1, verifier g.sh B1b); the design must say which comparison R6 uses
 
-Status: open
+Decision: parked — inbox: after v1 (architecture review 2026-10-26: does not move the loop toward brief-in, unattended, verified-out) (not verified)
 Source: verifier:I58/r1
 
 - note: decision (human, 2026-10-26): the code wins - R6 compares the verdicts file's tree with the run's tree outside the paths bl renders itself (TODO.md, PROGRESS.md), as treesMatch does; amend references/design-check-list-schema.md:283 to say so. A hand edit of those views stays caught by bl check --views
 
 ## I70 — every row of a check list repeats the same scenario setup - mktemp, go build of bl, git init, file, open, checks - because rows must be self-contained: all 113 rows of I58's list do it, the median command is 1220 characters and the list is 161546 bytes, so the verifier spent most of its 20.5 minutes generating boilerplate. The loop needs a shared, verifier-owned or bl-shipped scenario helper so a row states only its scenario and its one assertion; it must not be a fixture the producer wrote
 
-Status: open
+Decision: parked — superseded by I89 (rows become named tests in a verifier-written test file; architecture review 2026-10-26) (not verified)
 Source: supervisor:I58-timing
 
 - note: candidate fix (unverified): scripts/rowkit.sh <scenario> - prints the path of a fresh scratch repo with bl built and an item at a named stage (open, frozen, claimed, run, round); rows become one line such as d=$(sh scripts/rowkit.sh run) && cd $d && bl round A1 --rows v.tsv; the helper ships with bl and is tested by the gate, so it is neither the producer's fixture nor rewritten per item
@@ -443,10 +444,11 @@ Source: supervisor:I51-root-cause
 
 ## I78 — an item that goes wrong mid-flight has three different patch paths and none of them is a fresh start: a broken or incomplete frozen list is re-baselined (18 rebaselines in the ledger), an extra file the fix correctly touches needs an amendment (I50, 5 of the 18), and evidence overwritten after its hash (I3-r2.txt, I51) has no path at all, so bl check fails forever. The human's requirement: one recovery path, bl restart <id> --reason, that voids the attempt's rounds and evidence (kept and marked void, so bl check stops failing on them while any other hash mismatch still fails), keeps the code, and starts a fresh blind attempt whose brief is the original brief plus a failure record of every earlier attempt - which checks failed with their output, why (bad check, extra file, damaged evidence, wrong premise), and what changes now (scope widened, premise restated). bl writes the failure record and no agent can edit it. A restart whose input is no larger than an earlier attempt's is refused, because the same input gives the same result and the loop never ends; a third restart is refused and the item is parked for the human. The fresh verifier sees the failure records but never the producer's claims
 
-Status: open
+Decision: parked — paused for I89 (row format) - reopen right after I89 closes; brief kept at .backlog/items/I78/brief.md and in the scratchpad (not verified)
 Source: human
 
 - note: ordering and scope (supervisor, 2026-10-26): must land before I56, or I56's refusal-while-check-fails locks the loop on I3-r2.txt; replaces I50 and I51(a), which are dropped; I51(b) lives in I77 and I51(c) in I56. Design change: run playbooks/design-doc.md first - it retires the rebaseline verb and the amendment rules (E11 and its neighbours in references/design-check-list-schema.md) once I47-I49 stop broken rows at the freeze. I58 is I3's restart done by hand and can be re-expressed as one when this lands
+- note: paused 2026-10-26 for the architecture review: brief recorded (3 design rounds), blind checks and producer stopped by the human; the producer's partial work is in worktree .claude/worktrees/agent-ae81a8e29bd942dd9; resume after I89, writing I78's checks as I89's test file
 
 ## I79 — bl next picks the first open item in filing order (today it names I4), and nothing can say that one item matters more than another or that a new item is urgent, so an unattended loop works the backlog in ID order and a new priority cannot reach it. The human's requirement: priority is a ledger event, not a hand-edited file - bl bump <id> moves an item to the front, bl file --urgent files one there, a later bump overrides an earlier one and both stay in the ledger; bl next orders urgent, then bumped, then filing order, and still honours --after dependencies; the loop asks bl next only between items, so an item in flight is never interrupted; and while bl check fails, bl next names no item, so the loop stops
 
@@ -474,4 +476,26 @@ Status: open
 Source: human
 
 - note: depends on I78's coverage rule change: today R10 counts a file as covered only through a blocking row naming it, so making docs rows advisory would leave SKILL.md and design-doc changes uncovered
+
+## I87 — a brief is broken into items by hand: the human and the supervisor split it in conversation (playbooks/item-loop.md Step 0), and the decisions made there live in notes the blind verifier never reads (94 notes by 2026-10-26; I79's three-tier decision had to be copied into its brief by hand). The human's requirement: bl takes a brief and the human's up-front decisions and produces the items itself - each item with observable clauses and a worked example per clause (I84), its --after dependencies and its scope - checked by design rounds for clauses two readers could build differently before any item opens; the human approves the breakdown once, and every decision recorded then reaches each item's brief, not a note
+
+Status: open
+Source: human
+
+- note: human decision (2026-10-27, architecture): bl must serve the public whatever they start from - a plain brief with no spec tool, or any spec tool's output. Every input is converted to ONE common intake.md that only bl defines and validates (Markdown: requirement -> B-clauses each observable with a worked example, stable ids, --after, and a source anchor path#Lstart-Lend@sha for spec input). NO script adapters (they rot when tools like OpenSpec change): the conversion is an agent step driven by a prompt in the skill, and because a translation can be unfaithful a blind fidelity round (spec or brief vs intake: missing, added, two-reading clauses) is required before bl intake files any item. bl intake --file intake.md validates and files the items; bl check re-hashes each anchored span so a changed spec flags its items. Plain-brief splitting is the same path with no anchors. Open: when an anchored span changes, park the items for the human or restart them (I78)
+- note: human decision (2026-10-27, architecture, supersedes the Markdown part of the previous note): the bl-owned intake is intake.jsonl, optimised for agent reads and writes, with a JSON Schema per record type printed by bl schema intake. Records: source {id,path,lines,sha}, decision {id,text,by}, item {id,title,after[],scope[],source,decisions[]}, clause {item,id,observe,expect,example}. Verbs: bl intake --check --file intake.jsonl (validate, write nothing; each error names line, field and reason so an agent can fix it), bl intake --file intake.jsonl (files the items; each item's brief carries the decisions it references, not notes), bl intake --render (Markdown view the human approves once). Humans review the render, agents edit the JSONL
+
+## I90 — the skill dispatches agents (design rounds, checks writer, producer, verifier) with no config for which model plays which role, so the choice is made by hand each session and a dead model stalls the loop: the first I89 design round on opencode/deepseek-v4-pro hung about 12 h with no output and no fallback; the fallback chain exists only as a scratchpad script; references/second-harness.md:24 names the opencode run command but no roles, chain or timeout. The human's decision (2026-10-27): Claude Code subagents (opus, sonnet, haiku) and opencode-go flash models only
+
+Status: open
+Source: human
+
+- note: candidate fix (unverified, 2026-10-27): scripts/dispatch.sh plus models.conf mapping role -> ordered chain over two harnesses (Claude Code subagents; opencode-go/*-flash); per-model timeout; unattended (stdin /dev/null, prompt says never ask); falls back on non-zero exit, timeout or missing report file; prints the model that answered. Proposed split: brain/verdict opus; design rounds rotate deepseek-v4.1-flash, glm-5.3-flash, qwen3.8-flash, last round sonnet; checks writer glm-5.3-flash; producer deepseek-v4.1-flash; falsifying verifier sonnet; row triage haiku. Prototype: scratchpad oc.sh from the I89 session
+
+## I91 — bl records no model for any step, so the rule that the checks writer and the verifier are independent of the producer cannot be checked: a producer and verifier from the same model family pass unnoticed, and nothing in the ledger shows that every step of I3-I80 ran on Claude
+
+Status: open
+Source: human
+
+- note: candidate fix (unverified, 2026-10-27): bl checks, bl claims and bl round take --model <harness/model>; bl maps a model to its family; bl round refuses when the verifier's family equals the producer's or the checks writer's. Only adds a refusal, so the guard gets stricter (E11). After I89 because both change the checks event
 
