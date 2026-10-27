@@ -7,6 +7,7 @@ Exit status: 0 when every test passes, 1 otherwise.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -195,6 +196,36 @@ def ready(root: Path) -> Path:
     ok(root, "claims", "A1", "--file", str(claims))
     ok(root, "run", "A1")
     return verdicts(root, "S1\tPASS\t", "J1\tPASS\t\"two\"")
+
+
+def item_file(name: str, text: str) -> Path:
+    """A file outside the repository: a file inside it would move the tree the round verifies."""
+    path = Path(tempfile.mkdtemp(prefix="bl-item-")) / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def attempt_one_files(root: Path) -> list[Path]:
+    """The files attempt 1 left behind: the item's own artefacts and its run and round evidence."""
+    items = sorted(p for p in (root / ".backlog" / "items" / "A1").iterdir() if p.is_file())
+    return items + [
+        root / ".backlog" / "evidence" / "A1-run1.json",
+        root / ".backlog" / "evidence" / "A1-r1.txt",
+    ]
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def fail_round(root: Path) -> None:
+    """A code FAIL round: the judge row fails, so the derived verdict does."""
+    rows = verdicts(root, "S1\tPASS\t", 'J1\tFAIL\t"two"')
+    ok(root, "round", "A1", "--verdict", "FAIL", "--cause", "code", "--rows", str(rows))
+
+
+def restart(root: Path, why: str, change: str, reason: str = "bad-check") -> subprocess.CompletedProcess:
+    return ok(root, "restart", "A1", "--reason", reason, "--why", why, "--change", change)
 
 
 # ── init ─────────────────────────────────────────────────────────────────────
@@ -620,9 +651,13 @@ def show_and_schema_emit_valid_json():
     assert schema["causes"] == ["code", "harness", "dispute"], schema
     assert sorted(schema["events"]) == [
         "brief", "bump", "checks", "claims", "close", "defer", "drop", "file",
-        "misclassified", "note", "open", "rank", "rebaseline", "reopen", "round", "run",
-        "second-check", "unbump",
+        "misclassified", "note", "open", "rank", "rebaseline", "reopen", "restart", "round",
+        "run", "second-check", "unbump",
     ], schema
+    assert schema["events"]["restart"]["required"] == [
+        "id", "reason", "why", "change", "attempt", "record", "record_sha",
+    ], schema
+    assert schema["events"]["restart"]["optional"] == [], schema
     assert schema["events"]["bump"]["required"] == ["ids", "by"], schema
     assert schema["events"]["rank"]["required"] == ["ranking", "by"], schema
 
@@ -675,6 +710,103 @@ def the_documented_verbs_are_the_real_verbs():
     used = {v for span in spans for v in re.findall(r"\bbl ([a-z][a-z-]*)", span)}
     invented = used - declared
     assert not invented, f"SKILL.md uses verbs the binary does not have: {sorted(invented)}"
+
+
+# ── restart ──────────────────────────────────────────────────────────────────
+
+
+@test
+def restart_ends_the_attempt_and_starts_the_next():
+    root = fresh()
+    ready(root)
+    fail_round(root)
+    r = restart(root, "row J1 reads the wrong file", "the row names the file it reads")
+    assert r.stdout == "bl: A1 restarted as attempt 2\n", r.stdout
+    shown = ok(root, "show", "A1").stdout.splitlines()
+    assert shown[1].startswith("status: open") and shown[2] == "attempt: 2", shown
+    assert json.loads(ok(root, "show", "A1", "--json").stdout)["Attempt"] == 2
+    event = json.loads((root / ".backlog" / "ledger.jsonl").read_text().splitlines()[-1])
+    assert event["t"] == "restart" and event["attempt"] == 1, event
+    assert event["reason"] == "bad-check" and event["why"] and event["change"], event
+    assert "by" not in event, "the restart records no actor"
+    record = root / event["record"]
+    assert record.exists() and digest(record) == event["record_sha"], event
+    assert ok(root, "next").stdout.startswith("A1"), "a restarted item is eligible again"
+    ok(root, "open", "A1")
+    ok(root, "checks", "A1", "--file", str(item_file("checks.tsv", ROUND_LIST)))
+    assert (root / ".backlog" / "items" / "A1" / "a2" / "checks.tsv").exists()
+
+
+@test
+def restart_keeps_the_earlier_attempts_files_and_carries_its_record():
+    root = fresh()
+    ready(root)
+    fail_round(root)
+    before = {p: digest(p) for p in attempt_one_files(root)}
+    restart(root, "the list is the wrong premise", "a new list")
+    ok(root, "open", "A1")
+    ok(root, "checks", "A1", "--file", str(item_file("checks.tsv", ROUND_LIST)))
+    ok(root, "claims", "A1", "--file", str(item_file("claims.md", "claims\n")))
+    ok(root, "run", "A1")
+    after = {p: digest(p) for p in before}
+    assert before == after, "attempt 2 rewrote a file of attempt 1"
+    brief = (root / ".backlog" / "items" / "A1" / "a2" / "brief.md").read_bytes()
+    record = (root / ".backlog" / "items" / "A1" / "a1-failure.md").read_bytes()
+    assert brief.endswith(record), "attempt 2's brief must end with attempt 1's record"
+
+
+@test
+def restart_excuses_the_damage_its_failure_record_lists():
+    root = fresh()
+    rows = ready(root)
+    ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
+    ok(root, "close", "A1", "--commit", head(root))
+    evidence = root / ".backlog" / "evidence" / "A1-r1.txt"
+    evidence.write_text(evidence.read_text() + "tampered\n", encoding="utf-8")
+    r = run(root, "check")
+    assert r.returncode == 1 and "A1 round .backlog/evidence/A1-r1.txt does not match its hash" in r.stdout, r.stdout
+    restart(root, "the round evidence was overwritten", "bl check reports it", reason="damaged-evidence")
+    r = run(root, "check")
+    assert r.returncode == 0, f"the record must excuse the damage it lists: {r.stdout}"
+    shown = ok(root, "show", "A1").stdout
+    assert "status: open" in shown and "commit:" not in shown, shown
+    evidence.write_text(evidence.read_text() + "again\n", encoding="utf-8")
+    assert run(root, "check").returncode == 1, "a second edit is not the damage the record lists"
+
+
+@test
+def restart_limit_parks_the_item_for_a_human():
+    root = fresh()
+    ready(root)
+    for n in (1, 2):
+        fail_round(root)
+        restart(root, f"attempt {n} why", f"attempt {n} change")
+        ok(root, "open", "A1")
+        ok(root, "checks", "A1", "--file", str(item_file("checks.tsv", ROUND_LIST)))
+        ok(root, "claims", "A1", "--file", str(item_file("claims.md", "claims\n")))
+        ok(root, "run", "A1")
+    fail_round(root)
+    before = ledger_lines(root)
+    r = run(root, "restart", "A1", "--reason", "bad-check", "--why", "the third", "--change", "the third change")
+    assert r.returncode == 2 and r.stderr.startswith("bl: refused"), r.stderr
+    assert ledger_lines(root) == before + 1, "the limit refusal appends exactly one event"
+    assert "restart limit" in (root / "PROGRESS.md").read_text(), "the defer reason names the limit"
+    assert ok(root, "next").stdout.strip() == "none", "a parked item is not named"
+    ok(root, "reopen", "A1")
+    r = run(root, "restart", "A1", "--reason", "bad-check", "--why", "the third", "--change", "the third change")
+    assert r.returncode == 2 and "restart limit" in (root / "PROGRESS.md").read_text()
+
+
+@test
+def restart_refusals_leave_the_ledger_alone():
+    root = fresh()
+    ready(root)
+    refused(root, "restart", "Z9", "--reason", "bad-check", "--why", "x", "--change", "y", match="unknown item")
+    refused(root, "restart", "A1", "--reason", "Bad-Check", "--why", "x", "--change", "y", match="--reason must be one of")
+    refused(root, "restart", "A1", "--reason", "bad-check", "--why", " ", "--change", "y", match="why is empty")
+    refused(root, "restart", "A1", "--reason", "bad-check", "--why", "x", "--change", "y", match="no FAIL round")
+    ok(root, "defer", "A1", "--reason", "later")
+    refused(root, "restart", "A1", "--reason", "bad-check", "--why", "x", "--change", "y", match="parked")
 
 
 # ── legacy import ────────────────────────────────────────────────────────────

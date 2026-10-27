@@ -567,6 +567,83 @@ when that item is not the item in flight, and reports R35. The loop keeps one it
 the lock is what keeps it that way: two items in flight at once would each hold a half-written tree, and the run
 that pins a tree cannot tell which half it pinned. A refusal under R35 writes nothing.
 
+**R36 — an attempt is a new premise, and a restart starts it.** `bl restart A1 --reason <class> --why <text>
+--change <text>` ends the item's current attempt and starts the next one. `<class>` is exactly one of `bad-check`,
+`extra-file`, `damaged-evidence`, `wrong-premise`; `--why` and `--change` are single-line texts. Every item starts in
+attempt 1, each accepted restart adds 1, and the event records the attempt it **ends**, the record it wrote, and no
+actor.
+
+What a restart clears is everything that belongs to the attempt: the brief, the check list and the claims it
+recorded, its scope and before-state, and — for a closed item — the status (closed becomes open), the commit and the
+reason. It keeps the id, text, source, `--after`, notes, priority and the whole event history. The item is open and out
+of flight, so `bl next` can name it and `bl open` records the scope and before-state anew; `bl brief`, `bl checks`,
+`bl claims`, `bl run` and `bl round` are then accepted, the last five only after `bl open`.
+
+Everything the ended attempt produced is **void**: a void round, run or second check satisfies no rule of the new
+attempt. `bl round` cannot cite a void run, a void PASS round cannot let `bl close` succeed, and every R19 cap and
+every rule that reads the last round (R18, `bl close`, `bl check`'s closed-without-PASS test) reads the current
+attempt's rounds only. Round and run numbers stay item-wide, so attempt 2's first round after attempt 1's r1 and r2 is
+r3, with evidence `.backlog/evidence/A1-r3.txt`; `bl show` marks a void round ` void` and the `rounds:` summary and
+`bl status` count the current attempt only.
+
+Before it appends the restart event, `bl restart` writes the failure record of the attempt it ends to
+`.backlog/items/<id>/a<n>-failure.md` and records the path and its sha256; no agent writes it. The record is exactly
+these LF-terminated lines, with no timestamp:
+`# Failure record: <id> attempt <n>`, `class: <class>`, `why: <why>`, `change: <change>`, `rows:`, one
+`- <row id> exit <code>` per row that is blocking in the attempt's list and `FAIL` in the evidence of the attempt's
+last FAIL round that carries rows, each followed by at most 20 output lines prefixed `  | ` taken from the run that
+round names (stdout first, split on LF with a trailing empty segment dropped, a binary stream as the one line
+`  | (binary output)`, and `  | ... (truncated)` as the 21st line when more were cut), then `artefacts:` and one
+`- <path> recorded <sha256> now <sha256 or missing>` per path an event of the attempt recorded whose bytes no longer
+match the hash of the latest such event. An empty section is `- (none)`.
+
+The brief of attempt n ≥ 2 is the brief text followed by the failure record of every earlier attempt, oldest first,
+byte for byte: `bl open` writes the item's brief and then the records, and `bl brief` stores the submitted file and
+then the records, adding its missing final newline first. The restart itself writes no brief. Attempt n's files live
+under `.backlog/items/<id>/a<n>/`; attempt 1 keeps the paths it always had, so no later attempt can rewrite an earlier
+one's file.
+
+`bl check` excuses the damage a failure record lists, and only that damage: a listed path passes while its bytes
+still hash to the record's `now` value, or while it is still `missing` if the record says so, and the excusals of all
+the item's records accumulate. Every other file of a void attempt is re-hashed against the latest event that named it
+and a mismatch is a `FAIL <id> <kind> <path> does not match its hash` line (or `is missing`), exit 1, never a
+refusal; the current attempt's artefacts are checked as today, and a failure record is verified with no excusal at
+all, so an edited record is always reported. `bl restart` itself never refuses because an artefact
+mismatches — the record it writes is what excuses the damage.
+
+The refusals are checked in order, each prints `bl: refused`, and each leaves the ledger byte-identical: the id is
+unknown; the item is declined; the item is parked (it needs `bl reopen` first, which does not change the attempt); the
+item is closed and the class is not `damaged-evidence`; the class is missing or not one of the four; `--why` or
+`--change` is missing or empty; `--change` equals an earlier restart's `--change`; the restart limit; and nothing to
+learn from — the attempt has no FAIL round of any cause and no file the artefact scan would list (for a closed item,
+only a mismatched or missing file counts). An item may be restarted twice, so it may have three attempts. A restart of
+an open item in its third attempt **writes**: it appends exactly one `defer` event whose reason contains `restart
+limit` and changes nothing else, so the item is parked for a human and leaves flight; a closed item in the third
+attempt is refused with no write. A ledger with no `restart` event parses and behaves as it did before this rule.
+
+The four worked examples:
+
+- **E36a — the attempt ends and the next one starts.** A1 is in attempt 1 and its round r1 failed with cause `code`.
+  `bl restart A1 --reason bad-check --why "row R3 expects ^ok$ and cannot match the trailing newline echo prints"
+  --change "stdout patterns allow a trailing newline"` exits 0, prints `bl: A1 restarted as attempt 2`, and
+  `bl show A1` prints `attempt: 2` immediately after its `status:` line, before `reason:`, `after:` and `source:`;
+  `bl show --json` gives the item the integer field `Attempt`. An item never restarted prints no `attempt:` line. In
+  attempt 2 the `bl open` that the claims refused under R5 is accepted, and `bl checks` then lands in `a2/checks.tsv`.
+- **E36b — damage is excused once, by the record that lists it.** A1 closed after a PASS round r2, then
+  `.backlog/evidence/A1-r2.txt` was overwritten: `bl check` exits 1 with `A1 round .backlog/evidence/A1-r2.txt does
+  not match its hash`. `bl restart A1 --reason damaged-evidence --why w --change c` exits 0 and `bl check` then exits
+  0, `bl show A1` prints `status: open` and no `commit:` line. Editing A1-r2.txt again, or editing attempt 1's run
+  file, makes `bl check` exit 1 naming that file.
+- **E36c — nothing to learn from is a refusal that writes nothing.** A freshly opened A1 with a brief, a check list
+  and no round, nothing edited by hand: `bl restart A1 --reason bad-check --why x --change y` exits 2 and the
+  ledger's sha256 is unchanged. The same holds for an unknown id, a declined or a parked item, a closed item whose
+  class is not `damaged-evidence`, a class that is not one of the four, an empty or multi-line `--why`/`--change`,
+  and a `--change` an earlier restart already used.
+- **E36d — the limit parks the item.** A1 in attempt 3 with a FAIL round: `bl restart A1 --reason bad-check --why a
+  --change b` exits 2, `bl show A1` prints `status: parked` and a reason containing `restart limit`, the ledger has
+  exactly one more line, and `bl next` does not name A1. After `bl reopen A1` the same call parks it again. A closed
+  item in attempt 3 is refused with no write at all.
+
 **P1 is a rule about the whole list, not about one row.** The precedence in §4 applies across the list: if one row
 breaks R1 and another breaks R8, the refusal names R1. Evaluating rule by rule and row by row lets the rule that
 happens to sit higher in the file win, which is not the same thing as the earliest broken rule. This is still an

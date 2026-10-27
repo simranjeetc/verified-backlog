@@ -23,6 +23,7 @@
 //	bl drop D9 --reason "cosmetic; not worth it"
 //	bl defer O4 --reason "awaiting triage"
 //	bl reopen O4
+//	bl restart A1 --reason bad-check --why "..." --change "..."  (ends the attempt, starts the next)
 //	bl note A1 --text "deferred because ..."
 //	bl bump A3 A1 | bl unbump A3                          (the human's priority list: tier 1)
 //	bl rank --file ranking.tsv                            (the loop's ranking: tier 2)
@@ -143,6 +144,15 @@ type Event struct {
 	Computed string `json:"computed,omitempty"`
 	Cmd      string `json:"cmd,omitempty"`
 	Expect   string `json:"expect,omitempty"`
+	// The restart (R36): the failure class it records, the reason and the change, the number of
+	// the attempt it ends, and the failure record it wrote for that attempt. Attempt is a
+	// pointer so that the number 1 is recorded rather than omitted — an event that carries no
+	// attempt does not carry the field at all.
+	Attempt   *int   `json:"attempt,omitempty"`
+	Why       string `json:"why,omitempty"`
+	Change    string `json:"change,omitempty"`
+	Record    string `json:"record,omitempty"`
+	RecordSHA string `json:"record_sha,omitempty"`
 }
 
 // Ranked is one line of the loop's ranking: an item and why it ranks where it does.
@@ -182,13 +192,51 @@ type Item struct {
 	// The seq of the latest re-baseline: a re-baseline is a new premise, so it is recorded
 	// as the premise it is. It resets no count — the round budget belongs to the item.
 	RebaselineSeq int
+	// The attempt (R36). Every item starts in attempt 1; each accepted restart adds 1. The
+	// restarts of the attempts the item has ended are kept in order, and restartSeq is the seq
+	// of the latest of them: a round, a run or a second check at or before it belongs to an
+	// attempt the restart voided.
+	Attempt    int
+	Restarts   []Event
+	restartSeq int
 }
 
-// causeRounds counts the item's rounds of one cause over its whole life (R19). A re-baseline
-// is a new premise, not a new item, so it resets no count.
+// attemptRounds returns the rounds of the item's current attempt (R36): every round after the
+// latest restart. A restart voids the rounds of the attempt it ends, so the round cap, the
+// state rules and `bl status` read these, not the item's whole history.
+func (i *Item) attemptRounds() []Event {
+	var out []Event
+	for _, r := range i.Rounds {
+		if r.Seq > i.restartSeq {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// attemptRuns returns the runs of the item's current attempt (R36). Run numbers stay item-wide,
+// so the numbering continues after a restart; only the runs the new attempt may cite are here.
+func (i *Item) attemptRuns() []Event {
+	var out []Event
+	for _, r := range i.Runs {
+		if r.Seq > i.restartSeq {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// void reports whether a round belongs to an attempt a restart ended (R36). A void round stays
+// in the item's history — which is why the numbering continues — and satisfies no rule of the
+// attempt that replaced it.
+func (i *Item) void(ev Event) bool { return ev.Seq <= i.restartSeq }
+
+// causeRounds counts the item's rounds of one cause in the current attempt (R19, R36). A
+// re-baseline is a new premise and resets no count; a restart ends the attempt, so the count
+// starts again with the next one.
 func (i *Item) causeRounds(cause string) int {
 	n := 0
-	for _, r := range i.Rounds {
+	for _, r := range i.attemptRounds() {
 		if r.Cause == cause {
 			n++
 		}
@@ -196,16 +244,16 @@ func (i *Item) causeRounds(cause string) int {
 	return n
 }
 
-// codeFails counts the code rounds the item has spent over its whole life (R19).
+// codeFails counts the code rounds the current attempt has spent (R19).
 func (i *Item) codeFails() int {
 	return i.causeRounds("code")
 }
 
-// passRounds counts the item's PASS rounds over its whole life (R19). A PASS carries no
-// cause, so it is counted here: a PASS is a round, and it spends the budget.
+// passRounds counts the current attempt's PASS rounds (R19). A PASS carries no cause, so it is
+// counted here: a PASS is a round, and it spends the budget.
 func (i *Item) passRounds() int {
 	n := 0
-	for _, r := range i.Rounds {
+	for _, r := range i.attemptRounds() {
 		if r.Verdict == "PASS" {
 			n++
 		}
@@ -214,10 +262,11 @@ func (i *Item) passRounds() int {
 }
 
 func (i *Item) last() *Event {
-	if len(i.Rounds) == 0 {
+	rounds := i.attemptRounds()
+	if len(rounds) == 0 {
 		return nil
 	}
-	return &i.Rounds[len(i.Rounds)-1]
+	return &rounds[len(rounds)-1]
 }
 
 // Refusal is a call the ledger will not accept. Nothing is written.
@@ -258,6 +307,23 @@ func newPaths(root string) paths {
 
 // itemFile is the repository-relative path of an item's artefact, as recorded in the ledger.
 func itemFile(id, name string) string { return backlogDir + "/" + itemsDir + "/" + id + "/" + name }
+
+// attemptFile is the path of one attempt's artefact (R36): attempt 1 keeps the path it has
+// always had, and every later attempt's files live under a<n>/, so a later attempt never
+// rewrites an earlier one's file.
+func attemptFile(id string, attempt int, name string) string {
+	if attempt <= 1 {
+		return itemFile(id, name)
+	}
+	return itemFile(id, "a"+strconv.Itoa(attempt)+"/"+name)
+}
+
+// failureFile is the path of the record a restart writes for the attempt it ends (R36). It sits
+// beside the attempt's directory rather than in it: the record is what attempt n left behind,
+// and attempt n+1's brief quotes it.
+func failureFile(id string, attempt int) string {
+	return itemFile(id, "a"+strconv.Itoa(attempt)+"-failure.md")
+}
 
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
@@ -382,7 +448,7 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			}
 			it := &Item{
 				ID: ev.ID, Text: ev.Text, After: ev.After, Source: ev.Source,
-				Status: "open", FiledAt: ev.At,
+				Status: "open", FiledAt: ev.At, Attempt: 1,
 			}
 			byID[key] = it
 			order = append(order, it)
@@ -456,6 +522,35 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Status, it.Reason, it.Opened = "parked", ev.Reason, false
 		case "reopen":
 			it.Status, it.Reason, it.Opened = "open", "", false
+		case "restart":
+			// R36: a restart ends the attempt it names and starts the next one. Everything that
+			// belongs to the attempt goes — the brief, the check list, the claims, the scope and
+			// the before-state — and the item leaves flight. The rounds, the runs and the second
+			// checks stay in the history, where they are void: the numbering continues and the
+			// evidence of the attempt that ended is still on disk to be checked.
+			if ev.Attempt == nil {
+				return nil, nil, corrupt("restart event for %s names no attempt", ev.ID)
+			}
+			// A restart ends the attempt the item is in — never another one, or the void markers
+			// and the numbering would disagree about which rounds belong to which attempt.
+			if *ev.Attempt != it.Attempt {
+				return nil, nil, corrupt("restart event for %s ends attempt %d, but the item is in attempt %d", ev.ID, *ev.Attempt, it.Attempt)
+			}
+			it.Attempt, it.restartSeq = *ev.Attempt+1, ev.Seq
+			it.Restarts = append(it.Restarts, ev)
+			it.Opened = false
+			it.Brief, it.BriefSHA = "", ""
+			it.Checks, it.ChecksSHA = "", ""
+			it.Claims, it.ClaimsSHA = "", ""
+			it.Scope, it.ScopeIgnored = nil, nil
+			it.BeforeTree, it.IgnoredBefore = "", nil
+			it.RebaselineSeq = 0
+			// a closed item is reopened by the restart, and the close's commit goes with the
+			// attempt it recorded
+			if it.Status == "closed" {
+				it.Status, it.Commit = "open", ""
+			}
+			it.Reason = ""
 		case "note":
 			it.Notes = append(it.Notes, ev.Text)
 		}
@@ -960,8 +1055,8 @@ func cmdOpen(root string, a args) error {
 	if cur != nil {
 		return refuse("%s is already in flight — close, drop or defer it first", cur.ID)
 	}
-	brief := briefText(it.Text)
-	rel := itemFile(it.ID, briefName)
+	brief := attemptBrief(briefText(it.Text), failureRecords(root, it))
+	rel := attemptFile(it.ID, it.Attempt, briefName)
 	// R20: the stored brief is what the ledger says it is. Re-hash it before it is overwritten —
 	// the same helper every other verb that touches a frozen artefact uses, so there is one
 	// comparison, not three. An item with no recorded brief has nothing to re-hash.
@@ -1025,6 +1120,38 @@ func briefClauses(text string) map[string]bool {
 	return out
 }
 
+// failureRecords is the bytes of every failure record the item's restarts wrote, oldest first,
+// as they are on disk (R36). It is what attempt n's brief carries after its own text: the
+// records of every attempt before it, byte for byte. A record that cannot be read contributes
+// nothing here — `bl check` is what reports it.
+func failureRecords(root string, it *Item) string {
+	var b strings.Builder
+	for _, r := range it.Restarts {
+		if r.Record == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(r.Record)))
+		if err != nil {
+			continue
+		}
+		b.Write(data)
+	}
+	return b.String()
+}
+
+// attemptBrief is the brief an attempt records (R36): the text, then the failure records of
+// every attempt before it. A text whose last line has no newline gets one first, so the first
+// record always starts a line of its own; nothing is de-duplicated.
+func attemptBrief(text, records string) string {
+	if records == "" {
+		return text
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text + records
+}
+
 // cmdBrief records the item's brief. The text comes from --file, or from stdin when --file is
 // absent. An amended brief is a new event with a new hash; the earlier event keeps its own hash
 // (R24). Once the producer has claimed, the brief is frozen (R5). Before it overwrites the stored
@@ -1066,7 +1193,8 @@ func cmdBrief(root string, a args) error {
 	if len(briefClauses(text)) == 0 {
 		return refuseRule("R2", "the brief has no numbered clause — a clause is a line matching %s", clauseRe.String())
 	}
-	rel := itemFile(it.ID, briefName)
+	text = attemptBrief(text, failureRecords(root, it))
+	rel := attemptFile(it.ID, it.Attempt, briefName)
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
 		return err
 	}
@@ -1546,7 +1674,7 @@ func amendGuards(root string, it *Item, rows []checkRow) error {
 	if changes && it.Claims != "" {
 		return refuseRule("R5", "%s already has a claims event — the check list's content is frozen; only an amendment that adds a row is allowed", it.ID)
 	}
-	for _, r := range it.Rounds {
+	for _, r := range it.attemptRounds() {
 		if r.Verdict == "PASS" {
 			return refuseRule("R4", "%s already has a PASS round — an amendment is refused once the item has passed", it.ID)
 		}
@@ -1619,7 +1747,7 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	rel := itemFile(it.ID, checksName)
+	rel := attemptFile(it.ID, it.Attempt, checksName)
 	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text))}
 	if amend {
 		ev.PrevSHA = prevSHA
@@ -1699,7 +1827,7 @@ func cmdRebaseline(root string, a args) error {
 	if it.Checks == "" {
 		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
 	}
-	rel := itemFile(it.ID, checksName)
+	rel := attemptFile(it.ID, it.Attempt, checksName)
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
 		return err
 	}
@@ -1753,7 +1881,7 @@ func cmdClaims(root string, a args) error {
 	if strings.TrimSpace(string(data)) == "" {
 		return refuse("--file %s is empty", path)
 	}
-	rel := itemFile(it.ID, claimsName)
+	rel := attemptFile(it.ID, it.Attempt, claimsName)
 	if err := atomicWrite(filepath.Join(root, rel), string(data)); err != nil {
 		return err
 	}
@@ -3554,7 +3682,7 @@ func cmdRound(root string, a args) error {
 	if it.Claims == "" {
 		return refuseRule("R6", "%s has no claims event — the claims are frozen before the round", it.ID)
 	}
-	for _, r := range it.Rounds {
+	for _, r := range it.attemptRounds() {
 		if r.Run == runEv.Run {
 			return refuseRule("R6", "the run %s has already been consumed by a round", runEv.Run)
 		}
@@ -3713,12 +3841,14 @@ func frozenRows(root string, it *Item) ([]checkRow, error) {
 	return rows, nil
 }
 
-// theRun returns the item's latest run: the event that recorded it.
+// theRun returns the current attempt's latest run: the event that recorded it (R36). A run of an
+// attempt a restart ended is void, and a round of the new attempt cannot cite it.
 func theRun(it *Item) (Event, bool) {
-	if len(it.Runs) == 0 {
+	runs := it.attemptRuns()
+	if len(runs) == 0 {
 		return Event{}, false
 	}
-	return it.Runs[len(it.Runs)-1], true
+	return runs[len(runs)-1], true
 }
 
 // recordHarnessRound records a harness round: the verifier did not run, so the round carries
@@ -4035,6 +4165,471 @@ func cmdReopen(root string, a args) error {
 	return nil
 }
 
+// ── the restart (R36) ────────────────────────────────────────────────────────
+
+// maxAttempts is the number of attempts one item may have: the first one and two restarts. A
+// restart of an item in its last attempt parks it for a human instead.
+const maxAttempts = 3
+
+// restartClasses are the four failure classes a restart records (R36). The class is recorded, not
+// cross-checked against the evidence: it says what the producer concluded, and the failure record
+// beside it holds the rows and the damaged files the next reader can check.
+var restartClasses = []string{"bad-check", "extra-file", "damaged-evidence", "wrong-premise"}
+
+func validRestartClass(class string) bool {
+	for _, c := range restartClasses {
+		if c == class {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFailRound reports whether the current attempt has a FAIL round of any cause (R36).
+func hasFailRound(it *Item) bool {
+	for _, r := range it.attemptRounds() {
+		if r.Verdict == "FAIL" {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdRestart ends the item's current attempt and starts the next one (R36). It writes the failure
+// record of the attempt it ends, appends one `restart` event naming the record, and leaves the
+// item open and out of flight, with everything that belongs to the attempt cleared — so the next
+// attempt opens its own brief, freezes its own list and makes its own claims, and none of the
+// earlier attempt's files is rewritten.
+//
+// The refusals are in B8's order, one rule per call: an unknown id, the item's state, the class,
+// the texts, the limit, and whether the attempt has anything to teach. The limit is the one
+// refusal that writes: it parks the item for a human, because a fourth attempt is not the
+// binary's call. A restart never refuses because an artefact's hash does not match — the record
+// it is about to write is what excuses that damage.
+func cmdRestart(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := lookup(byID, a.pos(0))
+	if err != nil {
+		return err
+	}
+	class := strings.TrimSpace(a.get("reason"))
+	switch it.Status {
+	case "declined":
+		return refuseRule("R36", "%s is declined — a restart ends an attempt that was worked, and a decline was never worked", it.ID)
+	case "parked":
+		return refuseRule("R36", "%s is parked — run `bl reopen %s` first; a reopen does not change the attempt", it.ID, it.ID)
+	}
+	if it.Status == "closed" && class != "damaged-evidence" {
+		return refuseRule("R36", "%s is closed — only `--reason damaged-evidence` restarts a closed item, because the close recorded a PASS its evidence no longer supports", it.ID)
+	}
+	if !validRestartClass(class) {
+		return refuseRule("R36", "--reason must be one of %s, not %q", strings.Join(restartClasses, "|"), class)
+	}
+	why, err := cleanText(a.get("why"), "why")
+	if err != nil {
+		return err
+	}
+	change, err := cleanText(a.get("change"), "change")
+	if err != nil {
+		return err
+	}
+	for _, r := range it.Restarts {
+		if strings.TrimSpace(r.Change) == change {
+			return refuseRule("R36", "%s already restarted with the change %q — a restart that changes nothing new is a fix round in disguise", it.ID, change)
+		}
+	}
+	// The limit: three attempts. The refusal that records it parks the item, so a fourth attempt
+	// is a human's decision; it comes before the "nothing to learn" check, so an item in its last
+	// attempt is parked whether or not it has a FAIL round.
+	if it.Attempt >= maxAttempts {
+		if it.Status == "closed" {
+			return refuseRule("R36", "%s is closed and in attempt %d — the restart limit is %d attempts, so a human decides what happens next", it.ID, it.Attempt, maxAttempts)
+		}
+		reason := fmt.Sprintf("restart limit: attempt %d is the last of %d, so a human decides what happens next", it.Attempt, maxAttempts)
+		if _, err := appendEvent(root, Event{T: "defer", ID: it.ID, Reason: reason}); err != nil {
+			return err
+		}
+		return refuseRule("R36", "%s has spent its two restarts (attempt %d) — the restart limit parks it for a human to decide", it.ID, it.Attempt)
+	}
+	// Nothing to learn from: no FAIL round of any cause, and nothing the artefact scan would list.
+	// A closed item's passing round is not a reason to restart it — only damage is.
+	damaged := damagedArtefacts(root, events, it)
+	if it.Status == "closed" {
+		if len(damaged) == 0 {
+			return refuseRule("R36", "%s is closed and its artefacts are intact — there is no damage for a restart to excuse", it.ID)
+		}
+	} else if !hasFailRound(it) && len(damaged) == 0 {
+		return refuseRule("R36", "%s attempt %d has no FAIL round and no damaged artefact — fix the item instead of restarting it", it.ID, it.Attempt)
+	}
+	// The failure record is written before the event that names it, so an event never names a
+	// record that is not there.
+	n := it.Attempt
+	rel := failureFile(it.ID, n)
+	body := failureRecordText(root, events, it, class, why, change)
+	if err := atomicWrite(filepath.Join(root, rel), body); err != nil {
+		return err
+	}
+	ev := Event{
+		T: "restart", ID: it.ID, Reason: class, Why: why, Change: change,
+		Attempt: &n, Record: rel, RecordSHA: shaHex([]byte(body)),
+	}
+	if _, err := appendEvent(root, ev); err != nil {
+		return err
+	}
+	fmt.Printf("bl: %s restarted as attempt %d\n", it.ID, n+1)
+	return nil
+}
+
+// failureRecordText is the record a restart writes for the attempt it ends (R36): the class, the
+// reason, the change, the failing blocking rows of the attempt's last FAIL round that carries
+// rows, and every artefact of the attempt whose bytes no longer match the hash its latest event
+// recorded. It holds no timestamp, so the same attempt written twice is the same bytes.
+func failureRecordText(root string, events []Event, it *Item, class, why, change string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Failure record: %s attempt %d\n", it.ID, it.Attempt)
+	fmt.Fprintf(&b, "class: %s\n", class)
+	fmt.Fprintf(&b, "why: %s\n", why)
+	fmt.Fprintf(&b, "change: %s\n", change)
+	b.WriteString("rows:\n")
+	rows := failureRows(root, it)
+	if len(rows) == 0 {
+		b.WriteString("- (none)\n")
+	}
+	for _, line := range rows {
+		b.WriteString(line)
+	}
+	b.WriteString("artefacts:\n")
+	arts := damagedArtefacts(root, events, it)
+	if len(arts) == 0 {
+		b.WriteString("- (none)\n")
+	}
+	for _, line := range arts {
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// failureRows is the `rows:` block of a failure record: the rows that are blocking in the
+// attempt's check list and FAIL in the evidence of the attempt's last FAIL round that carries
+// rows, with the exit code and the output the run that round names recorded.
+//
+// The files are read as they are on disk, hashes unverified: the record describes what is there.
+// A file that is missing or does not parse, or a row the run file has no record of, yields no
+// line for that row — the record does not invent what it could not read.
+func failureRows(root string, it *Item) []string {
+	if it.Checks == "" {
+		return nil
+	}
+	list, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(it.Checks)))
+	if err != nil {
+		return nil
+	}
+	frozen, err := parseChecks(string(list))
+	if err != nil {
+		return nil
+	}
+	round, ok := lastFailRoundWithRows(it)
+	if !ok {
+		return nil
+	}
+	verdicts := evidenceVerdicts(root, round.Rows)
+	if verdicts == nil {
+		return nil
+	}
+	rf, ok := runFileOf(root, it.ID, round.Run)
+	if !ok {
+		return nil
+	}
+	observed := map[string]runRow{}
+	for _, r := range rf.Rows {
+		observed[r.ID] = r
+	}
+	var out []string
+	for _, row := range frozen {
+		id := row.f["id"]
+		if row.f["severity"] != "blocking" || verdicts[id] != "FAIL" {
+			continue
+		}
+		rec, ok := observed[id]
+		if !ok {
+			continue
+		}
+		out = append(out, fmt.Sprintf("- %s exit %d\n", id, rec.Exit))
+		for _, line := range outputLines(rec) {
+			out = append(out, "  | "+line+"\n")
+		}
+	}
+	return out
+}
+
+// lastFailRoundWithRows is the attempt's last FAIL round that wrote an evidence file — the round
+// whose rows a failure record reads (R36).
+func lastFailRoundWithRows(it *Item) (Event, bool) {
+	rounds := it.attemptRounds()
+	for i := len(rounds) - 1; i >= 0; i-- {
+		if rounds[i].Verdict == "FAIL" && rounds[i].Rows != "" {
+			return rounds[i], true
+		}
+	}
+	return Event{}, false
+}
+
+// evidenceVerdicts reads the row-verdicts out of an evidence file, by column name, as they are on
+// disk. A file that cannot be read, or that holds no header, yields nil.
+func evidenceVerdicts(root, rel string) map[string]string {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	header := strings.Split(strings.TrimRight(lines[0], "\r"), "\t")
+	out := map[string]string{}
+	for _, raw := range lines[1:] {
+		cells := strings.Split(strings.TrimRight(raw, "\r"), "\t")
+		if len(cells) != len(header) {
+			continue
+		}
+		id, verdict := "", ""
+		for i, h := range header {
+			switch h {
+			case "id":
+				id = cells[i]
+			case "row_verdict":
+				verdict = cells[i]
+			}
+		}
+		if id != "" {
+			out[id] = verdict
+		}
+	}
+	return out
+}
+
+// runFileOf reads one of the item's run files as it is on disk.
+func runFileOf(root, id, run string) (runFile, bool) {
+	rel, ok := runFileRel(id, run)
+	if !ok {
+		return runFile{}, false
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return runFile{}, false
+	}
+	var rf runFile
+	if err := json.Unmarshal(data, &rf); err != nil {
+		return runFile{}, false
+	}
+	return rf, true
+}
+
+// outputLines is a row's output as record lines: stdout first, then stderr, each split on LF with
+// one trailing empty segment dropped, so `ok\n` is one line. A stream that was not UTF-8 is the
+// one line `(binary output)`. At most 20 lines are kept per row across both streams, and when
+// more were cut the 21st says so.
+func outputLines(rec runRow) []string {
+	lines := append(streamLines(rec, true), streamLines(rec, false)...)
+	const limit = 20
+	if len(lines) > limit {
+		lines = append(append([]string{}, lines[:limit]...), "... (truncated)")
+	}
+	return lines
+}
+
+// streamLines is one stream of a row's output as lines: a binary stream is the single line
+// `(binary output)`, and a text stream is split on LF with one trailing empty segment dropped.
+func streamLines(rec runRow, stdout bool) []string {
+	s, binary := rec.Stdout, rec.StdoutBinary
+	if !stdout {
+		s, binary = rec.Stderr, rec.StderrBinary
+	}
+	if binary {
+		return []string{"(binary output)"}
+	}
+	lines := strings.Split(s, "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines
+}
+
+// damagedArtefacts is the `artefacts:` block of a failure record, and the scan a restart refuses
+// on when it lists nothing. It covers every path an event of the attempt recorded — the brief,
+// the check list, the claims, the run file and the round evidence — whose bytes no longer match
+// the hash the LATEST event of the attempt naming that path recorded: one line per path, in the
+// order the paths were first recorded. A brief or a list amended in place is not listed, because
+// the amendment's own event is the latest and the file matches it.
+func damagedArtefacts(root string, events []Event, it *Item) []string {
+	var order []string
+	latest := map[string]string{}
+	add := func(rel, sha string) {
+		if rel == "" || sha == "" {
+			return
+		}
+		if _, seen := latest[rel]; !seen {
+			order = append(order, rel)
+		}
+		latest[rel] = sha
+	}
+	for _, ev := range events {
+		if ev.Seq <= it.restartSeq || !strings.EqualFold(ev.ID, it.ID) {
+			continue
+		}
+		switch ev.T {
+		case "open", "brief":
+			add(ev.Brief, ev.BriefSHA)
+		case "checks", "rebaseline":
+			add(ev.Checks, ev.ChecksSHA)
+		case "claims":
+			add(ev.Claims, ev.ClaimsSHA)
+		case "run":
+			if rel, ok := runFileRel(it.ID, ev.Run); ok {
+				add(rel, ev.RunSHA)
+			}
+		case "round":
+			add(ev.Rows, ev.RowsSHA)
+		}
+	}
+	var out []string
+	for _, rel := range order {
+		want := latest[rel]
+		now := "missing"
+		if data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
+			now = shaHex(data)
+			if now == want {
+				continue
+			}
+		}
+		out = append(out, fmt.Sprintf("- %s recorded %s now %s\n", rel, want, now))
+	}
+	return out
+}
+
+// ── the restarts `bl check` excuses (R36) ────────────────────────────────────
+
+// namedArtefact is one recorded artefact of an attempt a restart ended.
+type namedArtefact struct{ kind, path, sha string }
+
+// voidArtefacts is the frozen artefacts of the item's earlier attempts: each path with the hash
+// the latest event of a VOID attempt that named it recorded, in the order the paths were first
+// recorded. The current attempt's artefacts are verified by verifyFrozen; an earlier attempt's are
+// reported as a FAIL line, because a restart is what answers them — a refusal here would leave
+// the item unable to start the next attempt at all.
+func voidArtefacts(events []Event, it *Item) []namedArtefact {
+	var order []string
+	byPath := map[string]namedArtefact{}
+	attempt := 1
+	for _, ev := range events {
+		if !strings.EqualFold(ev.ID, it.ID) {
+			continue
+		}
+		if ev.T == "restart" {
+			attempt++
+			continue
+		}
+		if attempt >= it.Attempt {
+			continue
+		}
+		kind, rel, sha := "", "", ""
+		switch ev.T {
+		case "open", "brief":
+			kind, rel, sha = "brief", ev.Brief, ev.BriefSHA
+		case "checks", "rebaseline":
+			kind, rel, sha = "checks", ev.Checks, ev.ChecksSHA
+		case "claims":
+			kind, rel, sha = "claims", ev.Claims, ev.ClaimsSHA
+		default:
+			continue
+		}
+		if rel == "" || sha == "" {
+			continue
+		}
+		if _, seen := byPath[rel]; !seen {
+			order = append(order, rel)
+		}
+		byPath[rel] = namedArtefact{kind: kind, path: rel, sha: sha}
+	}
+	out := make([]namedArtefact, 0, len(order))
+	for _, rel := range order {
+		out = append(out, byPath[rel])
+	}
+	return out
+}
+
+// excuses is the damage the item's failure records list: each path, and the hash its bytes are
+// allowed to have from now on — or `missing`, when the record says the file was already gone. The
+// records are read as they are on disk; a rewritten record cannot excuse its own edit, because
+// `bl check` verifies a record with no excusal at all.
+type excuses map[string]map[string]bool
+
+// readExcuses accumulates the excusals of every failure record the item's restarts name.
+func readExcuses(root string, it *Item) excuses {
+	out := excuses{}
+	for _, r := range it.Restarts {
+		if r.Record == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(r.Record)))
+		if err != nil {
+			continue
+		}
+		inArtefacts := false
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(line) == "artefacts:" {
+				inArtefacts = true
+				continue
+			}
+			if !inArtefacts || !strings.HasPrefix(line, "- ") {
+				continue
+			}
+			f := strings.Fields(line)
+			if len(f) < 6 || f[2] != "recorded" || f[4] != "now" {
+				continue
+			}
+			if out[f[1]] == nil {
+				out[f[1]] = map[string]bool{}
+			}
+			out[f[1]][f[5]] = true
+		}
+	}
+	return out
+}
+
+// covers reports whether a record excuses the bytes a file holds now.
+func (e excuses) covers(path, now string) bool { return e[path][now] }
+
+// checkArtefact re-hashes one recorded artefact and reports the line `bl check` prints when it no
+// longer matches, unless a failure record excuses the bytes it holds now. It never refuses: the
+// damage a restart records is a FAIL line, and the restart's own record is the answer to it.
+func checkArtefact(root string, ex excuses, id, kind, rel, want string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		if ex.covers(rel, "missing") {
+			return "", false
+		}
+		return id + " " + kind + " " + rel + " is missing", true
+	}
+	if got := shaHex(data); got != want {
+		if ex.covers(rel, got) {
+			return "", false
+		}
+		return id + " " + kind + " " + rel + " does not match its hash", true
+	}
+	return "", false
+}
+
 func cmdNote(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
@@ -4229,6 +4824,11 @@ func cmdShow(root string, a args) error {
 		status += " (blocked by " + it.BlockedBy + ")"
 	}
 	fmt.Printf("status: %s\n", status)
+	// R36: an item that was restarted says which attempt it is in; an item that never was prints
+	// no attempt line at all.
+	if it.Attempt > 1 {
+		fmt.Printf("attempt: %d\n", it.Attempt)
+	}
 	if it.After != "" {
 		fmt.Printf("after: %s\n", it.After)
 	}
@@ -4251,7 +4851,12 @@ func cmdShow(root string, a args) error {
 		if rows == "" {
 			rows = "no rows"
 		}
-		fmt.Printf("  r%d %s%s %s\n", i+1, r.Verdict, cause, rows)
+		// R36: a round of an attempt a restart ended is still in the history, and says so.
+		void := ""
+		if it.void(r) {
+			void = " void"
+		}
+		fmt.Printf("  r%d %s%s %s%s\n", i+1, r.Verdict, cause, rows, void)
 	}
 	for _, n := range it.Notes {
 		fmt.Printf("  note: %s\n", n)
@@ -4313,7 +4918,7 @@ func cmdStatus(root string, a args) error {
 		return nil
 	}
 	for _, it := range order {
-		if len(it.Rounds) == 0 {
+		if len(it.attemptRounds()) == 0 {
 			continue
 		}
 		fmt.Printf("%s %s\n", it.ID, roundCounts(it))
@@ -4321,12 +4926,14 @@ func cmdStatus(root string, a args) error {
 	return nil
 }
 
-// roundCounts is the item's round budget as spent: the rounds in total and how many of each
-// cause (R19). A PASS carries no cause, so it is counted on its own — the total is every
-// round of every cause, and a PASS is a round. A re-baseline resets none of these counts.
+// roundCounts is the item's round budget as spent in its current attempt: the rounds in total and
+// how many of each cause (R19, R36). A PASS carries no cause, so it is counted on its own — the
+// total is every round of every cause, and a PASS is a round. A re-baseline resets none of these
+// counts, and a restart starts the next attempt's at zero while the void rounds stay in the
+// history, where `bl show` marks them.
 func roundCounts(it *Item) string {
 	return fmt.Sprintf("rounds: %d (code %d, harness %d, dispute %d, pass %d)",
-		len(it.Rounds), it.causeRounds("code"), it.causeRounds("harness"),
+		len(it.attemptRounds()), it.causeRounds("code"), it.causeRounds("harness"),
 		it.causeRounds("dispute"), it.passRounds())
 }
 
@@ -4360,7 +4967,8 @@ func cmdCheck(root string, a args) error {
 	var problems []string
 	for _, it := range order {
 		// R20: re-hash the frozen artefacts and refuse when one no longer matches the hash of
-		// the latest event that recorded it.
+		// the latest event that recorded it. This is the CURRENT attempt's brief, list and
+		// claims: a restart clears them, so an earlier attempt's are the FAIL lines below.
 		if err := verifyFrozen(root, it); err != nil {
 			return err
 		}
@@ -4369,6 +4977,26 @@ func cmdCheck(root string, a args) error {
 		if err := verifyBriefRefs(root, it); err != nil {
 			return err
 		}
+		// R36: the artefacts of an attempt a restart ended are re-hashed against the latest event
+		// that named each path, and a mismatch is a FAIL line rather than a refusal — the restart's
+		// failure record is what excuses the damage, so refusing here would leave the item unable
+		// to start the attempt that answers it.
+		excuse := readExcuses(root, it)
+		for _, a := range voidArtefacts(events, it) {
+			if line, bad := checkArtefact(root, excuse, it.ID, a.kind, a.path, a.sha); bad {
+				problems = append(problems, line)
+			}
+		}
+		for _, r := range it.Restarts {
+			// A record is checked with no excusal: the B4 scan never lists the record itself, so a
+			// record that names its own path is not damage it found — it is an attempt to excuse
+			// its own edit, and B7's example is that editing the record makes `bl check` name it.
+			if line, bad := checkArtefact(root, nil, it.ID, "failure record", r.Record, r.RecordSHA); bad {
+				problems = append(problems, line)
+			}
+		}
+		// R36: a closed item's last round is read from its current attempt, so a void PASS round
+		// of an attempt a restart ended cannot make it closed-with-a-PASS.
 		if it.Status == "closed" {
 			if last := it.last(); last == nil || last.Verdict != "PASS" {
 				problems = append(problems, it.ID+" is closed without a PASS round")
@@ -4379,11 +5007,8 @@ func cmdCheck(root string, a args) error {
 				// a harness round carries no rows, so there is no evidence file to verify
 				continue
 			}
-			sum := sha256.Sum256(mustRead(filepath.Join(root, r.Rows)))
-			if _, err := os.Stat(filepath.Join(root, r.Rows)); err != nil {
-				problems = append(problems, it.ID+" round "+r.Rows+" is missing")
-			} else if hex.EncodeToString(sum[:]) != r.RowsSHA {
-				problems = append(problems, it.ID+" round "+r.Rows+" does not match its hash")
+			if line, bad := checkArtefact(root, excuse, it.ID, "round", r.Rows, r.RowsSHA); bad {
+				problems = append(problems, line)
 			}
 		}
 		// R20: the run file is a frozen artefact too — it is hashed into the ledger event that
@@ -4394,11 +5019,8 @@ func cmdCheck(root string, a args) error {
 				problems = append(problems, it.ID+" run "+r.Run+" names no run file")
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(root, rel))
-			if err != nil {
-				problems = append(problems, it.ID+" run "+rel+" is missing")
-			} else if shaHex(data) != r.RunSHA {
-				problems = append(problems, it.ID+" run "+rel+" does not match its hash")
+			if line, bad := checkArtefact(root, excuse, it.ID, "run", rel, r.RunSHA); bad {
+				problems = append(problems, line)
 			}
 		}
 		if it.BlockedBy != "" {
@@ -4490,6 +5112,7 @@ func schemaJSON() map[string]any {
 			"claims":        {"required": {"id", "claims", "claims_sha"}, "optional": {}},
 			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
 			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding"}},
+			"restart":       {"required": {"id", "reason", "why", "change", "attempt", "record", "record_sha"}, "optional": {}},
 			"second-check":  {"required": {"id", "row", "run", "computed"}, "optional": {"cmd", "expect"}},
 			"misclassified": {"required": {"id", "row", "computed"}, "optional": {"run", "cmd", "expect"}},
 			"close":         {"required": {"id", "commit"}, "optional": {}},
@@ -4510,7 +5133,7 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "note", "bump", "unbump", "rank"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "bump", "unbump", "rank"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
 	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
 	// from 12 without counting the lines.
@@ -5069,6 +5692,7 @@ var handlers = map[string]func(string, args) error{
 	"drop":         cmdDrop,
 	"defer":        cmdDefer,
 	"reopen":       cmdReopen,
+	"restart":      cmdRestart,
 	"note":         cmdNote,
 	"bump":         cmdBump,
 	"unbump":       cmdUnbump,
@@ -5088,8 +5712,8 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
-  drop | defer | reopen | note | bump | unbump | rank | next | show | status | check | render
-  schema | audit | import | lint
+  drop | defer | reopen | restart | note | bump | unbump | rank | next | show | status | check
+  render | schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`

@@ -16,7 +16,7 @@ for m in $chain; do
   rm -f "$out"
   echo "== opencode-go/$m $(date +%H:%M:%S)" >> "$log"
   perl -e 'alarm shift; exec @ARGV' "$secs" \
-    opencode run --model "opencode-go/$m" "$(cat "$prompt")" >> "$log" 2>&1 < /dev/null
+    opencode run --title "$(basename "$out") $m" --thinking --model "opencode-go/$m" "$(cat "$prompt")" >> "$log" 2>&1 < /dev/null
   rc=$?
   echo "== exit $rc $(date +%H:%M:%S)" >> "$log"
   if [ $rc -eq 0 ] && [ -s "$out" ]; then echo "MODEL opencode-go/$m"; exit 0; fi

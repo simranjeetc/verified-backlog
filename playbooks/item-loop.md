@@ -150,6 +150,13 @@ Write this to <evidence dir>/<id>-verify-r<N>.md verbatim.
 Completion: the verifier has returned a verdict with a command behind every row, and its own check
 list beside it.
 
+### The verifier of a later attempt
+
+The fresh verifier of attempt *n* receives the attempt's brief, which carries the failure records
+of every earlier attempt, and never an earlier attempt's claims: those describe a tree that no
+longer exists. Pass the attempt's own `checks.tsv`, `claims.md` and run file, and name the failure
+records as the record of why the attempt exists.
+
 ### Record the round — you set the cause, not the verifier
 
 ```sh
@@ -202,6 +209,33 @@ only path left: hand the defect table to the human, or `bl drop`/`bl defer` the 
 
 Completion: PASS, or an explicit decision that the item's premise needs re-baselining, or the defect
 table handed over.
+
+### When to restart instead of fixing
+
+A FAIL round is a defect in the work. A restart is a defect in the attempt's own premise or in
+its record, and only the four classes are reasons for one:
+
+| class | when |
+|---|---|
+| `bad-check` | a frozen row cannot pass on correct code — it asserts the wrong thing, or its command cannot reach its assertion |
+| `extra-file` | the producer wrote a file the item's scope did not name, so the record is of the wrong change |
+| `damaged-evidence` | a run file, a round's evidence or another artefact no longer matches its hash, so the record no longer describes what ran |
+| `wrong-premise` | the item's own premise is false, so no fix round can converge |
+
+```sh
+"$BL" restart A1 --reason bad-check --why "row R3 expects ^ok$ and cannot match the newline echo prints" \
+                --change "stdout patterns allow a trailing newline"
+```
+
+The restart writes the failure record of the attempt it ends and leaves the item open and out of
+flight; `bl open A1` starts attempt 2 with its own brief (which carries that record), its own list
+and its own claims, under `.backlog/items/A1/a2/`. The rounds of the attempt it ended are void: the
+code-round cap starts again, `bl show` marks them ` void`, and its runs can no longer be cited. Two
+restarts, three attempts; a third is refused and parks the item for the human.
+
+A row that cannot pass is a `bad-check`. A fix round is for code that can pass. Do not restart to
+escape a row you could fix, and do not run a fourth fix round after two rounds failed on the same
+premise: that premise is wrong, and a restart is the recorded way to say so.
 
 ## Step 5: Close
 
