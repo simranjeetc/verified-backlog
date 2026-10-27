@@ -1,24 +1,42 @@
 #!/bin/sh
 # usage: scripts/dispatch.sh <role> <prompt file> <expected output file> [timeout secs]
-# Flash models only, via opencode-go. Tries each model in the role's chain; moves on when
-# opencode fails, times out, or leaves no output file. CHAIN="m1 m2" overrides the chain.
+# Two cheap models only: gpt-6-luna via codex exec (Codex's workspace-write sandbox, no approval
+# prompts) and claude:haiku via claude -p (Claude Code's bash sandbox, edits auto-accepted). Tries
+# each model in the role's chain; moves on when the run fails, times out, or leaves no output
+# file. CHAIN="m1 m2" overrides the chain.
 role=$1; prompt=$2; out=$3; secs=${4:-1800}
 case $role in
-  design)   chain="glm-5.3-flash qwen3.8-flash deepseek-v4.1-flash" ;;
-  checks)   chain="glm-5.3-flash qwen3.8-flash mimo-v2.6-flash" ;;
-  produce)  chain="deepseek-v4.1-flash minimax-m3.1-flash mimo-v2.6-flash" ;;
-  verify)   chain="qwen3.8-flash glm-5.3-flash mimo-v2.6-flash" ;;
-  light)    chain="deepseek-v4.1-flash glm-5.3-flash qwen3.8-flash minimax-m3.1-flash mimo-v2.6-flash" ;;
+  design)   chain="gpt-6-luna claude:haiku" ;;
+  checks)   chain="claude:haiku gpt-6-luna" ;;
+  produce)  chain="gpt-6-luna claude:haiku" ;;
+  verify)   chain="claude:haiku gpt-6-luna" ;;
+  light)    chain="gpt-6-luna claude:haiku" ;;
   *) echo "dispatch.sh: role must be design, checks, produce, verify or light" >&2; exit 64 ;;
 esac
 chain=${CHAIN:-$chain}; log=$out.log; : > "$log"
+outdir=$(cd "$(dirname "$out")" && pwd -P)   # the report may live outside the sandbox's roots
+# go build's default cache is outside the sandbox's writable roots
+export GOCACHE=${GOCACHE_DISPATCH:-${TMPDIR:-/tmp}/dispatch-gocache}
 for m in $chain; do
+  case $m in
+    gpt-6-luna|claude:haiku) ;;
+    *) echo "dispatch.sh: $m refused; only gpt-6-luna and claude:haiku" >&2; exit 64 ;;
+  esac
   rm -f "$out"
-  echo "== opencode-go/$m $(date +%H:%M:%S)" >> "$log"
-  perl -e 'alarm shift; exec @ARGV' "$secs" \
-    opencode run --title "$(basename "$out") $m" --thinking --model "opencode-go/$m" "$(cat "$prompt")" >> "$log" 2>&1 < /dev/null
+  echo "== $m $(date +%H:%M:%S)" >> "$log"
+  if [ "$m" = claude:haiku ]; then
+    perl -e 'alarm shift; exec @ARGV' "$secs" \
+      claude -p --model haiku --permission-mode acceptEdits --add-dir "$outdir" \
+        --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}' \
+        >> "$log" 2>&1 < "$prompt"
+  else
+    perl -e 'alarm shift; exec @ARGV' "$secs" \
+      codex exec -s workspace-write -c approval_policy='"never"' --skip-git-repo-check --ephemeral \
+        -c "sandbox_workspace_write.writable_roots=[\"$outdir\"]" \
+        -m "$m" - >> "$log" 2>&1 < "$prompt"
+  fi
   rc=$?
   echo "== exit $rc $(date +%H:%M:%S)" >> "$log"
-  if [ $rc -eq 0 ] && [ -s "$out" ]; then echo "MODEL opencode-go/$m"; exit 0; fi
+  if [ $rc -eq 0 ] && [ -s "$out" ]; then echo "MODEL $m"; exit 0; fi
 done
 echo "dispatch.sh: every model in the $role chain failed; see $log" >&2; exit 1
