@@ -318,6 +318,7 @@ reopen it.
 **R5 — the list is frozen before the claims.** `bl claims A1 --file <path>` reads the producer's report from that
 path. A claim exists only if a `claims` event is in the ledger for that item; a hand-written `claims.md` is not a claim,
 and `bl claims` overwrites whatever is at that path.
+`bl open` on an item whose current attempt already has claims resumes that attempt without rewriting the brief, keeping the same brief, scope and before-tree; a different scope is refused under R5.
 `bl claims` is refused if the item has no check list. `bl claims` is refused if the item already has a `claims`
 event — the claims are frozen once. `bl checks` is refused if the item already has a `claims` event, except for an
 amendment that adds a row (R4). This is the ordering rule the whole design rests on, and the one thing not to trade
@@ -588,9 +589,9 @@ the schema rule, while a frozen row whose clause an **amendment** removed is ref
 list whose rows point at clauses that no longer exist is not a passing list.
 
 **R33 — the claims freeze the brief and the list.** Once an item has a claims event, the brief and the check list
-are frozen. No verb may rewrite them: `bl brief`, `bl checks` and `bl open` all refuse with R5, and they refuse
-before they write anything. An item with claims cannot be re-opened, because re-opening would replace the brief
-that the claims were made against.
+are frozen. No verb may rewrite them: `bl brief` and `bl checks` refuse with R5, and they refuse before they write
+anything. `bl open` on an item with claims does not re-open it with a new brief: it resumes the attempt (R5), keeping
+the brief, check list, claims and scope the claims were made against, and refuses a different scope.
 
 
 **R34 — a command is a shell script, and a pattern is not a shell.** A `cmd` field is a script run by `/bin/sh -c`
@@ -678,7 +679,7 @@ The four worked examples:
   --change "stdout patterns allow a trailing newline"` exits 0, prints `bl: A1 restarted as attempt 2`, and
   `bl show A1` prints `attempt: 2` immediately after its `status:` line, before `reason:`, `after:` and `source:`;
   `bl show --json` gives the item the integer field `Attempt`. An item never restarted prints no `attempt:` line. In
-  attempt 2 the `bl open` that the claims refused under R5 is accepted, and `bl checks` then lands in `a2/checks.tsv`.
+  attempt 2 `bl open` starts the new attempt (with a fresh brief) instead of resuming attempt 1 (R5), and `bl checks` then lands in `a2/checks.tsv`.
 - **E36b — damage is excused once, by the record that lists it.** A1 closed after a PASS round r2, then
   `.backlog/evidence/A1-r2.txt` was overwritten: `bl check` exits 1 with `A1 round .backlog/evidence/A1-r2.txt does
   not match its hash`. `bl restart A1 --reason damaged-evidence --why w --change c` exits 0 and `bl check` then exits

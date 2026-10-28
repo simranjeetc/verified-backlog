@@ -112,14 +112,6 @@ func cmdOpen(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	// R5: the brief is frozen with the claims. `bl open` writes the brief from the item text, so
-	// opening an item that already has a claims event would replace the brief the claims were
-	// recorded against, and a frozen row citing a clause of it would be left pointing at a
-	// clause that no longer exists. The check comes before the brief is read or written, so a
-	// refusal leaves the stored brief exactly as it was.
-	if it.Claims != "" {
-		return refuseRule("R5", "%s already has a claims event — the brief is frozen with the claims", it.ID)
-	}
 	if it.BlockedBy != "" {
 		return refuse("%s is blocked by %s", it.ID, it.BlockedBy)
 	}
@@ -129,6 +121,30 @@ func cmdOpen(root string, a args) error {
 	}
 	if cur != nil {
 		return refuse("%s is already in flight — close, drop or defer it first", cur.ID)
+	}
+	resume := it.Claims != ""
+	if resume {
+		// R5: claims freeze the attempt's brief and scope. Resume by re-hashing every frozen
+		// artefact (R20) and re-recording the opening snapshot; never regenerate any of them.
+		if err := verifyFrozen(root, it); err != nil {
+			return err
+		}
+		if err := verifyTests(root, it); err != nil {
+			return err
+		}
+		_, scopeGiven := a.lists["scope"]
+		_, ignoredGiven := a.lists["scope-ignored"]
+		if scopeGiven && !sameStrings(a.list("scope"), it.Scope) || ignoredGiven && !sameStrings(a.list("scope-ignored"), it.ScopeIgnored) {
+			return refuseRule("R5", "%s can resume only with its recorded scope", it.ID)
+		}
+		ev := Event{T: "open", ID: it.ID, Brief: it.Brief, BriefSHA: it.BriefSHA,
+			Scope: it.Scope, ScopeIgnored: it.ScopeIgnored, BeforeTree: it.BeforeTree, IgnoredBefore: it.IgnoredBefore}
+		if _, err := appendEvent(root, ev); err != nil {
+			return err
+		}
+		fmt.Printf("bl: %s resumed with its frozen brief, checks and claims\n", it.ID)
+		fmt.Printf("bl: %s in flight\n", it.ID)
+		return nil
 	}
 	brief := attemptBrief(briefText(it.Text), failureRecords(root, it))
 	rel := attemptFile(it.ID, it.Attempt, briefName)
@@ -174,4 +190,16 @@ func cmdOpen(root string, a args) error {
 	}
 	fmt.Printf("bl: %s in flight\n", it.ID)
 	return nil
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

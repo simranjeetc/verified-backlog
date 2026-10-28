@@ -58,10 +58,10 @@ func TestOpenRefusesEditedStoredBrief(t *testing.T) {
 	}
 }
 
-// R5 at use in `bl open`: the brief is frozen with the claims. `bl open` writes the brief from
-// the item text, so opening an item that already has a claims event would replace the brief the
-// claims were recorded against. The call refuses and writes nothing — no brief, no event.
-func TestOpenRefusedAfterClaims(t *testing.T) {
+// R5 at use in `bl open`: the brief and scope are frozen with the claims. Opening an item that
+// already has a claims event resumes its attempt (I108), but a different --scope would change what
+// the claims were recorded against. The call refuses and writes nothing — no brief, no event.
+func TestOpenRefusedAfterClaimsWithADifferentScope(t *testing.T) {
 	dir := openItem(t)
 	checksOK(t, dir, goodList)
 	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
@@ -79,15 +79,15 @@ func TestOpenRefusedAfterClaims(t *testing.T) {
 	frozenSHA := artefactSHA(t, dir, "brief")
 	before, _ := readLedger(dir)
 
-	r := wantRefusal(t, call(t, cmdOpen, dir, "A1"))
+	r := wantRefusal(t, call(t, cmdOpen, dir, "A1", "--scope", "other.go"))
 	if r.rule != "R5" {
 		t.Fatalf("want a refusal under R5, got %s: %s", r.rule, r.msg)
 	}
-	if !strings.Contains(r.msg, "A1") || !strings.Contains(r.msg, "claims") {
-		t.Errorf("the refusal must name the item and its claims: %s", r.msg)
+	if !strings.Contains(r.msg, "A1") || !strings.Contains(r.msg, "scope") {
+		t.Errorf("the refusal must name the item and its scope: %s", r.msg)
 	}
 	// the exit code is 2
-	if code := run([]string{"--root", dir, "open", "A1"}); code != 2 {
+	if code := run([]string{"--root", dir, "open", "A1", "--scope", "other.go"}); code != 2 {
 		t.Fatalf("bl open: exit = %d, want 2", code)
 	}
 
@@ -214,7 +214,7 @@ var frozenVerbs = []struct {
 	{
 		verb:  "open",
 		label: "open after claims",
-		rule:  "R5",
+		rule:  "R20",
 		setup: func(t *testing.T, dir string) {
 			checksOK(t, dir, goodList)
 			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {

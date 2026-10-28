@@ -15,11 +15,13 @@ import (
 // R36: a restart ends the attempt and starts the next one. It prints the line the brief names,
 // `bl show` prints the attempt immediately after the status, `bl show --json` carries it as an
 // integer, and the item leaves flight with everything the attempt recorded cleared — so the
-// `bl open` the claims refused is accepted, and the new attempt's list lands in a2/.
+// next `bl open` is accepted, and the new attempt's list lands in a2/.
 func TestRestartEndsTheAttemptAndStartsTheNext(t *testing.T) {
 	dir := restartItem(t)
-	// B2's example: the claims freeze the brief, so a re-open is refused under R5 first
-	wantRule(t, call(t, cmdOpen, dir, "A1"), "R5")
+	// B2's example: the item is still in flight, so a re-open is refused first
+	if err := call(t, cmdOpen, dir, "A1"); err == nil || !strings.Contains(err.Error(), "already in flight") {
+		t.Fatalf("a re-open of the item in flight must be refused as already in flight, got %v", err)
+	}
 	var err error
 	out := capture(t, func() {
 		err = call(t, cmdRestart, dir, "A1", "--reason", "bad-check",
