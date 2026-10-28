@@ -134,6 +134,7 @@ func (p packet) printTo(w io.Writer) {
 			writePacketText(w, clause)
 			fmt.Fprintln(w, "A defect that breaks this purpose is a failure, not report-only.")
 			fmt.Fprintln(w, "End the report with one line `Report-only: N` and tag each report-only note [RO1]..[ROn]; with no notes write `Report-only: 0`.")
+			fmt.Fprintln(w, "Write no other bracketed RO-like spelling anywhere in the report: describe a near-miss tag in words, without brackets.")
 		}
 	}
 	fmt.Fprint(w, "\n## Intent\n")

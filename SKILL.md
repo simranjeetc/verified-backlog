@@ -101,6 +101,7 @@ Open the file, copy its steps into your task list verbatim, then work them. A st
 
 - **Sequence into verifiable units.** A unit that ends in "and then the next unit will tell us" has no completion criterion, so it cannot be verified.
 - **Prove it on the real artifact.** A green test over a fixture the producer also wrote is a tautology. Prefer the number a third party could reproduce.
+- **Parse others' text through a closed format.** Code that reads text someone else wrote (verifier reports, claims, verdicts) must require a closed, fail-closed format: exact lines, everything else refused. Never parse free-form Markdown; I115's first attempt lost three rounds to new Markdown shapes.
 - **Re-baseline a wrong premise; do not drop it.** When an item's own premise turns out false, correct it in place with the measurement that overturned it.
 - **Stop when the marginal finding stops being worth its fix.** A round that can only report cosmetics or deliberately malformed input is the end of the loop. Agree that bar with the verifier before the first round, so a strict reviewer cannot extend the loop on reflex; then stopping is a decision you both already made — and the human's answer to a low-value item is `bl drop <id> --reason "…"`, recorded, not argued.
 
