@@ -701,3 +701,12 @@ Decision: declined — user dropped: not wanted; code reverted uncommitted, run1
 Source: human
 
 
+## I117 — Two lessons from I115 belong in the loop, not in chat. (1) SKILL.md brief guidance: a brief whose code reads input someone else wrote (verifier reports, claims, verdicts) must require a closed, fail-closed format, never parse free-form Markdown; attempt 1 of I115 failed three rounds on new Markdown shapes. (2) The verifier packet's Report-only instruction must also say: write no other bracketed RO-like spelling (describe near-miss tags without brackets), because I115 r4's first report quoted [ RO1]-style probes and bl round correctly refused it under R38, costing a re-dispatch.
+
+Verdict: PASS — closed at 4d04035f48a02872ff12612040b959c2e4c17f15
+Source: I115 r4, 2026-10-28
+
+- r1 FAIL cause=harness — no rows
+- r2 PASS — .backlog/evidence/I117-r2.txt (9a0fb1618db2)
+- code failures: 0 / cap 3
+
