@@ -42,6 +42,10 @@ Completion: `bl status` counts the items and `bl next` names one.
 
 Copy the item's text verbatim from the ledger (`bl show A1` prints it with its rounds).
 
+Write each brief clause as an observable result: what a command prints, its exit code, or what the ledger holds;
+say what can be observed, never how it is built. Every clause carries at least one `Example:` with a concrete input
+and the exact expected output. `bl brief` refuses a numbered clause without one.
+
 Name the files it may touch, and the ones it may read but not write. A file outside that list is a
 signal that the item is scoped too loosely, so tighten it before dispatching rather than discovering
 it in the diff.

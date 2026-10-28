@@ -1163,6 +1163,30 @@ func briefClauses(text string) map[string]bool {
 	return out
 }
 
+func clausesWithoutExamples(text string) []string {
+	lines := strings.Split(text, "\n")
+	var missing []string
+	for i, line := range lines {
+		m := clauseRe.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if m == nil {
+			continue
+		}
+		var clause strings.Builder
+		clause.WriteString(line)
+		for j := i + 1; j < len(lines); j++ {
+			if clauseRe.MatchString(strings.TrimRight(lines[j], "\r")) {
+				break
+			}
+			clause.WriteByte('\n')
+			clause.WriteString(lines[j])
+		}
+		if !strings.Contains(strings.ToLower(clause.String()), "example:") {
+			missing = append(missing, m[1])
+		}
+	}
+	return missing
+}
+
 // failureRecords is the bytes of every failure record the item's restarts wrote, oldest first,
 // as they are on disk (R36). It is what attempt n's brief carries after its own text: the
 // records of every attempt before it, byte for byte. A record that cannot be read contributes
@@ -1235,6 +1259,9 @@ func cmdBrief(root string, a args) error {
 	}
 	if len(briefClauses(text)) == 0 {
 		return refuseRule("R2", "the brief has no numbered clause — a clause is a line matching %s", clauseRe.String())
+	}
+	if missing := clausesWithoutExamples(text); len(missing) != 0 {
+		return refuseRule("R2", "clauses %s have no Example:", strings.Join(missing, ", "))
 	}
 	text = attemptBrief(text, failureRecords(root, it))
 	rel := attemptFile(it.ID, it.Attempt, briefName)

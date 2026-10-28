@@ -314,7 +314,7 @@ func openItem(t *testing.T) string {
 	dir := t.TempDir()
 	for _, argv := range [][]string{
 		{"init"},
-		{"file", "--id", "A1", "--text", "add a verb; test it"},
+		{"file", "--id", "A1", "--text", "add a verb Example: adds a verb; test it Example: runs the test"},
 		{"open", "A1"},
 	} {
 		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
@@ -394,7 +394,7 @@ func TestOpenWritesBriefAndRecordsHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("brief: %v", err)
 	}
-	if string(data) != "B1: add a verb\nB2: test it\n" {
+	if string(data) != "B1: add a verb Example: adds a verb\nB2: test it Example: runs the test\n" {
 		t.Fatalf("brief = %q", data)
 	}
 	events, _ := readLedger(dir)
@@ -664,12 +664,12 @@ func artefactSHA(t *testing.T, dir, what string) string {
 
 func TestBriefRecordsEventAndHash(t *testing.T) {
 	dir := openItem(t)
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\nB2: test it\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb\nB2: test it\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 	events, _ := readLedger(dir)
@@ -680,13 +680,13 @@ func TestBriefRecordsEventAndHash(t *testing.T) {
 	first := ev.BriefSHA
 
 	// a second brief is a second event, and the first event keeps its own hash
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb\nB2: test it twice\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", second); err != nil {
 		t.Fatalf("second brief: %v", err)
 	}
 	events, _ = readLedger(dir)
 	ev = events[len(events)-1]
-	if ev.T != "brief" || ev.BriefSHA != shaHex([]byte("B1: add a verb\nB2: test it twice\n")) {
+	if ev.T != "brief" || ev.BriefSHA != shaHex([]byte("B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")) {
 		t.Fatalf("second brief event = %+v", ev)
 	}
 	if ev.BriefSHA == first {
@@ -703,7 +703,7 @@ func TestBriefRecordsEventAndHash(t *testing.T) {
 
 func TestBriefReadsStdinWithoutFile(t *testing.T) {
 	dir := openItem(t)
-	f, err := os.Open(writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\n"))
+	f, err := os.Open(writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +715,7 @@ func TestBriefReadsStdinWithoutFile(t *testing.T) {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 }
@@ -727,14 +727,14 @@ func TestBriefRefusedAfterClaims(t *testing.T) {
 	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
 	wantRule(t, call(t, cmdBrief, dir, "A1", "--file", brief), "R5")
 	events, _ := readLedger(dir)
 	if last := events[len(events)-1]; last.T != "claims" {
 		t.Fatalf("a refusal wrote %+v", last)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if string(data) != "B1: add a verb\nB2: test it\n" {
+	if string(data) != "B1: add a verb Example: adds a verb\nB2: test it Example: runs the test\n" {
 		t.Fatalf("a refused brief rewrote the file: %q", data)
 	}
 }
@@ -749,10 +749,56 @@ func TestBriefRefusedWithoutClause(t *testing.T) {
 	}
 }
 
+func TestBriefRequiresExamplePerClause(t *testing.T) {
+	dir := openItem(t)
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: prints ok.\nB2: exits 3. Example: empty repo exits 3.\n")
+	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", brief))
+	if r.rule != "R2" || !strings.Contains(r.msg, "B1") || strings.Contains(r.msg, "B2") {
+		t.Fatalf("want R2 naming only B1, got %s: %s", r.rule, r.msg)
+	}
+	if err := os.WriteFile(brief, []byte("B1: prints ok. Example: prints ok and exits 0.\nB2: exits 3. example: empty repo exits 3.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
+		t.Fatalf("lowercase example: %v", err)
+	}
+
+	dir = openItem(t)
+	brief = writeFile(t, t.TempDir(), "brief.md", "B1: prints ok.\n  Example: `bl x` prints ok and exits 0.\n")
+	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
+		t.Fatalf("continuation example: %v", err)
+	}
+
+	dir = openItem(t)
+	brief = writeFile(t, t.TempDir(), "brief.md", "B1: prints ok. Example without colon\n")
+	r = wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", brief))
+	if r.rule != "R2" || !strings.Contains(r.msg, "B1") {
+		t.Fatalf("want R2 naming B1, got %s: %s", r.rule, r.msg)
+	}
+}
+
+func TestBriefAmendmentRequiresExamplesAndKeepsPriorBrief(t *testing.T) {
+	dir := openItem(t)
+	good := writeFile(t, t.TempDir(), "brief.md", "B1: prints ok. Example: prints ok.\n")
+	if err := call(t, cmdBrief, dir, "A1", "--file", good); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
+	bad := writeFile(t, t.TempDir(), "brief2.md", "B1: prints ok. Example: prints ok.\nB2: exits 3.\n")
+	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", bad))
+	if r.rule != "R2" || !strings.Contains(r.msg, "B2") {
+		t.Fatalf("want R2 naming B2, got %s: %s", r.rule, r.msg)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
+	if string(after) != string(before) {
+		t.Fatalf("refused amendment changed prior brief: %q", after)
+	}
+}
+
 // R20 at use: `bl brief` re-hashes the stored brief before it overwrites it.
 func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 	dir := openItem(t)
-	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\nB2: test it\n")
+	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", first); err != nil {
 		t.Fatalf("first brief: %v", err)
 	}
@@ -762,12 +808,12 @@ func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 	recorded := artefactSHA(t, dir, "brief")
 
 	// the stored brief is edited on disk after it was recorded
-	tampered := []byte("B1: tampered\n")
+	tampered := []byte("B1: tampered. Example: prints tampered.\n")
 	if err := os.WriteFile(stored, tampered, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb\nB2: test it twice\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
 	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", second))
 	if r.rule != "R20" {
 		t.Fatalf("want a refusal under R20, got %s: %s", r.rule, r.msg)
@@ -794,17 +840,17 @@ func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 
 func TestBriefRecordsOverUntouchedStoredBrief(t *testing.T) {
 	dir := openItem(t)
-	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\nB2: test it\n")
+	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", first); err != nil {
 		t.Fatalf("first brief: %v", err)
 	}
 	// the stored brief was not touched: the verb proceeds
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb\nB2: test it twice\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", second); err != nil {
 		t.Fatalf("second brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb\nB2: test it twice\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 	events, _ := readLedger(dir)
@@ -825,12 +871,12 @@ func TestBriefProceedsWhenNoStoredBrief(t *testing.T) {
 			t.Fatalf("append %s: %v", ev.T, err)
 		}
 	}
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 }
@@ -1029,7 +1075,7 @@ func TestOpenRefusesEditedStoredBrief(t *testing.T) {
 	recorded := artefactSHA(t, dir, "brief")
 
 	// the stored brief is edited on disk after it was recorded
-	tampered := []byte("B1: tampered\n")
+	tampered := []byte("B1: tampered. Example: prints tampered.\n")
 	if err := os.WriteFile(stored, tampered, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1130,7 +1176,7 @@ func TestCheckRefusesRowWhoseBriefRefIsGone(t *testing.T) {
 	}
 
 	// the brief is amended so that it holds only B1 — the frozen row cites B2, which is gone
-	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\n")
+	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", amended); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
@@ -1171,7 +1217,7 @@ func TestCheckAcceptsRowsWithEmptyBriefRef(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	// the brief keeps its clauses: nothing dangles
-	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\nB2: test it\n")
+	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", amended); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
@@ -1240,7 +1286,7 @@ var frozenVerbs = []struct {
 		rule:  "R20",
 		setup: func(t *testing.T, dir string) {},
 		argv: func(t *testing.T, dir string) []string {
-			return []string{"brief", "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\n")}
+			return []string{"brief", "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")}
 		},
 	},
 	{
@@ -1320,7 +1366,7 @@ func TestEveryVerbTouchingAFrozenArtefactRefusesR20(t *testing.T) {
 			recorded := artefactSHA(t, dir, "brief")
 
 			// the stored brief is edited on disk after it was recorded
-			tampered := []byte("B1: tampered\n")
+			tampered := []byte("B1: tampered. Example: prints tampered.\n")
 			if err := os.WriteFile(stored, tampered, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -2095,7 +2141,7 @@ const r24List = checksHeader +
 	"S2\tbl\tblocking\tB2\ttrue\texit 0\t\t\tother tests pass\n"
 
 // r24BriefWithoutB2 is the brief after an amendment that removed B2.
-const r24BriefWithoutB2 = "B1: add a verb\n"
+const r24BriefWithoutB2 = "B1: add a verb. Example: adds a verb.\n"
 
 // r24Setup is the state a round is written against: the list is frozen, an amendment removed the
 // clause S2 cites, and the claims are recorded.
@@ -2211,9 +2257,9 @@ func TestR24ARefusedRoundWritesNothing(t *testing.T) {
 func TestR24ARoundIsUnaffectedByAnUnrelatedAmendment(t *testing.T) {
 	cases := map[string][]string{
 		// the amendment adds a clause and leaves the cited ones alone
-		"an amendment that adds a clause": {"B1: add a verb\nB2: test it\nB3: and a third thing\n"},
+		"an amendment that adds a clause": {"B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB3: and a third thing. Example: shows the third result.\n"},
 		// a clause removed and then restored by a later amendment exists in the latest brief
-		"a clause removed and then restored": {"B1: add a verb\n", "B1: add a verb\nB2: test it\n"},
+		"a clause removed and then restored": {"B1: add a verb. Example: adds a verb.\n", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n"},
 	}
 	for name, amendments := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -3833,7 +3879,7 @@ func TestTheOtherLockHoldingPathsRefuseWithoutNamingARule(t *testing.T) {
 			t.Fatalf("bl %v: exit %d", argv, code)
 		}
 	}
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: it works\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: it works. Example: prints ok.\n")
 	list := writeFile(t, t.TempDir(), "checks.tsv", checksHeader+"S1\tbl\tblocking\tB1\ttrue\texit 0\t\t\tok\n")
 	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
 	cases := []struct {
@@ -5484,7 +5530,7 @@ func TestRestartBriefCarriesTheRecordsOfEveryEarlierAttempt(t *testing.T) {
 		t.Fatalf("a2's brief must end with a1's record:\n%s", brief2)
 	}
 	// `bl brief` stores the submitted text followed by the records, adding the missing newline
-	submitted := "B1: add a verb\nB2: test it, narrowly"
+	submitted := "B1: add a verb. Example: adds a verb.\nB2: test it, narrowly. Example: runs the focused test."
 	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", submitted)); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
@@ -5535,7 +5581,7 @@ func TestRestartLeavesEveryEarlierAttemptsFileAlone(t *testing.T) {
 	if err := call(t, cmdOpen, dir, "A1"); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb\nB2: test it narrowly\n")); err != nil {
+	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it narrowly. Example: runs the focused test.\n")); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	checksOK(t, dir, roundFailList)

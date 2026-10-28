@@ -40,7 +40,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl init` | – | creates `.backlog/` and renders empty views; refuses over a foreign `TODO.md` |
 | `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
 | `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock; after a restart, carries the ended attempt's scope unless either scope flag is given |
-| `bl brief A1 --file brief.md` | yes | amends the item's brief; a new event with a new hash, and the old brief keeps its own |
+| `bl brief A1 --file brief.md` | yes | records or amends the brief; every numbered clause needs an `Example:` (R2) |
 | `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
 | `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |

@@ -283,7 +283,9 @@ Any violation is a refusal, not a warning.
 
 **R2 — a blocking row cites the brief.** A row with `severity: blocking` must carry a `brief_ref` naming a clause that
 exists in the item's brief. A `brief_ref` naming a clause that does not exist is a refusal. A row with
-`severity: advisory` may carry an empty `brief_ref`.
+`severity: advisory` may carry an empty `brief_ref`. `bl brief` refuses under R2 when any numbered clause lacks
+`Example:` in that clause's text, naming every such clause. The marker is case-insensitive; clause text runs to the
+next numbered clause or end of file. Recorded briefs are not re-checked.
 
 **R3 — a judge row justifies itself.** A `decider: judge` row must carry a non-empty `fail_if` (the frozen fail
 condition) and a non-empty `why_not_mech`. `why_not_mech` shorter than 12 characters, or equal — after trimming and lower-casing — to one of the placeholders
