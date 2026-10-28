@@ -44,15 +44,23 @@ Check against: `scripts/cmd/bl/ledger.go:503-511`, `scripts/cmd/bl/lifecycle.go:
 
 ## Outer loop (I57 — proposed, not built)
 
+The outer loop is a separate program, a runner with no conversation context of its own. It is not
+an agent session. It only calls `bl` and starts or awaits harness sessions; each session works one
+item and exits.
+
 ```
- bl next ─► no item? ─► stop
-    │
-    ▼
- fresh harness session works one item (playbooks/item-loop.md)
-    │
-    ▼
- session exits ─► item closed / parked / declined? ─► bl next
-                └► still in flight, no round recorded ─► refuse, stop with reason
+ ┌─ runner program (no context; only calls bl + spawns sessions) ─┐
+ │                                                                │
+ │  bl next ──► no item? ──► stop                                 │
+ │     │                                                          │
+ │     ▼ spawn                                                    │
+ │  ┌─ harness session (fresh, one item, item-loop.md) ─┐         │
+ │  │  open … round … close / defer / drop ── exits     │         │
+ │  └──────────────────────────────────────────────────┘         │
+ │     │ on exit: runner asks bl for the item's state             │
+ │     ├─ closed / parked / declined ──► back to bl next          │
+ │     └─ in flight, no round recorded ──► refuse, stop w/ reason │
+ └────────────────────────────────────────────────────────────────┘
 ```
 
 Check against: `TODO.md` entry I57.
