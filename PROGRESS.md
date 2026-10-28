@@ -548,3 +548,12 @@ Source: human
 - code failures: 0 / cap 3
 - note: re-filed from I78 (2026-10-27): same brief; I78 run1 had 58 rows, 5 failed, all row defects per the qwen verifier; the code diff is kept in the scratchpad and re-applied after open
 
+## I97 — a restart clears the item's scope (main.go derive, restart case) and bl open accepts no --scope, which means the whole repo: I93 attempt 2 was opened so, R28 then hashed every ignored file and refused the round over .claude/scheduled_tasks.lock, a Claude Code lock the item never touched, and R5/R36 left no way to re-open or restart. Fix: after a restart, bl open carries the previous attempt's scope (and --scope-ignored) unless new ones are given, or refuses an empty scope on an item whose earlier attempt had one
+
+Verdict: PASS — closed at 9b418a0a14ed758c27e5756b1000aea32e96be7f
+Source: verifier:I93/r2
+
+- r1 PASS — .backlog/evidence/I97-r1.txt (ad4879418538)
+- code failures: 0 / cap 3
+- note: Round 1, blind: checks by claude haiku (18 rows, format 2, the first real tests.py list), code by gpt-6-luna, verifier deepseek-v4.1-flash PASS with 9 probes (chained restarts, closed-item restart, refused restart, repo-ledger copy, docs vs code), none reproduced. Wart, not a failure: an attempt opened with only --scope-ignored carries an empty --scope, and the carried line then ends 'from attempt 1: ' with no paths.
+
