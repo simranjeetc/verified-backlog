@@ -464,7 +464,7 @@ Source: supervisor:format-audit
 
 ## I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round
 
-Decision: parked — blocked on I105: frozen row B5a calls bl at the repo root, run.log grows, R27 refuses every run; resume with reopen+open after I105 closes — work kept in scratch worktree (not verified)
+Status: open
 Source: supervisor:format-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 format audit): bl brief (or a read-only bl rules <id>) prints only the design sections and R-rules the item text and brief.md cite, extracted by rule id from the doc, so the dispatch pastes that slice instead of naming the whole file; risk to weigh: a verifier blind to an uncited rule may miss an interaction, so the slice should name the rules it left out
@@ -646,4 +646,13 @@ Verdict: PASS — closed at ee9c74c34e1ee4efca33f20b99201ea0eefadd7c
 
 - r1 PASS — .backlog/evidence/I106-r1.txt (a6a6fabf9311)
 - code failures: 0 / cap 3
+
+## I108 — bl open on a deferred item that already has claims resumes its attempt (brief, checks, claims kept) instead of an R5 refusal with no way out
+
+Verdict: PASS — closed at b655fab5c4a1685bebcb992bb2b003eb205d6300
+
+- r1 FAIL cause=code — .backlog/evidence/I108-r1.txt (008b0d649f63)
+- r2 FAIL cause=code — .backlog/evidence/I108-r2.txt (c61eb383fc59)
+- r3 PASS — .backlog/evidence/I108-r3.txt (d0a917564bd7)
+- code failures: 2 / cap 3
 
