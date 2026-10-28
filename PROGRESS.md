@@ -640,3 +640,10 @@ Source: verifier:I76
 - r1 PASS — .backlog/evidence/I105-r1.txt (31e8873c9211)
 - code failures: 0 / cap 3
 
+## I106 — dispatch.sh: a model that exits 0 but prints its report to stdout is a success, not a false chain failure plus a wasted fallback run
+
+Verdict: PASS — closed at ee9c74c34e1ee4efca33f20b99201ea0eefadd7c
+
+- r1 PASS — .backlog/evidence/I106-r1.txt (a6a6fabf9311)
+- code failures: 0 / cap 3
+
