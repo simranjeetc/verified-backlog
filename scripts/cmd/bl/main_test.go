@@ -5859,13 +5859,53 @@ if __name__ == "__main__":
 func testFileWith(path, name string) string {
 	return "import sys\n\n" +
 		"def _covers(*paths):\n    def mark(fn):\n        return fn\n    return mark\n\n" +
-		"@_covers(" + fmt.Sprintf("%q", path) + ")\n" +
+		"@_covers(" + fmt.Sprintf("%q", path) + ", \"scripts/cmd/bl/main.go\")\n" +
 		"def " + name + "():\n    assert True\n" + testMainBlock
 }
 
 func checksWithTests(t *testing.T, dir, list, tests string) error {
 	t.Helper()
 	return call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "checks.tsv", list), "--tests", tests)
+}
+
+// B1: blocking tests may cover code, while documentation clauses use judge rows.
+func TestR37BlockingTestMustCoverCode(t *testing.T) {
+	rows := func(severity string) string {
+		return checksHeader + "T1\tbl\t" + severity + "\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	}
+	testFile := func(covers string) string {
+		return "import sys\n\ndef _covers(*paths):\n    return lambda fn: fn\n\n" + covers + "def a():\n    assert True\n" + testMainBlock
+	}
+	for _, tc := range []struct {
+		name, row, source string
+		refuse            bool
+	}{
+		{"docs only", rows("blocking"), testFile("@_covers(\"SKILL.md\")\n"), true},
+		{"mixed paths", rows("blocking"), testFile("@_covers(\"SKILL.md\", \"scripts/cmd/bl/main.go\")\n"), false},
+		{"no covers", rows("blocking"), testFile(""), false},
+		{"advisory docs", rows("advisory"), testFile("@_covers(\"SKILL.md\")\n"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := openItem(t)
+			err := checksWithTests(t, dir, tc.row, writeFile(t, t.TempDir(), "tests.py", tc.source))
+			if tc.refuse {
+				r := wantRefusal(t, err)
+				if r.rule != "R37" || !strings.Contains(r.msg, "row T1") || !strings.Contains(r.msg, "decider: judge row or an advisory row") {
+					t.Fatalf("wrong refusal: %s: %s", r.rule, r.msg)
+				}
+			} else if err != nil {
+				t.Fatalf("freeze: %v", err)
+			}
+		})
+	}
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	list := rows("blocking")
+	src := writeFile(t, t.TempDir(), "tests.py", testFile("@_covers(\"README.md\")\n"))
+	r := wantRefusal(t, call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "checks.tsv", list), "--tests", src, "--reason", "move to format 2"))
+	if r.rule != "R37" || !strings.Contains(r.msg, "row T1") {
+		t.Fatalf("wrong rebaseline refusal: %s: %s", r.rule, r.msg)
+	}
 }
 
 // B1: --tests copies the file beside checks.tsv, and the event records its path and hash.
@@ -6074,7 +6114,7 @@ func TestR37ShellRowsAreSimpleCommands(t *testing.T) {
 func TestR37CoverageComesFromTheCoversDecorator(t *testing.T) {
 	roundWith := func(t *testing.T, path, file string) error {
 		t.Helper()
-		dir := gitItemWith(t, map[string]string{"SKILL.md": "one\n"})
+		dir := gitItemWith(t, map[string]string{"main.go": "one\n"})
 		src := writeFile(t, t.TempDir(), "tests.py", testFileWith(path, "touch"))
 		list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py touch\texit 0\t\t\tc\n"
 		if err := checksWithTests(t, dir, list, src); err != nil {
@@ -6087,10 +6127,10 @@ func TestR37CoverageComesFromTheCoversDecorator(t *testing.T) {
 		rows := runAndVerdicts(t, dir, "T1\tPASS\t")
 		return call(t, cmdRound, dir, "A1", "--rows", rows)
 	}
-	if err := roundWith(t, "SKILL.md", "SKILL.md"); err != nil {
+	if err := roundWith(t, "main.go", "main.go"); err != nil {
 		t.Fatalf("a covered hunk refused the round: %v", err)
 	}
-	r := wantRefusal(t, roundWith(t, "README.md", "SKILL.md"))
+	r := wantRefusal(t, roundWith(t, "other.go", "main.go"))
 	if r.rule != "R10" {
 		t.Fatalf("want R10, got %s: %s", r.rule, r.msg)
 	}

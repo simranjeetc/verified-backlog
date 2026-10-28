@@ -859,6 +859,7 @@ def _covers(*paths):
     return mark
 
 
+@_covers("scripts/cmd/bl/main.go")
 def a():
     assert True
 

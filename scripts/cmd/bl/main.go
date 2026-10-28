@@ -2217,12 +2217,44 @@ func validateR37(root string, it *Item, rows []checkRow, format int, supplied []
 		restore()
 		return frozen, err
 	}
+	if err := validateR37BlockingTestCoverage(it, rows, format, tf); err != nil {
+		restore()
+		return frozen, err
+	}
 	if err := probeTests(root, it, rows, format); err != nil {
 		restore()
 		return frozen, err
 	}
 	frozen.set, frozen.data = true, data
 	return frozen, nil
+}
+
+// validateR37BlockingTestCoverage refuses a blocking test row whose covers are only docs.
+func validateR37BlockingTestCoverage(it *Item, rows []checkRow, format int, tf testFile) error {
+	if format != 2 {
+		return nil
+	}
+	for _, r := range rows {
+		name, ok := testRowName(format, it, r)
+		if !ok || r.f["severity"] != "blocking" {
+			continue
+		}
+		def := tf.defs[name]
+		if len(def.covers) == 0 {
+			continue
+		}
+		docsOnly := true
+		for _, path := range def.covers {
+			if !strings.HasSuffix(path, ".md") {
+				docsOnly = false
+				break
+			}
+		}
+		if docsOnly {
+			return refuseRule("R37", "row %s: a blocking test row must exercise code; a docs clause is a decider: judge row or an advisory row", r.f["id"])
+		}
+	}
+	return nil
 }
 
 func cmdChecks(root string, a args) error {

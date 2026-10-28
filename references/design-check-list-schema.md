@@ -394,6 +394,12 @@ only by a blocking row whose `cmd` names that path, or by a test row's `@_covers
 
 An uncovered hunk refuses the round. Advisory rows do not count towards coverage.
 
+A docs clause is covered by a blocking `decider: judge` row. The verifier reads the documentation
+against the clause's example and places its `<path>:<line>` anchor in the changed hunk; R10 then
+counts that hunk as covered. A format-2 blocking test row whose `@_covers` arguments are all
+`.md` paths is refused under R37 when the list is frozen or replaced. A blocking test row must
+exercise code, so use a judge row for a docs clause.
+
 **R11 — severity is frozen with the list.** A row's `severity` may not change after the check list is frozen. A
 verdict-time request to downgrade a failing blocking row to advisory is refused; the requester must file a new item
 with the reason. (`--amend` in R4 cannot change severity either.)
@@ -691,6 +697,12 @@ the blind verifier writes a python3 file, one named function per assertion, **be
 and hashes that file with the list; and a row is one call of one function. Shell rows remain only for whole-suite
 commands such as `go -C scripts test ./...`.
 
+A blocking test row must exercise code. When its function's `@_covers` arguments are all paths
+ending in `.md`, `bl checks`, `bl checks --amend` and `bl rebaseline` refuse the list under R37,
+naming the row and directing the writer to a docs `decider: judge` row or an advisory row. No
+`@_covers` or at least one non-`.md` path is accepted, as is an advisory test row. This applies
+when a list is frozen or replaced; existing frozen lists remain usable.
+
 **The format.** Every `checks` and `rebaseline` event written from now on carries `format: 1` or `format: 2`. An event
 written before this rule carries no `format` and is format 1. `bl checks` without `--amend` writes format 2;
 `--amend` keeps the format of the list it amends. `bl rebaseline --tests` writes format 2; without `--tests` it keeps
@@ -723,7 +735,8 @@ A `decider: judge` row is unchanged in either format: R1, R3 and R34 still apply
   name starts with `_`, and a public class is refused;
 - other top-level statements (imports, assignments, helper decorators, the main block) are allowed;
 - coverage comes from a decorator `@_covers("<path>", ...)`: one of its string-literal arguments must equal the
-  file's path as a whole string (R10). `bl` reads the decorator from the parsed file and never runs it for coverage.
+  file's path as a whole string (R10). A blocking test row cannot cover only `.md` paths; use a docs judge row (R37).
+  `bl` reads the decorator from the parsed file and never runs it for coverage.
 
 `bl` parses the file with python3's `ast`, without running it, at every freeze that keeps a test file: `bl checks`,
 `bl checks --amend` and `bl rebaseline`, with or without `--tests`, parse the file that will be frozen after the
@@ -835,8 +848,9 @@ and `--amend --tests` on it is refused, because only `bl rebaseline` can move a 
 - `go -C scripts test ./...` with `exit 0` is accepted; `cd scripts && go test ./...`, `go -C scripts test ./... |
   tail -1`, and `echo "it's" | wc -l` are refused `(R37)`; `echo \$(date)` is accepted; `grep -c x f` with `stdout
   matches ^3$` is refused for its expect; `ls` with `exit 300` is refused.
-- a diff touching only `SKILL.md`, with one blocking test row carrying `@_covers("SKILL.md")`, is covered;
-  `@_covers("README.md")` leaves the hunk uncovered and `bl round` refuses under R10; a diff adding an empty `e.txt`
+- a docs hunk is covered by a blocking judge row whose anchor lies in that hunk; a stale anchor is refused under R10;
+  a blocking test row with only `@_covers("SKILL.md")` is refused under R37, while an advisory row or one also
+  covering code is accepted; a diff adding an empty `e.txt`
   is covered by `@_covers("e.txt")`.
 - after the freeze, appending `def c(): assert True` to tests.py on disk makes `bl run A1` exit 2 naming tests.py;
   `bl checks A1 --amend --file c2.tsv --tests t2.py`, where t2.py inserts `def c(): assert True` before its main block

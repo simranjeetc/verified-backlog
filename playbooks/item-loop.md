@@ -127,6 +127,11 @@ change touches. Pass the file with `--tests`.
 OUTPUT: the numbered check list, the test file, and nothing else.
 ```
 
+Put every docs clause in a `decider: judge` row with a specific `fail_if`; the
+verifier decides it by reading the docs against the clause's example. Never put
+a docs clause in a test that greps markdown. A blocking test row must exercise
+code; an all-`.md` `@_covers` is refused under R37.
+
 Dispatch 2 sends the claims, plus any cases you require, labelled as yours rather than as its rubric.
 Where the harness cannot continue a subagent, run both as fresh verifiers: the first returns a check
 list, the second re-derives with the claims and adds your cases.
