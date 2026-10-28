@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Gate tests for bl — every gate is proven by a refused call, not by reading the code.
 
-Runs against the compiled binary (scripts/bl), or BL=... to point elsewhere.
+When BL is unset, builds bl from the working tree into a temporary directory. When BL is set,
+runs that binary.
 Run as a script:  python3 scripts/bl.test.py
 Exit status: 0 when every test passes, 1 otherwise.
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
-import hashlib
 import os
 import re
 import shutil
@@ -19,11 +20,22 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# absolute: the binary is run from other working directories (the temp roots, and the
-# scratch root the verb list is read in), so a relative BL must not follow them.
-BL = os.path.abspath(os.environ.get("BL", str(HERE / "bl")))
-if not Path(BL).exists():
-    raise SystemExit(f"no bl binary at {BL} — build it: go build -o scripts/bl ./scripts/bl-go")
+# The binary is run from other working directories, so a relative BL must not follow them.
+if "BL" in os.environ:
+    BL = os.path.abspath(os.environ["BL"])
+else:
+    _BL_TEMP = tempfile.TemporaryDirectory(prefix="bl-test-bin-")
+    atexit.register(_BL_TEMP.cleanup)
+    BL = str(Path(_BL_TEMP.name) / "bl")
+    build = subprocess.run(
+        ["go", "-C", str(HERE), "build", "-o", BL, "./cmd/bl"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if build.returncode != 0:
+        detail = build.stderr or build.stdout
+        raise SystemExit(f"failed to build bl from the working tree:\n{detail}")
 RESULTS: list[tuple[str, bool, str]] = []
 
 

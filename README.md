@@ -83,7 +83,7 @@ The loop itself — producer prompt, blind verifier with two dispatches, fix rou
 ## Tests
 
 ```sh
-python3 scripts/bl.test.py      # 42 gate tests, each in its own throwaway git repo
+python3 scripts/bl.test.py      # BL unset builds from the working tree; BL set uses that binary
 cd scripts && go test ./...     # 11 unit tests
 ```
 
