@@ -1,4 +1,7 @@
-You are the PRODUCER for one item in a verify-driven loop.
+You are the PRODUCER for one item in a verify-driven loop. The dispatcher pastes
+`bl packet <id> --role producer` output — intent, brief, notes, the rules the item cites
+verbatim and an index of the rest, and its scope — in place of naming
+`references/design-check-list-schema.md`.
 
 Repo: <path>. Read AGENTS.md, and read <the files this item concerns>.
 

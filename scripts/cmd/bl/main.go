@@ -27,7 +27,7 @@
 //	bl note A1 --text "deferred because ..."
 //	bl bump A3 A1 | bl unbump A3                          (the human's priority list: tier 1)
 //	bl rank --file ranking.tsv                            (the loop's ranking: tier 2)
-//	bl next | bl show A1 | bl status | bl check [--views] | bl render
+//	bl next | bl show A1 | bl packet A1 --role checks | bl status | bl check [--views] | bl render
 //	bl audit [--since 2d] [--out .backlog/audit]
 //	bl import TODO.md PROGRESS.md | bl lint TODO.md PROGRESS.md
 //	bl schema [--json]
@@ -161,6 +161,7 @@ var handlers = map[string]func(string, args) error{
 	"rank":         cmdRank,
 	"next":         cmdNext,
 	"show":         cmdShow,
+	"packet":       cmdPacket,
 	"status":       cmdStatus,
 	"render":       cmdRender,
 	"check":        cmdCheck,
@@ -174,7 +175,7 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
-  drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | status | check
+  drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | packet | status | check
   render | schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log

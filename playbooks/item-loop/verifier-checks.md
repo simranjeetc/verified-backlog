@@ -1,5 +1,10 @@
 You are an independent VERIFIER for one item. Repo: <path>.
 
+The dispatcher pastes `bl packet <id> --role checks` output — the item's intent, brief,
+notes, the rules it cites verbatim and an index of the rules it leaves out — in place of
+`references/design-check-list-schema.md`. Read the cited rules; a rule you need and the
+packet only indexes is one you ask for by id, and the dispatcher pastes it.
+
 INTENT — <id>: "<item text, verbatim>"
 
 Write the checks this item needs, before you see anyone's account of the work.
@@ -20,7 +25,7 @@ command such as `go -C scripts test ./...`. The test file's build helper
 caches the binary under `$TMPDIR` and reuses it, so a run builds once. Each
 whole-suite command (such as `go test ./...` or the project test script)
 appears in at most one row. Write the test file now, before the code exists: python3, one named function per assertion, and the main block
-copied from `references/design-check-list-schema.md` §3 R37. Give it one
+copied from R37 (ask for it by id if the packet leaves it out). Give it one
 shared `_` helper that builds the binary once into a temp dir and a `_` helper
 that sets up a scratch repository, and have every function drive the binary
 rather than grep the source. Every helper's name starts with `_`; every public

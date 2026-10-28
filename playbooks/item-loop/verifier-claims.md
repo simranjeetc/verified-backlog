@@ -1,3 +1,6 @@
+The dispatcher includes `bl packet <id> --role verifier` output — the current brief, the
+cited rules and the claims below — rather than naming `references/design-check-list-schema.md`.
+
 The producer claims:
   - <claim 1, with the number it reported>
   - <claim 2>

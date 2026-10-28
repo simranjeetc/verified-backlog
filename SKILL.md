@@ -57,7 +57,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl bump A3 A1` | yes | the human's priority list (tier 1), in the order given; a later bump goes in front of an earlier one; refuses an unknown, closed, dropped or repeated id |
 | `bl unbump A3` | yes | takes the id out of tier 1; a later `bl bump` puts it back |
 | `bl rank --file ranking.tsv` | yes | the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order, replacing the last ranking; refuses a tier-1, unknown, closed, dropped or repeated id and an empty reason |
-| `bl next`, `bl show`, `bl status`, `bl check [--views]`, `bl render`, `bl schema [--json]` | no | reads; `render` only rewrites the views, `schema` is the single source for the fields |
+| `bl next`, `bl show`, `bl packet <id> --role checks|producer|verifier`, `bl status`, `bl check [--views]`, `bl render`, `bl schema [--json]` | no | reads; `packet` prints an item's brief, notes, cited rules and scope, plus claims for a verifier; `render` only rewrites the views, `schema` is the single source for the fields |
 | `bl audit [--since 2d]` | report only | arithmetic over the ledger and `run.log` |
 
 `bl next` names the item in flight; otherwise the first eligible item of tier 1 (the bumps, newest first), then tier 2 (the latest ranking), then tier 3 (everything else: the item the most open items wait on first, then filing order). A parked, closed, dropped or blocked item is never named, whatever its tier. Bumps and unbumps record `by: human`, a ranking `by: loop`.
