@@ -318,7 +318,7 @@ reopen it.
 **R5 — the list is frozen before the claims.** `bl claims A1 --file <path>` reads the producer's report from that
 path. A claim exists only if a `claims` event is in the ledger for that item; a hand-written `claims.md` is not a claim,
 and `bl claims` overwrites whatever is at that path.
-`bl open` on an item whose current attempt already has claims resumes that attempt without rewriting the brief, keeping the same brief, scope and before-tree; a different scope is refused under R5.
+`bl open` on an item whose current attempt already has claims resumes that attempt without rewriting the brief, keeping the same brief and scope and taking the current tree as its before-tree. A resume on a dirty working tree is refused under R5; commit or stash first. A different scope is also refused under R5.
 `bl claims` is refused if the item has no check list. `bl claims` is refused if the item already has a `claims`
 event — the claims are frozen once. `bl checks` is refused if the item already has a `claims` event, except for an
 amendment that adds a row (R4). This is the ordering rule the whole design rests on, and the one thing not to trade
@@ -591,7 +591,8 @@ list whose rows point at clauses that no longer exist is not a passing list.
 **R33 — the claims freeze the brief and the list.** Once an item has a claims event, the brief and the check list
 are frozen. No verb may rewrite them: `bl brief` and `bl checks` refuse with R5, and they refuse before they write
 anything. `bl open` on an item with claims does not re-open it with a new brief: it resumes the attempt (R5), keeping
-the brief, check list, claims and scope the claims were made against, and refuses a different scope.
+the brief, check list, claims and scope the claims were made against, taking the current tree as its before-tree, and
+refusing a different scope or a dirty working tree.
 
 
 **R34 — a command is a shell script, and a pattern is not a shell.** A `cmd` field is a script run by `/bin/sh -c`

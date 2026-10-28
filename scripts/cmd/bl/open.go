@@ -124,8 +124,8 @@ func cmdOpen(root string, a args) error {
 	}
 	resume := it.Claims != ""
 	if resume {
-		// R5: claims freeze the attempt's brief and scope. Resume by re-hashing every frozen
-		// artefact (R20) and re-recording the opening snapshot; never regenerate any of them.
+		// R5: claims freeze the attempt's brief and scope. Re-hash every frozen artefact (R20),
+		// require a clean working tree, and snapshot the current tree for the resumed attempt.
 		if err := verifyFrozen(root, it); err != nil {
 			return err
 		}
@@ -137,8 +137,19 @@ func cmdOpen(root string, a args) error {
 		if scopeGiven && !sameStrings(a.list("scope"), it.Scope) || ignoredGiven && !sameStrings(a.list("scope-ignored"), it.ScopeIgnored) {
 			return refuseRule("R5", "%s can resume only with its recorded scope", it.ID)
 		}
+		if err := refuseDirtyResume(root, it.ID); err != nil {
+			return err
+		}
+		before, err := verifiedTreeWriting(root)
+		if err != nil {
+			return err
+		}
+		ignored, err := ignoredUnderScope(root, it.Scope)
+		if err != nil {
+			return err
+		}
 		ev := Event{T: "open", ID: it.ID, Brief: it.Brief, BriefSHA: it.BriefSHA,
-			Scope: it.Scope, ScopeIgnored: it.ScopeIgnored, BeforeTree: it.BeforeTree, IgnoredBefore: it.IgnoredBefore}
+			Scope: it.Scope, ScopeIgnored: it.ScopeIgnored, BeforeTree: before, IgnoredBefore: ignored}
 		if _, err := appendEvent(root, ev); err != nil {
 			return err
 		}
@@ -190,6 +201,30 @@ func cmdOpen(root string, a args) error {
 	}
 	fmt.Printf("bl: %s in flight\n", it.ID)
 	return nil
+}
+
+func refuseDirtyResume(root string, id string) error {
+	if !isGit(root) {
+		return nil
+	}
+	status, code := git(root, "status", "--porcelain", "--untracked-files=all")
+	if code != 0 {
+		return refuseRule("R5", "could not check whether %s can resume on a clean tree", id)
+	}
+	var dirty []string
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if !isArtifact(path) {
+			dirty = append(dirty, path)
+		}
+	}
+	if len(dirty) == 0 {
+		return nil
+	}
+	return refuseRule("R5", "%s can resume only on a clean tree — commit or stash first: %s", id, strings.Join(dirty, "; "))
 }
 
 func sameStrings(a, b []string) bool {
