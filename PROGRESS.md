@@ -478,10 +478,13 @@ Source: human
 
 ## I85 — rows that match words in a markdown file pass or fail on wording, not on whether the docs say the right thing: 48 of 558 frozen rows only grep docs text; I80's B9e-B9j each grep one word of the design doc and would pass on a wrong description, and I79's tests-name-order-py failed correct work because two words sat on different lines. The human's requirement: a blocking row must run code; a row that only matches text in docs is advisory and never blocks a round, and a docs clause is judged by the verifier reading the docs against the clause's example
 
-Status: open
+Verdict: PASS — closed at d2f4a2f062d495348a83bc6105abb64f8dc7c739
 Source: human
 
+- r1 PASS — .backlog/evidence/I85-r1.txt (b7f9b8e78e6c)
+- code failures: 0 / cap 3
 - note: depends on I78's coverage rule change: today R10 counts a file as covered only through a blocking row naming it, so making docs rows advisory would leave SKILL.md and design-doc changes uncovered
+- note: Unblocked (Winston, 2026-10-28): format 2 keeps decider: judge rows (R37), and R10 already counts a blocking judge row whose anchor lies in a hunk as covering it, so a docs clause can be a blocking judge row anchored in the doc hunk; I78's coverage change is not needed.
 
 ## I87 — a brief is broken into items by hand: the human and the supervisor split it in conversation (playbooks/item-loop.md Step 0), and the decisions made there live in notes the blind verifier never reads (94 notes by 2026-10-26; I79's three-tier decision had to be copied into its brief by hand). The human's requirement: bl takes a brief and the human's up-front decisions and produces the items itself - each item with observable clauses and a worked example per clause (I84), its --after dependencies and its scope - checked by design rounds for clauses two readers could build differently before any item opens; the human approves the breakdown once, and every decision recorded then reaches each item's brief, not a note
 
