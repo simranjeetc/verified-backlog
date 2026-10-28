@@ -464,7 +464,7 @@ Source: supervisor:format-audit
 
 ## I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round
 
-Status: open
+Decision: parked — blocked on I105: frozen row B5a calls bl at the repo root, run.log grows, R27 refuses every run; resume with reopen+open after I105 closes — work kept in scratch worktree (not verified)
 Source: supervisor:format-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 format audit): bl brief (or a read-only bl rules <id>) prints only the design sections and R-rules the item text and brief.md cite, extracted by rule id from the doc, so the dispatch pastes that slice instead of naming the whole file; risk to weigh: a verifier blind to an uncited rule may miss an interaction, so the slice should name the rules it left out
@@ -631,4 +631,12 @@ Source: human
 - r1 PASS — .backlog/evidence/I102-r1.txt (bc4e309ca5d1)
 - code failures: 0 / cap 3
 - note: brief.md line 1 lost text when written (zsh applied a :s history modifier to $B:scripts...). Intended: 'those lines of git show 7862c32:scripts/cmd/bl/main.go (or main_test.go for test files). Layout, non-test (file <- BASE main.go lines): main.go <- 1-62 and 6417-6622 (package doc, imports, the cli section); ...'. Producer, checks and verifier all used this layout (verify-report P1).
+
+## I105 — R27 hashes .backlog/run.log, which P10 says is not state: any check row that runs bl in the real repo makes bl run refuse (R27) whatever the code does, and the item cannot restart because R36 needs a FAIL round and there is no run to round on. Exclude run.log from the R27 hash and reword R27 to say so
+
+Verdict: PASS — closed at 3ad775489d66021d842a0ee40d31d696018ef499
+Source: verifier:I76
+
+- r1 PASS — .backlog/evidence/I105-r1.txt (31e8873c9211)
+- code failures: 0 / cap 3
 
