@@ -3,7 +3,7 @@
 # Three cheap models only: gpt-6-luna via codex exec (Codex's workspace-write sandbox, no
 # approval prompts), claude:haiku via claude -p (Claude Code's bash sandbox, edits auto-accepted)
 # and deepseek-v4.1-flash via opencode run (opencode-go). Each chain is a primary and one
-# fallback; moves on when the run fails, times out, or leaves no output file. CHAIN="m1 m2"
+# fallback; moves on when the run fails, times out, or leaves no output file or final message. CHAIN="m1 m2"
 # overrides it (at most two models).
 role=$1; prompt=$2; out=$3; secs=${4:-1800}
 case $role in
@@ -25,7 +25,7 @@ for m in $chain; do
     gpt-6-luna|claude:haiku|deepseek-v4.1-flash) ;;
     *) echo "dispatch.sh: $m refused; only gpt-6-luna, claude:haiku and deepseek-v4.1-flash" >&2; exit 64 ;;
   esac
-  rm -f "$out"
+  rm -f "$out" "$out.last"
   echo "== $m $(date +%H:%M:%S)" >> "$log"
   if [ "$m" = claude:haiku ]; then
     # Claude Code's sandbox cannot write $TMPDIR, so mktemp and go build get a dir it can write
@@ -34,19 +34,22 @@ for m in $chain; do
       claude -p --model haiku --permission-mode acceptEdits --add-dir "$outdir" \
         --allowedTools Bash Read Write Edit Grep Glob \
         --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}' \
-        >> "$log" 2>&1 < "$prompt"
+        > "$out.last" 2>> "$log" < "$prompt"
   elif [ "$m" = deepseek-v4.1-flash ]; then
     perl -e 'alarm shift; exec @ARGV' "$secs" \
       opencode run --title "$(basename "$out") $m" --thinking --model "opencode-go/$m" "$(cat "$prompt")" \
-        >> "$log" 2>&1 < /dev/null
+        > "$out.last" 2>> "$log" < /dev/null
   else
     perl -e 'alarm shift; exec @ARGV' "$secs" \
       codex exec -s workspace-write -c approval_policy='"never"' --skip-git-repo-check --ephemeral \
         -c "sandbox_workspace_write.writable_roots=[\"$outdir\"]" \
-        -m "$m" - >> "$log" 2>&1 < "$prompt"
+        -m "$m" -o "$out.last" - >> "$log" 2>&1 < "$prompt"
   fi
   rc=$?
+  case $m in claude:haiku|deepseek-v4.1-flash) cat "$out.last" >> "$log" ;; esac
   echo "== exit $rc $(date +%H:%M:%S)" >> "$log"
-  if [ $rc -eq 0 ] && [ -s "$out" ]; then echo "MODEL $m"; exit 0; fi
+  if [ $rc -eq 0 ] && [ ! -s "$out" ] && [ -s "$out.last" ]; then mv "$out.last" "$out"; fi
+  if [ $rc -eq 0 ] && [ -s "$out" ]; then rm -f "$out.last"; echo "MODEL $m"; exit 0; fi
+  rm -f "$out.last"
 done
 echo "dispatch.sh: every model in the $role chain failed; see $log" >&2; exit 1
