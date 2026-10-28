@@ -256,9 +256,12 @@ Source: verifier:I19/r1
 
 ## I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality
 
-Status: open
+Verdict: PASS — closed at 36ab04806d335a6b4328fdec4b5e47ab3547b03c
 Source: verifier:I19/r1
 
+- r1 FAIL cause=code — .backlog/evidence/I28-r1.txt (8853546a7deb)
+- r2 PASS — .backlog/evidence/I28-r2.txt (e17214a3aacf)
+- code failures: 0 / cap 3
 - note: confirmed by I58 r1 (producer G5, verifier row R18-close-wrong-tree, run1 FAIL): bl close accepts a commit whose tree is not the pinned tree, including the base commit that lacks the change (cmdClose, main.go:3752-3826)
 
 ## I42 — SKILL.md's compaction rule fires on a session crossing a multiple of 250k tokens, a crossing the agent cannot observe while it works, so no session has ever compacted and the context has grown unbounded; the rule must fire at the loop's own step boundaries - a round recorded, an item closed, a batch of findings filed - with a harness-agnostic mechanism, and it must name the fallback for a harness with no compaction primitive: a fresh session continuing from a handoff note in the repository, because the loop's state lives in the ledger and the artefacts and not in the conversation
