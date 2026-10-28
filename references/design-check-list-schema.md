@@ -553,11 +553,12 @@ that no longer exists. The comparison is on the tree, so a command that only tou
 a command that writes into the scratch directory outside the repository does not trip it either. The current verified
 tree must also equal the run's tree when `bl round` runs (R6).
 
-**R27 — a row may not write to the ledger.** `bl run` hashes the whole of `.backlog/` before the run and again after it.
-If the hash differs, the run is refused: a row's command wrote to the ledger, the evidence, or the item files, and the
-run's own record would have been written by the thing it is recording. Because the whole directory is hashed, two
-items in flight at once cannot both run: the second run's pre-hash differs from the first's post-hash and is refused.
-The skill's one-item-in-flight rule is what keeps that from being a problem.
+**R27 — a row may not write to backlog state.** `bl run` hashes `.backlog/` before the run and again after it, except
+for `.backlog/run.log`. P10 defines that file as the log of every call, not state, so a row that only makes the log grow
+does not trip R27. If the hash differs, the run is refused: a row's command wrote to the ledger, the evidence, or the
+item files, and the run's own record would have been written by the thing it is recording. Because the rest of the
+directory is hashed, two items in flight at once cannot both run: the second run's pre-hash differs from the first's
+post-hash and is refused. The skill's one-item-in-flight rule is what keeps that from being a problem.
 
 ---
 
@@ -1179,7 +1180,7 @@ A third party can implement `bl checks`, `bl claims` and `bl round` from this do
 | the frequency of the calibration run | policy | R16 names the hook; the rate is a choice, not a derivation |
 | behaviour that depends on things outside the repository | limit | a parent `go.work`, a global git config, a developer's shell environment or an ignored file can change what a command does, and the record pins the tree, not the environment. This is a limit of the claim, not a defect in the rules |
 | who keeps `.backlog/` ignored | process | R25 refuses a round when `.backlog/` is tracked; the repository's `.gitignore` is what keeps it ignored, and `bl init` can only report it |
-| two items in flight at once | process | R27 hashes the whole of `.backlog/`, so a second concurrent run is refused; the skill's one-item-in-flight rule is what keeps this from mattering |
+| two items in flight at once | process | R27 hashes `.backlog/` except `run.log`, so a second concurrent run is refused; the skill's one-item-in-flight rule is what keeps this from mattering |
 | **the ledger is a file the agent can rewrite** | **architecture** | every hash in this design is stored in `.backlog/ledger.jsonl`, which lives in the repository the agent may write. A hash chain detects an edit to an event; it does not stop the agent writing a new chain, or a forged `run` or `round` event, in place of the old one. The guarantee this design can honestly claim is "a third party can detect that the record changed", not "the agent cannot rewrite history". Closing that needs a witness outside the agent's write surface — see the options below, which are all OS-agnostic. **This is a decision for a human, not a rule.** |
 | a change made and reverted inside the run | limit | R26 compares the tree before and after the run, so it catches a net change; a change made and reverted while the rows run is invisible. Catching it needs a per-row tree, at the cost of hashing the tree after every command |
 | a command that detaches a background process | limit | the run kills the process group on timeout, but a process that detaches itself and acts after the run is outside what the tree checks can see |

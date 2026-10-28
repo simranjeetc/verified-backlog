@@ -63,7 +63,7 @@ type runFile struct {
 // The order is P3's: R35 (the item is the one in flight) → R20 (the frozen artefacts are what
 // they were) → R1 (the list still parses) → R7 (every row ran and its row-verdict was computed;
 // R8, the expectation's form, is refused inside it) → R26 (the tree did not move) →
-// R27 (the ledger did not move). A run is refused on the first of these that fails, and no run
+// R27 (the backlog state did not move). A run is refused on the first of these that fails, and no run
 // file is written.
 //
 // R26 and R27 are comparisons, so they are made once the rows have run; the list is parsed
@@ -389,8 +389,9 @@ func inside(root, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// backlogHash hashes the whole of .backlog/ — every file's path and content — so that a row
-// that writes to the ledger, the evidence or the item files is caught (R27).
+// backlogHash hashes .backlog/ except run.log — every other file's path and content — so that a
+// row that writes to the ledger, the evidence or the item files is caught (R27). P10 defines
+// run.log as the log of every call, not state.
 func backlogHash(root string) (string, error) {
 	base := filepath.Join(root, backlogDir)
 	var files []string
@@ -399,6 +400,9 @@ func backlogHash(root string) (string, error) {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if filepath.Clean(p) == filepath.Join(base, runlogName) {
 			return nil
 		}
 		files = append(files, p)

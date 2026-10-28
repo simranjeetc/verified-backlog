@@ -628,9 +628,17 @@ func TestRunATouchDoesNotMoveTheTree(t *testing.T) {
 	}
 }
 
-// R27: a row that writes under .backlog is refused — with no run file and no ledger event.
-func TestRunRefusesARowThatWritesUnderBacklog(t *testing.T) {
-	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo x > .backlog/junk.txt\texit 0\t\t\twrites under .backlog\n")
+// R27 excludes run.log because P10 defines it as a log of calls, not state.
+func TestRunAllowsARowThatWritesOnlyRunlog(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo x >> .backlog/run.log\texit 0\t\t\twrites the call log\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
+// R27: a row that writes the ledger is refused — with no run file and no ledger event.
+func TestRunRefusesARowThatWritesLedger(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\tprintf '\\n' >> .backlog/ledger.jsonl\texit 0\t\t\twrites the ledger\n")
 	before, _ := readLedger(dir)
 	wantRule(t, call(t, cmdRun, dir, "A1"), "R27")
 	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
