@@ -476,6 +476,14 @@ Source: human
 - code failures: 0 / cap 3
 - note: round 1 PASS (supervisor, 2026-10-26): run1 132/132; verifier dispatch 2 (claude sonnet subagent - single family with the producer, recorded as such) found no claim falsified, three mutations each fail go test and bl.test.py, 20 refusals leave the ledger byte-identical; supervisor re-ran M1g (tier-1 order removed in a copy) and got the frozen exit 1. Filed beyond I81-I83: rows B9e-B9j grep a single word in the design doc and B8a passes on HEAD too, so they bind weakly; bl unbump takes several ids and an empty ranking or a bump with no id is refused - accepted as extra strictness
 
+## I84 — a brief clause can be read two ways, so the blind verifier and the producer each build a fair reading and a correct row fails correct code: I79 B3 said bl file --urgent must act 'exactly as if bl bump had run'; the verifier wrote a row requiring a bump event (urgent-writes-bump), the producer delivered the same order without one, and the item restarted as I80. The human's requirement: every brief clause states what can be observed (what a command prints, its exit code, what the ledger holds), never how it is built, and carries at least one worked example - a concrete input and the exact expected output - so that two readers cannot reach different goals; bl brief refuses a clause with no example
+
+Verdict: PASS — closed at c3824cd424f38d0faa835d6779c37fadb14ce83c
+Source: human
+
+- r1 PASS — .backlog/evidence/I84-r1.txt (18a690620e71)
+- code failures: 0 / cap 3
+
 ## I85 — rows that match words in a markdown file pass or fail on wording, not on whether the docs say the right thing: 48 of 558 frozen rows only grep docs text; I80's B9e-B9j each grep one word of the design doc and would pass on a wrong description, and I79's tests-name-order-py failed correct work because two words sat on different lines. The human's requirement: a blocking row must run code; a row that only matches text in docs is advisory and never blocks a round, and a docs clause is judged by the verifier reading the docs against the clause's example
 
 Verdict: PASS — closed at d2f4a2f062d495348a83bc6105abb64f8dc7c739
