@@ -63,30 +63,7 @@ before-state is recorded.
 
 One item, one producer.
 
-```
-You are the PRODUCER for one item in a verify-driven loop.
-
-Repo: <path>. Read AGENTS.md, and read <the files this item concerns>.
-
-ITEM (<id>), verbatim from the backlog:
-  <item text>
-
-PRODUCE
-  <what to change, and the property it must hold>
-
-RULES
-  - Do NOT commit or push.
-  - Do NOT edit the ledger, TODO.md, PROGRESS.md, BRIEF.md, or any spec the item points at.
-  - Do NOT fix anything outside this item, even when you find it broken. Report it.
-  - Do NOT declare the item passed. A separate verifier decides.
-  - Do NOT weaken an existing test to make it pass. If a guard blocks you, report it.
-  - Leave no untracked file behind in the repo.
-  - Write your evidence (commands and output) to <evidence dir>/<id>-evidence.md.
-
-REPORT BACK: files changed, the property you implemented and how it holds, the
-commands that prove it, the repo's test command and its result, and anything you
-could not do.
-```
+Read [producer.md](producer.md), fill its placeholders from the item brief, and send it to the producer.
 
 Completion: the producer has reported, and a command in its report shows the property holding.
 
@@ -98,38 +75,7 @@ single check.
 
 Dispatch 1 sends the intent and nothing else:
 
-```
-You are an independent VERIFIER for one item. Repo: <path>.
-
-INTENT — <id>: "<item text, verbatim>"
-
-Write the checks this item needs, before you see anyone's account of the work.
-Each check is a command with an expected result. A check that covers a change
-puts the covered file's path in the command, next to the thing it exercises:
-the command names the file it covers, because R10's coverage comparison is
-literal. Include the case that must still hold after the change, and the
-number you would re-derive. One assertion per row: a row's command asserts
-exactly one thing, and its expect must be reachable only through that
-assertion. A row whose expect an earlier statement in its own command can
-satisfy binds nothing, so do not write one; a second statement goes in a
-separate row.
-
-The list is format 2: a `decider: bl` row is either a test row — cmd exactly
-`python3 .backlog/items/<id>/tests.py <name>`, expect exactly `exit 0` — or a
-shell row, one simple command with `exit <code>`, kept only for a whole-suite
-command such as `go -C scripts test ./...`. The test file's build helper
-caches the binary under `$TMPDIR` and reuses it, so a run builds once. Each
-whole-suite command (such as `go test ./...` or the project test script)
-appears in at most one row. Write the test file now, before the code exists: python3, one named function per assertion, and the main block
-copied from `references/design-check-list-schema.md` §3 R37. Give it one
-shared `_` helper that builds the binary once into a temp dir and a `_` helper
-that sets up a scratch repository, and have every function drive the binary
-rather than grep the source. Every helper's name starts with `_`; every public
-def is a function a row names; `@_covers("<path>", ...)` names each file the
-change touches. Pass the file with `--tests`.
-
-OUTPUT: the numbered check list, the test file, and nothing else.
-```
+Read [verifier-checks.md](verifier-checks.md), fill its placeholders with the intent, and send it as dispatch 1.
 
 Put every docs clause in a `decider: judge` row with a specific `fail_if`; the
 verifier decides it by reading the docs against the clause's example. Never put
@@ -140,35 +86,7 @@ Dispatch 2 sends the claims, plus any cases you require, labelled as yours rathe
 Where the harness cannot continue a subagent, run both as fresh verifiers: the first returns a check
 list, the second re-derives with the claims and adds your cases.
 
-```
-The producer claims:
-  - <claim 1, with the number it reported>
-  - <claim 2>
-
-Falsify each claim with your own checks, plus:
-  - <the property, on a case you construct yourself>
-  - a row that covers a change puts the covered file's path in the command,
-    next to the thing it exercises
-  - one assertion per row: a row's command asserts exactly one thing, and its
-    expect must be reachable only through that assertion. A row that an earlier
-    statement in its own command can satisfy binds nothing, so do not ship one
-  - test binding: when the item touches a test, mutate the code in a copy and
-    confirm that test fails. Otherwise mark this row N/A with your reason
-  - the repo's documented test command; if there is none, or it is slow, name the
-    subset you ran and why
-  - hygiene: nothing changed outside <the item's file list>, no untracked file
-    left behind, and no difference against <before-state file> — add the file list
-    of any parallel item, whose edits are expected to show
-
-Work on copies under the evidence dir; leave the real data read-only. Do NOT edit
-tracked files.
-
-OUTPUT: | check | command | expected | observed |, then a Verdict line,
-     Verdict: PASS
-     Verdict: FAIL - <the rows that failed>
-then the strongest counterexample you found or "none found, tried X, Y, Z".
-Write this to <evidence dir>/<id>-verify-r<N>.md verbatim.
-```
+Read [verifier-claims.md](verifier-claims.md), fill its placeholders with the claims and required cases, and send it as dispatch 2.
 
 Completion: the verifier has returned a verdict with a command behind every row, and its own check
 list beside it.
@@ -211,7 +129,7 @@ a round the bar exists to prevent.
 A verifier on the same model as the producer shares its blind spots. Where a second model or a
 second harness is reachable, dispatch the verifier through it: the invariant, the invocations for
 the harnesses known to work, and the caveats are in
-[`references/second-harness.md`](../references/second-harness.md).
+[`references/second-harness.md`](../../references/second-harness.md).
 
 Two of those caveats bite every time, so they are worth repeating here. Write the brief to a file and
 pass the file (`"$(cat <brief>)"`) rather than an inline prompt, because a multi-line brief does not

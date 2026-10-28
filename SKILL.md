@@ -92,7 +92,7 @@ Open the file, copy its steps into your task list verbatim, then work them. A st
 
 | playbook | for |
 |---|---|
-| [`playbooks/item-loop.md`](playbooks/item-loop.md) | the default: one item through producer, blind verifier, fix rounds, close, commit. Its Step 0 initialises the ledger or imports a prose backlog |
+| [`playbooks/item-loop/index.md`](playbooks/item-loop/index.md) | the default: one item through producer, blind verifier, fix rounds, close, commit. Its Step 0 initialises the ledger or imports a prose backlog |
 | [`playbooks/irreversible-op.md`](playbooks/irreversible-op.md) | a rewrite of real state: migration, re-key, deletion, deploy |
 | [`playbooks/design-doc.md`](playbooks/design-doc.md) | a decision other work will be built on, where being wrong is expensive |
 

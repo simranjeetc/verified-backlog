@@ -61,7 +61,7 @@ BL=~/codebase/verified-backlog/scripts/bl
 Exit codes: `0` ok, `2` refused (nothing written), `3` the ledger is corrupt.
 
 The loop itself — producer prompt, blind verifier with two dispatches, fix rounds, close — is in
-[`playbooks/item-loop.md`](playbooks/item-loop.md). The rules that make the verification real are in
+[`playbooks/item-loop/index.md`](playbooks/item-loop/index.md). The rules that make the verification real are in
 [`SKILL.md`](SKILL.md).
 
 ## Gates
