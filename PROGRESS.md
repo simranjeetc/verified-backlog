@@ -623,3 +623,12 @@ Verdict: PASS — closed at 3c408db39febb8563c858192aec9e0ccc7e2aabb
 - r1 PASS — .backlog/evidence/I99-r1.txt (2301df490ec5)
 - code failures: 0 / cap 3
 
+## I102 — Reduce code-reading scope by splitting scripts/cmd/bl/main.go (6622 lines measured 2026-10-28) and main_test.go (6600 lines) into focused Go files in the same package without behavior changes. Move verb handlers with their corresponding tests into matching files or coherent verb groups; place shared ledger derivation, check validation, evidence execution and tree comparison in clearly named shared files. Keep main focused on CLI entry/routing. Do not create a new giant round.go or duplicate shared helpers merely to achieve one file per verb. Preserve CLI output/exit codes, ledger format, refusal semantics, verification rules and existing test assertions. Example: work on close can read close.go and its named shared dependencies plus close_test.go, rather than both entire monoliths; existing behavior checks pass against the working-tree-built binary. Update build instructions or tests that assume go build main.go to package-based builds where needed. This is a mechanical organization change, not an opportunity to alter logic.
+
+Verdict: PASS — closed at f92e996dd9316f5cf7386fa4da71d4ae123aebeb
+Source: human
+
+- r1 PASS — .backlog/evidence/I102-r1.txt (bc4e309ca5d1)
+- code failures: 0 / cap 3
+- note: brief.md line 1 lost text when written (zsh applied a :s history modifier to $B:scripts...). Intended: 'those lines of git show 7862c32:scripts/cmd/bl/main.go (or main_test.go for test files). Layout, non-test (file <- BASE main.go lines): main.go <- 1-62 and 6417-6622 (package doc, imports, the cli section); ...'. Producer, checks and verifier all used this layout (verify-report P1).
+
