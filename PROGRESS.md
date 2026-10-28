@@ -294,15 +294,18 @@ Source: supervisor:rebaseline-audit
 
 ## I48 — a frozen row's expect can be an RE2 pattern that no output can ever match, and a run before the work cannot show it, because the row fails then for two reasons at once - the work is not done, and the pattern is unreachable: I21 s274 (O6 held a backslash before its pipe, a literal pipe in RE2, and failed the pre-freeze run at s273 for the expected reason), I5 s32 (C11, the same escaped pipe). The freeze must prove each blocking row's expect can be satisfied at all
 
-Status: open
+Verdict: PASS — closed at c31054bb1bb9a55fb9845280698418c0a1e6e1dc
 Source: supervisor:rebaseline-audit
 
+- r1 PASS — .backlog/evidence/I48-r1.txt (7bd778acb973)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified, from the 2026-10-26 rebaseline audit): add a witness column to checks.tsv - a sample output the row's expect must match; bl checks compiles the RE2 pattern and refuses the row if the witness does not match. Only adds refusals, so the guard gets stricter (E11)
 - note: second instance (verifier:I79/r1, 2026-10-26): the supervisor's own row main-go-gofmt in I79's frozen list had expect 'stdout matches ^gofmt-clean$', which RE2 cannot match against 'gofmt-clean' plus the trailing newline echo prints, so the row could never pass on correct code; it forced I79's restart as I80
 - note: decision (human, 2026-10-26): also fix the matcher - stdout and stderr expects ignore one trailing newline, so a pattern ending in $ matches what echo prints (I79 main-go-gofmt failed correct code on this)
 - note: after I89 most of this class is gone: only shell rows and stderr/stdout expects remain; keep the trailing-newline tolerance
 - note: related (2026-10-27): the R10 coverage gap found only at round is noted on I47 with the freeze-probe fixes; I78 hit it and was re-filed as I96.
 - note: Narrowed (Winston, 2026-10-28): I93 made every new list format 2, whose expects are only exit <code>, so an unreachable RE2 pattern can no longer be frozen. What remains is format-1 lists frozen before I93 (bl run could flag an R8 pattern that cannot match any output). The R10 coverage-gap note on this item lives on I47; work it there.
+- note: Re-narrowed (Winston, 2026-10-28): the only open format-1 list is I58 (parked); regex expects stay live in bl second-check. This attempt does the human-decided trailing-newline tolerance only; the witness column is dropped (format 2 cannot freeze regex rows).
 
 ## I49 — R34 refuses an escaped pipe in a row's command, but not the other places where a pattern's dialect makes a row a no-op: I10 s79 (+ is a literal in a basic regular expression, so the grep counted zero lines), I8 s53 (a sed mutation whose target word is not in the file, so the mutation changed nothing), I23 s242 (a grep for a phrase the file does not contain). Rows that use a dialect's metacharacter where that dialect treats it as a literal, and mutations that change no byte, must be refused at the freeze
 
