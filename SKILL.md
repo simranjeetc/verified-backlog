@@ -53,6 +53,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl reopen A1` | yes | reverses a decline or a park |
 | `bl restart A1 --reason bad-check --why "…" --change "…"` | yes | ends the item's attempt and starts the next one, carrying its scope into the next `bl open` unless scope flags are given; `--reason` is one of `bad-check`, `extra-file`, `damaged-evidence`, `wrong-premise`. It writes the attempt's failure record and leaves the item open and out of flight |
 | `bl note A1 --text "…"` | yes | one note, scoped to an item |
+| `bl signoff A1 --by <name> --note <text>` | yes | a human sign-off, before the first round; permits closing without a blocking `decider: bl` row |
 | `bl bump A3 A1` | yes | the human's priority list (tier 1), in the order given; a later bump goes in front of an earlier one; refuses an unknown, closed, dropped or repeated id |
 | `bl unbump A3` | yes | takes the id out of tier 1; a later `bl bump` puts it back |
 | `bl rank --file ranking.tsv` | yes | the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order, replacing the last ranking; refuses a tier-1, unknown, closed, dropped or repeated id and an empty reason |

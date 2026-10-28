@@ -497,8 +497,8 @@ the run, so a row may reuse what an earlier row left there. The run file records
 environment variable must set it inside its `cmd`.
 
 **R22 — sign-off.** `bl signoff A1 --by <name> --note <text>` records a `signoff` event. It names the item, a
-non-empty person and a non-empty note. It is accepted only for an item that has no round yet, so it cannot override a
-failed round; it exists so that an item with no `decider: bl` blocking row can still close (R15).
+non-empty person and a non-empty note. A human may sign off only an item in flight before its first round, so it
+cannot override a failed round; it exists so that an item with no `decider: bl` blocking row can still close (R15).
 
 **R23 — the cause is constrained.** `--cause` is required for every `FAIL` round and takes `code`, `harness` or
 `dispute`. When R13 applies the cause is `dispute` and a supplied `--cause code` is refused.

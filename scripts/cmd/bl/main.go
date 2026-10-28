@@ -105,6 +105,7 @@ type Event struct {
 	MS      *int64 `json:"ms,omitempty"`
 	ID      string `json:"id,omitempty"`
 	Text    string `json:"text,omitempty"`
+	Note    string `json:"note,omitempty"`
 	After   string `json:"after,omitempty"`
 	Source  string `json:"source,omitempty"`
 	Verdict string `json:"verdict,omitempty"`
@@ -588,6 +589,8 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Reason = ""
 		case "note":
 			it.Notes = append(it.Notes, ev.Text)
+		case "signoff":
+			// Sign-offs are audit events; their existence is checked by commands that need it.
 		}
 	}
 	for _, it := range order {
@@ -4772,6 +4775,26 @@ func cmdClose(root string, a args) error {
 	if last := it.last(); last == nil || last.Verdict != "PASS" {
 		return refuse("%s has no PASS round — nothing to close", it.ID)
 	}
+	if !hasSignoff(events, it.ID) {
+		rowsText, verifyErr := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+		if verifyErr != nil {
+			return verifyErr
+		}
+		rows, parseErr := parseChecks(string(rowsText))
+		if parseErr != nil {
+			return parseErr
+		}
+		qualifies := false
+		for _, row := range rows {
+			if row.f["severity"] == "blocking" && row.f["decider"] == "bl" {
+				qualifies = true
+				break
+			}
+		}
+		if !qualifies {
+			return refuseRule("R15", "%s last round has no blocking decider: bl row and no sign-off", it.ID)
+		}
+	}
 	commit, err := cleanText(a.get("commit"), "commit")
 	if err != nil {
 		return err
@@ -4826,6 +4849,15 @@ func cmdClose(root string, a args) error {
 	}
 	fmt.Printf("bl: closed %s at %s\n", it.ID, short)
 	return nil
+}
+
+func hasSignoff(events []Event, id string) bool {
+	for _, ev := range events {
+		if ev.T == "signoff" && strings.EqualFold(ev.ID, id) {
+			return true
+		}
+	}
+	return false
 }
 
 func cmdDrop(root string, a args) error {
@@ -5412,6 +5444,37 @@ func cmdNote(root string, a args) error {
 	return nil
 }
 
+func cmdSignoff(root string, a args) error {
+	if err := requireLedger(root); err != nil {
+		return err
+	}
+	events, err := readLedger(root)
+	if err != nil {
+		return err
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return err
+	}
+	it, err := lookup(byID, a.pos(0))
+	if err != nil {
+		return refuseRule("R22", "unknown item %s", a.pos(0))
+	}
+	if it.Status != "open" || !it.Opened || len(it.attemptRounds()) != 0 {
+		return refuseRule("R22", "%s must be in flight before its first round", it.ID)
+	}
+	by := strings.TrimSpace(a.get("by"))
+	note := strings.TrimSpace(a.get("note"))
+	if by == "" || note == "" || strings.ContainsAny(by+note, "\r\n") {
+		return refuseRule("R22", "--by and --note must be non-empty single lines")
+	}
+	if _, err := appendEvent(root, Event{T: "signoff", ID: it.ID, By: by, Note: note}); err != nil {
+		return err
+	}
+	fmt.Printf("bl: signed off %s by %s\n", it.ID, by)
+	return nil
+}
+
 // rankable resolves an id a bump, unbump or rank may name: a known item that is neither closed nor
 // declined, named once in the call.
 func rankable(byID map[string]*Item, id string, seen map[string]bool) (*Item, error) {
@@ -5885,6 +5948,7 @@ func schemaJSON() map[string]any {
 			"defer":         {"required": {"id", "reason"}, "optional": {}},
 			"reopen":        {"required": {"id"}, "optional": {"reason"}},
 			"note":          {"required": {"id", "text"}, "optional": {}},
+			"signoff":       {"required": {"id", "by", "note"}, "optional": {}},
 			"bump":          {"required": {"ids", "by"}, "optional": {}},
 			"unbump":        {"required": {"ids", "by"}, "optional": {}},
 			"rank":          {"required": {"ranking", "by"}, "optional": {}},
@@ -5898,7 +5962,7 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "bump", "unbump", "rank"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "signoff", "bump", "unbump", "rank"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
 	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
 	// from 12 without counting the lines.
@@ -6459,6 +6523,7 @@ var handlers = map[string]func(string, args) error{
 	"reopen":       cmdReopen,
 	"restart":      cmdRestart,
 	"note":         cmdNote,
+	"signoff":      cmdSignoff,
 	"bump":         cmdBump,
 	"unbump":       cmdUnbump,
 	"rank":         cmdRank,
@@ -6477,7 +6542,7 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
-  drop | defer | reopen | restart | note | bump | unbump | rank | next | show | status | check
+  drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | status | check
   render | schema | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
