@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (21)
+## Queue (22)
 
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
 - [ ] I57 — the orchestrating session runs the whole backlog in one conversation, so its context grows with every item until the human compacts it by hand; the loop's state already lives in the repository (the ledger, .backlog/HANDOFF.md, git), so no session needs to outlive one item. Ship the smallest workable outer loop: a utility with no conversation context of its own that asks bl next for an item, starts a fresh harness session to work that one item through playbooks/item-loop.md, and starts the next fresh session when that one exits - stopping when bl next names no item, and refusing to start another session when the previous one left its item in flight without a recorded round. Later refinements are filed as their own items  _(human)_
@@ -25,6 +25,7 @@
 - [ ] I103 — bl.test.py with BL unset and no go on PATH dies with a FileNotFoundError traceback instead of a one-line 'failed to build bl' message  _(verifier:I99/r1)_
 - [ ] I104 — the orchestrator's lessons live in Claude Code's private memory (~/.claude/projects/.../memory: zsh heredoc $VAR:s modifier, no CI/hook dependency, model split, Winston decides), which OpenCode, luna and deepseek never read; move loop-procedure lessons into playbooks/item-loop/index.md and personal standing preferences into ~/.agents/ (imported by both harnesses like output-style.md), then delete the Claude-only copies so a harness switch loses nothing  _(human)_
 - [ ] I107 — dispatch.sh: deepseek's out file is opencode's whole stdout (thinking included, verdict at line ~400 of 434); take only the final message (opencode --format json), and treat a whitespace-only message as empty
+- [ ] I110 — bl open's dirty-tree check (I109, open.go refuseDirtyResume) parses git status --porcelain by line[3:], so a C-quoted path (spaces) or a rename 'a -> b' inside a tracked .backlog/ is not recognised as an artefact and a resume is falsely refused; use --porcelain -z
 
 ## Blocked (0)
 
