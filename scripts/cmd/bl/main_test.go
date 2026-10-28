@@ -3266,6 +3266,79 @@ func TestRunRecordsTheRowItRan(t *testing.T) {
 	}
 }
 
+func TestRunRecordsNonnegativeRowDuration(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\tsleep 1\texit 0\t\t\tsleeps\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if len(rf.Rows) != 1 || rf.Rows[0].MS < 1000 {
+		t.Fatalf("row duration = %+v, want at least 1000 ms", rf.Rows)
+	}
+}
+
+func TestRunWithoutMSStillRoundsShowsChecksAndCloses(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	path := filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")
+	var run map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &run); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range run["rows"].([]any) {
+		delete(row.(map[string]any), "ms")
+	}
+	data, err = json.MarshalIndent(run, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(dir, ".backlog", "ledger.jsonl")
+	ledger, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(ledger)), "\n") {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev["t"] == "run" {
+			ev["run_sha"] = shaHex(append(data, '\n'))
+		}
+		events = append(events, ev)
+	}
+	var ledgerOut strings.Builder
+	for _, ev := range events {
+		line, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledgerOut.Write(line)
+		ledgerOut.WriteByte('\n')
+	}
+	if err := os.WriteFile(ledgerPath, []byte(ledgerOut.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdShow, dir, "A1"); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	closeItem(t, dir)
+}
+
 // R7: the binary computes a binary row's row-verdict from the row's expectation and the values
 // the run observed, and records it with them. The exit code is not the verdict: a row whose
 // command exits 2 because the binary refused is a PASS row when its expectation matches what

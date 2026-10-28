@@ -102,6 +102,7 @@ type Event struct {
 	Seq     int    `json:"seq"`
 	At      string `json:"at"`
 	T       string `json:"t"`
+	MS      *int64 `json:"ms,omitempty"`
 	ID      string `json:"id,omitempty"`
 	Text    string `json:"text,omitempty"`
 	After   string `json:"after,omitempty"`
@@ -2509,6 +2510,7 @@ type runRow struct {
 	ID           string `json:"id"`
 	Cmd          string `json:"cmd"`
 	Exit         int    `json:"exit"`
+	MS           int64  `json:"ms"`
 	TimedOut     bool   `json:"timed_out"`
 	Signalled    bool   `json:"signalled"`
 	Stdout       string `json:"stdout"`
@@ -2776,11 +2778,13 @@ func execCmd(root string, command string, env []string, timeout time.Duration) r
 	cmd.Stderr = &errOut
 	// Its own process group, so a timeout kills the children too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	started := time.Now()
 	if err := cmd.Start(); err != nil {
 		// the command could not be run at all
 		rec.Exit = 127
 		rec.Stderr = err.Error() + "\n"
 		rec.StderrSHA = shaHex([]byte(rec.Stderr))
+		rec.MS = max(0, time.Since(started).Milliseconds())
 		return rec
 	}
 	done := make(chan error, 1)
@@ -2796,6 +2800,7 @@ func execCmd(root string, command string, env []string, timeout time.Duration) r
 		rec.Exit = -1
 		rec.TimedOut = true
 	}
+	rec.MS = max(0, time.Since(started).Milliseconds())
 	rec.Stdout, rec.StdoutBinary = encodeStream(out.Bytes())
 	rec.Stderr, rec.StderrBinary = encodeStream(errOut.Bytes())
 	rec.StdoutSHA = shaHex(out.Bytes())
@@ -4220,7 +4225,7 @@ func cmdSecondCheck(root string, a args) error {
 	}
 	ev := Event{
 		T: "second-check", ID: it.ID, Row: row, Run: runEv.Run,
-		Computed: computed, Cmd: command, Expect: expect,
+		Computed: computed, Cmd: command, Expect: expect, MS: &rec.MS,
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
@@ -5789,7 +5794,7 @@ func schemaJSON() map[string]any {
 			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
 			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding"}},
 			"restart":       {"required": {"id", "reason", "why", "change", "attempt", "record", "record_sha"}, "optional": {}},
-			"second-check":  {"required": {"id", "row", "run", "computed"}, "optional": {"cmd", "expect"}},
+			"second-check":  {"required": {"id", "row", "run", "computed"}, "optional": {"cmd", "expect", "ms"}},
 			"misclassified": {"required": {"id", "row", "computed"}, "optional": {"run", "cmd", "expect"}},
 			"close":         {"required": {"id", "commit"}, "optional": {}},
 			"drop":          {"required": {"id", "reason"}, "optional": {"by"}},

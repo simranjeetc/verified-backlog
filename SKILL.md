@@ -44,7 +44,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
 | `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
-| `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with the exit code and the full output of each row, and records the file's hash |
+| `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with each row's exit code, `ms` duration and full output, and records the file's hash |
 | `bl round A1 --rows verdicts.tsv` | yes | records one round: the verdict is derived from the blocking rows, the cause is constrained, and the evidence file holds one line per frozen check id |
 | `bl second-check A1 --row J1 --cmd "…" --expect "stdout matches ^two"` | yes | runs a second judge's command under the same fixed environment and records the verdict it computes; a second check that disagrees with the row's verdict refuses the round |
 | `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round, a clean tree, a real commit |

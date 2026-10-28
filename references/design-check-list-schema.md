@@ -483,7 +483,9 @@ first that carries one carries none.
 **R21 — the execution environment is fixed.** The environment in §2 is the whole environment, with one exception:
 `PATH` is inherited from the caller, and the inherited value is recorded in the run file so that the run can be
 reproduced. No other variable is inherited, in particular not `GIT_*`, and `HOME` and `TMPDIR` point outside the
-repository. A row that needs an environment variable must set it inside its `cmd`.
+repository: they are one scratch directory per run, shared by every row of that run in list order and removed after
+the run, so a row may reuse what an earlier row left there. The run file records each row's `ms`. A row that needs an
+environment variable must set it inside its `cmd`.
 
 **R22 — sign-off.** `bl signoff A1 --by <name> --note <text>` records a `signoff` event. It names the item, a
 non-empty person and a non-empty note. It is accepted only for an item that has no round yet, so it cannot override a
