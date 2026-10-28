@@ -695,3 +695,9 @@ Verdict: PASS — closed at a645a714095991c148f2ec13c1894b13ca0844be
 - r4 PASS — .backlog/evidence/I115-r4.txt (5864462a11f5)
 - code failures: 0 / cap 3
 
+## I116 — the overall picture lives only in chat and in long ledger notes, so it drifts and nobody refers to it. Keep references/picture.md: ASCII diagrams (each <=15 lines, every box labeled), each headed by a depicts: line naming the repo paths and/or item ids it shows. Guards inside bl: (A) bl round refuses (new rule) when the round's hunks touch a depicted path and picture.md has no hunk in the same round, unless the verdicts file carries '# picture: unchanged <reason>'; the choice is recorded on the round event. (B) bl packet (every role) prints the diagrams whose depicts: paths meet the item's scope. (C) bl check reports a depicts: path that no longer exists. Seed diagrams: the bl item lifecycle (file -> open -> brief -> checks -> produce -> claims -> run -> verify -> round -> close, with restart/defer/drop), and the I57 outer utility (human 2026-10-28): bl next -> launch one fresh Opus session, save item id + dispatch job id -> poll job status every 5 s while running -> job ended: inspect bl -> item closed/parked/dropped AND no active writers -> next item; failed/unfinished/uncertain -> STOP with reason. Human request 2026-10-28: diagrams added, maintained, and referred to as the picture evolves.
+
+Decision: declined — user dropped: not wanted; code reverted uncommitted, run1 passed 69/69 (not verified)
+Source: human
+
+
