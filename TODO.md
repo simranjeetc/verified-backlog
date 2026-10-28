@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (21)
+## Queue (22)
 
 - [ ] I28 — R18 says the commit's tree <sha>^{tree} must equal the verified tree pinned by the PASS round, but the code's close path never computes <sha>^{tree} - it compares git status with the artefacts tolerated - and since the verified tree now excludes the rendered views while every commit tree contains them, R18 as written cannot hold in this repository; the design must state the close's tree test the way the code implements it, or the code must implement the tree equality  _(verifier:I19/r1)_
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
@@ -25,6 +25,7 @@
 - [ ] I88 — a question only the human can answer stops the whole run: today the supervisor asks mid-item and waits (I79's B3 reading, I54's guard-weakening choice, I51's options), so an unattended loop either guesses or blocks. The human's requirement: when an item needs a human decision, the loop records the question against the item, parks it, and moves on to the next item that does not depend on it; at the end of the run, or when nothing is left to work, the human gets every open question in one batch, and answering one reopens its item with the answer written into the item's brief  _(human)_
 - [ ] I90 — the skill dispatches agents (design rounds, checks writer, producer, verifier) with no config for which model plays which role, so the choice is made by hand each session and a dead model stalls the loop: the first I89 design round on opencode/deepseek-v4-pro hung about 12 h with no output and no fallback; the fallback chain exists only as a scratchpad script; references/second-harness.md:24 names the opencode run command but no roles, chain or timeout. The human's decision (2026-10-27): Claude Code subagents (opus, sonnet, haiku) and opencode-go flash models only  _(human)_
 - [ ] I91 — bl records no model for any step, so the rule that the checks writer and the verifier are independent of the producer cannot be checked: a producer and verifier from the same model family pass unnoticed, and nothing in the ledger shows that every step of I3-I80 ran on Claude  _(human)_
+- [ ] I98 — a regex expect is matched against the stored stream, which encodeStream base64-encodes when the output is not valid UTF-8 (main.go:2834), so stdout matches/stderr matches can never match the real bytes of binary output - verifier:I48/r1: printf '\000\377\376x\n' computed FAIL against a pattern for x; same on HEAD before I48. Match the raw bytes, not the encoded record
 
 ## Blocked (0)
 
