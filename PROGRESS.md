@@ -517,11 +517,13 @@ Source: human
 
 ## I93 — check-list rows are free-form shell one-liners (I80: 132 rows, 482 characters on average) with RE2 expects, and nearly every repeat loop came from them: 15 of 18 rebaselines were row defects (escaped pipes, BRE +, git add -q, exact spacing, a sed that matched nothing, a $ that misses the trailing newline), and I79 restarted on three rows that could never pass; I80's row B5ax even appends a close event to the ledger by hand. The human's decision (2026-10-26, architecture review): the blind verifier writes a black-box test file - python3, one shared helper that builds the binary and sets up a scratch repo, one named function per assertion - before the code exists; bl freezes and hashes that file with the list; a row is one call, python3 <test file> <test name>, with an exit expect; shell rows remain only for whole-suite commands such as go test ./... The design change goes through playbooks/design-doc.md first (it touches R8, R10 and R34), and I78's rows are its first real use [re-filed from I89 then I92, 2026-10-27: I89 over check row B10b writing .backlog/run.log, I92 opened over an already-applied diff]
 
-Decision: parked — row defects after claims (dispute round r1: 14 bad rows, code meets the brief); awaiting bl restart from I78, then restart I93 with the 14 rows fixed (not verified)
+Verdict: PASS — closed at 71f7d824b4eb6cdcb8c06bc39b78f854e7940207
 Source: human
 
 - r1 FAIL cause=dispute — .backlog/evidence/I93-r1.txt (95db1e240ab3)
+- r2 PASS — .backlog/evidence/I93-r2.txt (bfc2500eaae1)
 - code failures: 0 / cap 3
+- note: closed at 71f7d82 on round r2 (run2, tree 30c2c2a). r3 could not be recorded: first R10 (scripts/dispatch.sh commits after open joined the diff), then R28 (attempt 2 opened with no scope, so a .claude lock file counted). The commit holds dispatch.sh at 805a511 so its tree is the verified tree; the next commit restores it. Filed I97 for the scope gap.
 
 ## I94 — scripts/dispatch.sh hands work to flash models, but the orchestrator learns that a job finished only through Claude Code's run_in_background task notification, so the loop cannot run with Codex, OpenCode or another harness as the brain; the role-to-chain map is hardcoded in a case statement (scripts/dispatch.sh:6-11); the perl alarm timeout kills opencode but not its children; and the model that answered is printed to stdout, not written where bl can read it. The human's decision (2026-10-27): a harness-agnostic utility in Go; the main session must never block while it has other work; Opus only writes the spec, and flash models dispatched through the current scripts/dispatch.sh implement it
 
