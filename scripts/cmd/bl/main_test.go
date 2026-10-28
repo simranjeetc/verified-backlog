@@ -366,6 +366,22 @@ func checksRefused(t *testing.T, dir, list, rule string, extra ...string) {
 	wantRule(t, call(t, cmdChecks, dir, argv...), rule)
 }
 
+// legacyChecks freezes a check list the way a list frozen before I89 was frozen: it writes the
+// list and appends a `checks` event with no `format` field, which is format 1 (I89, B1, B9).
+// The format-2 write path is `checksOK`; fixtures that need a format-1 list — R8's five
+// expect forms, R34's shell dialect, a row that is a shell script — use this instead, because
+// those rules still apply to a format-1 list and no new list can be frozen as one.
+func legacyChecks(t *testing.T, dir, list string) {
+	t.Helper()
+	rel := itemFile("A1", checksName)
+	if err := atomicWrite(filepath.Join(dir, rel), list); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendEvent(dir, Event{T: "checks", ID: "A1", Checks: rel, ChecksSHA: shaHex([]byte(list))}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const goodRows = "S1\tbl\tblocking\tB1\tgo test ./...\texit 0\t\t\ttests pass\n" +
 	"J1\tjudge\tadvisory\t\tgit diff\t\tthe diff renames a public verb\tnaming quality is a reading of the diff\tnames stay stable\n"
 
@@ -476,13 +492,21 @@ func TestChecksR1JudgeRowNeedsFailIf(t *testing.T) {
 	}
 }
 
+// R8's five forms are the format-1 expectation rule (I89, B10): a format-2 `decider: bl` row
+// is governed by R37 instead. The write path is exercised through a re-baseline onto a
+// format-1 item, which keeps R8's checks.
 func TestChecksR8ExpectForms(t *testing.T) {
 	for _, expect := range []string{
 		"exit 0", "exit 255", "stdout matches ^ok", "stderr matches (?i)error", "file exists scripts/go.mod",
 		"tree == 0123456789abcdef0123456789abcdef01234567",
 	} {
 		t.Run("ok "+expect, func(t *testing.T) {
-			checksOK(t, openItem(t), checksHeader+"S1\tbl\tblocking\tB1\tx\t"+expect+"\t\t\tc\n")
+			dir := openItem(t)
+			legacyChecks(t, dir, rebaselinedList)
+			list := checksHeader + "S1\tbl\tblocking\tB1\tx\t" + expect + "\t\t\tc\n"
+			if err := call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "the premise moved"); err != nil {
+				t.Fatalf("R8 must accept %q: %v", expect, err)
+			}
 		})
 	}
 	for _, expect := range []string{
@@ -490,7 +514,13 @@ func TestChecksR8ExpectForms(t *testing.T) {
 		"file exists /etc/passwd", "file exists ../x", "tree == ABC", "Exit 0",
 	} {
 		t.Run("refused "+expect, func(t *testing.T) {
-			checksRefused(t, openItem(t), checksHeader+"S1\tbl\tblocking\tB1\tx\t"+expect+"\t\t\tc\n", "R8")
+			dir := openItem(t)
+			legacyChecks(t, dir, rebaselinedList)
+			list := checksHeader + "S1\tbl\tblocking\tB1\tx\t" + expect + "\t\t\tc\n"
+			r := wantRefusal(t, call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "the premise moved"))
+			if r.rule != "R8" {
+				t.Fatalf("want a refusal under R8, got %s: %s", r.rule, r.msg)
+			}
 		})
 	}
 }
@@ -947,7 +977,7 @@ func TestRebaselineNeedsAReason(t *testing.T) {
 // and the total-round budget both survive it, so a re-baseline cannot buy more rounds.
 func TestRebaselineResetsNoCount(t *testing.T) {
 	dir := gitItem(t)
-	checksOK(t, dir, roundList)
+	legacyChecks(t, dir, roundList)
 	// A re-baseline replaces the frozen list with a new premise. The claims freeze the list
 	// (R5), so the re-baseline comes before them — and before every round, because a round
 	// needs a claims event (R6).
@@ -1512,7 +1542,7 @@ func TestR19ACountsAPassRoundTowardsTheTotal(t *testing.T) {
 // six-round budget survives two re-baselines.
 func TestR19TheBudgetSurvivesTwoRebaselines(t *testing.T) {
 	dir := gitItem(t)
-	checksOK(t, dir, roundList)
+	legacyChecks(t, dir, roundList)
 	// Two re-baselines: each one replaces the frozen list with a new premise. The claims
 	// freeze the list (R5), so they come before the claims — and before every round, because
 	// a round needs a claims event (R6).
@@ -1925,7 +1955,10 @@ func TestChecksPrecedenceNamesTheEarliestBrokenRule(t *testing.T) {
 		for _, later := range p1Order[i+1:] {
 			t.Run(earlier+" before "+later, func(t *testing.T) {
 				dir := openItem(t)
-				// the state rules are broken by the item's state
+				// The state rules are broken by the item's state. A list-rule pair is judged on a
+				// format-1 list (an amendment keeps format 1), because R8 and R34 still apply there
+				// and no new list can be frozen as format 1 (I89, B9, B10).
+				amend := earlier != "R5" && later != "R5" && earlier != "R4" && later != "R4"
 				switch {
 				case earlier == "R5" || later == "R5":
 					// the claims are recorded after a check list, so the item has one too
@@ -1936,6 +1969,8 @@ func TestChecksPrecedenceNamesTheEarliestBrokenRule(t *testing.T) {
 					}
 				case earlier == "R4" || later == "R4":
 					checksOK(t, dir, goodList)
+				default:
+					legacyChecks(t, dir, checksHeader+goodRows)
 				}
 				// the later rule's row sits higher in the file, so the file order cannot be
 				// what decides
@@ -1950,7 +1985,15 @@ func TestChecksPrecedenceNamesTheEarliestBrokenRule(t *testing.T) {
 					rows = goodRows
 				}
 				list := checksHeader + rows
-				r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+				if amend {
+					// an amendment only grows the frozen list, so the frozen rows stay
+					list = checksHeader + goodRows + rows
+				}
+				argv := []string{"A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)}
+				if amend {
+					argv = append(argv, "--amend")
+				}
+				r := wantRefusal(t, call(t, cmdChecks, dir, argv...))
 				if r.rule != earlier {
 					t.Fatalf("want a refusal under %s, got %s: %s", earlier, r.rule, r.msg)
 				}
@@ -1974,7 +2017,15 @@ func TestChecksNamesTheFirstBrokenRowOfOneRule(t *testing.T) {
 		t.Run(c.rule, func(t *testing.T) {
 			dir := openItem(t)
 			list := checksHeader + c.first + c.second
-			r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+			argv := []string{"A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)}
+			if c.rule == "R8" || c.rule == "R34" {
+				// R8 and R34 are format-1 rules (I89, B10): an amendment of a format-1 list
+				// keeps format 1 and the frozen rows stay in front.
+				legacyChecks(t, dir, checksHeader+goodRows)
+				list = checksHeader + goodRows + c.first + c.second
+				argv = []string{"A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--amend"}
+			}
+			r := wantRefusal(t, call(t, cmdChecks, dir, argv...))
 			if r.rule != c.rule {
 				t.Fatalf("want a refusal under %s, got %s: %s", c.rule, r.rule, r.msg)
 			}
@@ -1995,7 +2046,15 @@ func TestChecksNamesTheFirstBrokenRowOfOneRule(t *testing.T) {
 func TestChecksEachRuleStillRefusesAlone(t *testing.T) {
 	for _, rule := range []string{"R1", "R34", "R2", "R3", "R8"} {
 		t.Run(rule, func(t *testing.T) {
-			checksRefused(t, openItem(t), checksHeader+p1Row(rule), rule)
+			dir := openItem(t)
+			list := checksHeader + p1Row(rule)
+			argv := []string{"A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)}
+			if rule == "R8" || rule == "R34" {
+				legacyChecks(t, dir, checksHeader+goodRows)
+				list = checksHeader + goodRows + p1Row(rule)
+				argv = []string{"A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--amend"}
+			}
+			wantRule(t, call(t, cmdChecks, dir, argv...), rule)
 		})
 	}
 	// the state rules refuse on the item's state
@@ -2367,7 +2426,8 @@ func TestChecksAWellFormedListIsAcceptedAndTheClaimsAfterIt(t *testing.T) {
 // R8 is refused under that rule, even when the claims freeze the item.
 func TestRebaselineRefusesABadListUnderItsOwnRuleWithClaims(t *testing.T) {
 	dir := openItem(t)
-	checksOK(t, dir, goodList)
+	// a format-1 list, so the R8 case below stays R8's (a new list is format 2, I89, B9)
+	legacyChecks(t, dir, goodList)
 	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
 	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
 		t.Fatalf("claims: %v", err)
@@ -2777,12 +2837,14 @@ func TestR20OutranksR23OnTheHarnessPath(t *testing.T) {
 // ── R34: a command is a shell script, and a pattern is not a shell ────────────
 
 // r34BadRow is a row whose cmd holds a backslash before a pipe: the shell reads that as a
-// literal pipe, so the row does not do what it says.
-const r34BadRow = "X34\tbl\tblocking\tB1\tgrep a\\|b f\texit 0\t\t\tc\n"
+// literal pipe, so the row does not do what it says. It is a judge row because R34 reaches
+// every judge row in either format, and a format-2 `decider: bl` row is governed by R37's
+// simple-command rule instead (I89, B10).
+const r34BadRow = "X34\tjudge\tblocking\tB1\tgrep a\\|b f\t\tit fails\ta shell script is read as a shell script\tc\n"
 
 // r34GoodRow is a row whose cmd holds a plain pipe: the shell reads that as a pipe, which is
 // what the row means.
-const r34GoodRow = "S1\tbl\tblocking\tB1\techo ab | grep a\texit 0\t\t\tc\n"
+const r34GoodRow = "S1\tjudge\tblocking\tB1\techo ab | grep a\t\tit fails\ta shell script is read as a shell script\tc\n"
 
 // `bl checks` refuses a list whose row holds a backslash before a pipe: the refusal names R34
 // and the offending row, and nothing is written.
@@ -2844,9 +2906,9 @@ func TestRebaselineR34RefusesABackslashBeforeAPipe(t *testing.T) {
 func TestChecksR34AcceptsPlainPipes(t *testing.T) {
 	dir := openItem(t)
 	checksOK(t, dir, checksHeader+
-		"S1\tbl\tblocking\tB1\techo ab | grep a\texit 0\t\t\tc\n"+
-		"S2\tbl\tblocking\tB1\techo ab | grep -E 'a|b' | wc -l\texit 0\t\t\tc\n"+
-		"S3\tbl\tblocking\tB1\ttrue || false\texit 0\t\t\tc\n")
+		"S1\tjudge\tblocking\tB1\techo ab | grep a\t\tit fails\ta shell script is read as a shell script\tc\n"+
+		"S2\tjudge\tblocking\tB1\techo ab | grep -E 'a|b' | wc -l\t\tit fails\ta shell script is read as a shell script\tc\n"+
+		"S3\tjudge\tblocking\tB1\ttrue || false\t\tit fails\ta shell script is read as a shell script\tc\n")
 }
 
 // A list with no pipe at all is still accepted.
@@ -2856,18 +2918,24 @@ func TestChecksR34AcceptsAListWithNoPipe(t *testing.T) {
 }
 
 // R34 is about the cmd field only: an expect pattern is Go's RE2, where a backslash before a
-// pipe means a literal pipe, and that is what the pattern says.
+// pipe means a literal pipe, and that is what the pattern says. Only a format-1 list carries
+// an expect like that (I89, B10), so the list is re-baselined onto a format-1 item.
 func TestChecksR34DoesNotRefuseAnEscapedPipeInAnExpect(t *testing.T) {
 	dir := openItem(t)
-	checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\techo \"a|b\"\tstdout matches a\\|b\t\t\tc\n")
+	legacyChecks(t, dir, rebaselinedList)
+	list := checksHeader + "S1\tbl\tblocking\tB1\techo \"a|b\"\tstdout matches a\\|b\t\t\tc\n"
+	if err := call(t, cmdRebaseline, dir, "A1",
+		"--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "the premise moved"); err != nil {
+		t.Fatalf("R34 must not read the expect field: %v", err)
+	}
 }
 
 // Within R34 the refusal names the first broken row in file order, and that row only.
 func TestR34NamesTheFirstBrokenRowOnly(t *testing.T) {
 	dir := openItem(t)
 	list := checksHeader +
-		"X1\tbl\tblocking\tB1\tgrep a\\|b f\texit 0\t\t\tc\n" +
-		"X2\tbl\tblocking\tB1\tgrep c\\|d f\texit 0\t\t\tc\n"
+		"X1\tjudge\tblocking\tB1\tgrep a\\|b f\t\tit fails\ta shell script is read as a shell script\tc\n" +
+		"X2\tjudge\tblocking\tB1\tgrep c\\|d f\t\tit fails\ta shell script is read as a shell script\tc\n"
 	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
 	if r.rule != "R34" {
 		t.Fatalf("want a refusal under R34, got %s: %s", r.rule, r.msg)
@@ -2890,11 +2958,11 @@ func TestChecksR34CountsTheBackslashesBeforeAPipe(t *testing.T) {
 		row     string
 		refused bool
 	}{
-		{"no backslash", "PIPE0\tbl\tblocking\tB1\techo a | cat\texit 0\t\t\tc\n", false},
-		{"one backslash", "PIPE1\tbl\tblocking\tB1\techo a \\| cat\texit 0\t\t\tc\n", true},
-		{"two backslashes", "PIPE2\tbl\tblocking\tB1\techo a \\\\| cat\texit 0\t\t\tc\n", false},
-		{"three backslashes", "PIPE3\tbl\tblocking\tB1\techo a \\\\\\| cat\texit 0\t\t\tc\n", true},
-		{"four backslashes", "PIPE4\tbl\tblocking\tB1\techo a \\\\\\\\| cat\texit 0\t\t\tc\n", false},
+		{"no backslash", "PIPE0\tjudge\tblocking\tB1\techo a | cat\t\tit fails\ta shell script is read as a shell script\tc\n", false},
+		{"one backslash", "PIPE1\tjudge\tblocking\tB1\techo a \\| cat\t\tit fails\ta shell script is read as a shell script\tc\n", true},
+		{"two backslashes", "PIPE2\tjudge\tblocking\tB1\techo a \\\\| cat\t\tit fails\ta shell script is read as a shell script\tc\n", false},
+		{"three backslashes", "PIPE3\tjudge\tblocking\tB1\techo a \\\\\\| cat\t\tit fails\ta shell script is read as a shell script\tc\n", true},
+		{"four backslashes", "PIPE4\tjudge\tblocking\tB1\techo a \\\\\\\\| cat\t\tit fails\ta shell script is read as a shell script\tc\n", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2930,7 +2998,7 @@ func TestChecksR34CountsTheBackslashesBeforeAPipe(t *testing.T) {
 func TestRebaselineR34AcceptsAnEvenNumberOfBackslashesBeforeAPipe(t *testing.T) {
 	dir := openItem(t)
 	checksOK(t, dir, goodList)
-	list := checksHeader + "PIPE2\tbl\tblocking\tB1\techo a \\\\| cat\texit 0\t\t\tc\n"
+	list := checksHeader + "PIPE2\tjudge\tblocking\tB1\techo a \\\\| cat\t\tit fails\ta shell script is read as a shell script\tc\n"
 	if err := call(t, cmdRebaseline, dir, "A1",
 		"--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "the premise moved"); err != nil {
 		t.Fatalf("rebaseline: %v", err)
@@ -2960,7 +3028,7 @@ func TestChecksR34SkipsPipesInsideQuotes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := openItem(t)
-			list := checksHeader + "Q1\tbl\tblocking\tB1\t" + c.cmd + "\texit 0\t\t\tc\n"
+			list := checksHeader + "Q1\tjudge\tblocking\tB1\t" + c.cmd + "\t\tit fails\ta shell script is read as a shell script\tc\n"
 			if !c.refused {
 				checksOK(t, dir, list)
 				return
@@ -2985,7 +3053,7 @@ const oneRowList = checksHeader + "S1\tbl\tblocking\tB1\techo hi\texit 0\t\t\ton
 func runItem(t *testing.T, list string) string {
 	t.Helper()
 	dir := openItem(t)
-	checksOK(t, dir, list)
+	legacyChecks(t, dir, list)
 	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
@@ -3010,25 +3078,28 @@ func readRunFile(t *testing.T, dir, name string) (runFile, []byte) {
 
 // roundList is a well-formed list for the round path: a binary row and a judge row, both of
 // which print a known word, so that an output anchor has something to point at. The binary
-// row's expectation matches its output, so the binary computes PASS for it (R7).
+// row's expectation is `exit 0`, which its command meets, so the binary computes PASS for it
+// (R7); the exit form is R8's and R37's alike, so the same list freezes as format 1 or 2.
 const roundList = checksHeader +
-	"S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n" +
+	"S1\tbl\tblocking\tB1\techo two\texit 0\t\t\tprints two\n" +
 	"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
 
-// roundFailList is roundList with a binary row whose output does NOT match its expectation: the
+// roundFailList is roundList with a binary row whose expectation its command does NOT meet: the
 // binary computes FAIL for it (R7), so a judge that writes PASS for it cannot make the round
-// pass.
+// pass. `exit 1` is R8's and R37's alike, so the list freezes as format 1 or 2.
 const roundFailList = checksHeader +
-	"S1\tbl\tblocking\tB1\techo two\tstdout matches ^never\t\t\tprints two\n" +
+	"S1\tbl\tblocking\tB1\techo two\texit 1\t\t\tprints two\n" +
 	"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
 
-// roundSwitchList is a list whose binary row passes or fails on demand: the row prints FAIL
-// while the marker file is there and PASS while it is not. The marker sits outside the
-// repository, so the tree does not move under the run, and the binary's computed row-verdict
-// follows the marker (R7).
+// roundSwitchList is a list whose binary row passes or fails on demand: `test -f <marker>`
+// exits 0 while the marker file is there and 1 while it is not, and the row expects `exit 1`,
+// so the binary computes FAIL while the marker is there and PASS while it is not (R7). The
+// marker sits outside the repository, so the tree does not move under the run, and the exit
+// form and the single simple command are R8's and R37's alike, so the list freezes as either
+// format.
 func roundSwitchList(marker string) string {
 	return checksHeader +
-		"S1\tbl\tblocking\tB1\tif [ -f " + marker + " ]; then echo FAIL; else echo PASS; fi\tstdout matches PASS\t\t\tprints PASS unless the marker is there\n" +
+		"S1\tbl\tblocking\tB1\ttest -f " + marker + "\texit 1\t\t\tfails while the marker is there\n" +
 		"J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
 }
 
@@ -3040,8 +3111,8 @@ func switchItem(t *testing.T) (string, string) {
 	return roundItem(t, roundSwitchList(marker)), marker
 }
 
-// markFailing puts the marker there, so the binary row's command prints FAIL and the binary
-// computes FAIL for it.
+// markFailing puts the marker there, so the binary row's command meets no `exit 1` and the
+// binary computes FAIL for it.
 func markFailing(t *testing.T, marker string) {
 	t.Helper()
 	if err := os.WriteFile(marker, []byte("fail\n"), 0o644); err != nil {
@@ -3049,7 +3120,7 @@ func markFailing(t *testing.T, marker string) {
 	}
 }
 
-// markPassing takes the marker away, so the binary row's command prints PASS and the binary
+// markPassing takes the marker away, so the binary row's command exits 1 and the binary
 // computes PASS for it.
 func markPassing(t *testing.T, marker string) {
 	t.Helper()
@@ -3089,11 +3160,13 @@ func gitItem(t *testing.T) string {
 	return dir
 }
 
-// roundItem prepares an item for a round: the list is frozen and the claims are recorded.
+// roundItem prepares an item for a round: the list is frozen and the claims are recorded. The
+// list is frozen as a format-1 list (legacyChecks) so the round fixtures keep their shell rows
+// and R8 expectations; the format-2 round path is covered by its own tests.
 func roundItem(t *testing.T, list string) string {
 	t.Helper()
 	dir := gitItem(t)
-	checksOK(t, dir, list)
+	legacyChecks(t, dir, list)
 	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
@@ -3291,7 +3364,7 @@ func TestTheRowVerdictIsComputedForTheFileAndTheTreeForms(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == "+tree+"\t\t\tone row\n")
+		legacyChecks(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == "+tree+"\t\t\tone row\n")
 		if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 			t.Fatalf("claims: %v", err)
 		}
@@ -3305,7 +3378,7 @@ func TestTheRowVerdictIsComputedForTheFileAndTheTreeForms(t *testing.T) {
 	})
 	t.Run("the tree does not match", func(t *testing.T) {
 		dir := openItem(t)
-		checksOK(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == 0000000000000000000000000000000000000000\t\t\tone row\n")
+		legacyChecks(t, dir, checksHeader+"S1\tbl\tblocking\tB1\ttrue\ttree == 0000000000000000000000000000000000000000\t\t\tone row\n")
 		if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 			t.Fatalf("claims: %v", err)
 		}
@@ -3888,7 +3961,7 @@ func TestR6ARunThatARoundConsumedCannotBeConsumedAgain(t *testing.T) {
 // R6: the item must have a claims event: the claims are frozen before the round.
 func TestR6AnItemWithNoClaimsCannotHaveARound(t *testing.T) {
 	dir := gitItem(t)
-	checksOK(t, dir, roundList)
+	legacyChecks(t, dir, roundList)
 	rows := runAndVerdicts(t, dir, roundPass...)
 	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R6")
 }
@@ -3912,7 +3985,7 @@ func TestR9AnOutputAnchorThatIsNotInTheOutputIsRefused(t *testing.T) {
 // must lie in a hunk of the round's diff.
 func TestR9ASourceAnchorOutsideEveryHunkIsRefused(t *testing.T) {
 	dir := gitItemWith(t, map[string]string{"f.txt": "one\ntwo\nthree\n"})
-	checksOK(t, dir, roundList)
+	legacyChecks(t, dir, roundList)
 	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
@@ -3927,7 +4000,7 @@ func TestR10AnUncoveredHunkIsRefused(t *testing.T) {
 	dir := gitItem(t)
 	// the only blocking row's command does not name the file that changed
 	list := checksHeader + "S1\tbl\tblocking\tB1\techo hi\tstdout matches ^hi\t\t\tdoes not name the changed file\n"
-	checksOK(t, dir, list)
+	legacyChecks(t, dir, list)
 	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
@@ -4172,7 +4245,7 @@ func scopedItem(t *testing.T, scopeIgnored string) string {
 			t.Fatalf("bl %v: exit %d", argv, code)
 		}
 	}
-	checksOK(t, dir, roundList)
+	legacyChecks(t, dir, roundList)
 	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
@@ -4390,7 +4463,7 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 					t.Fatalf("bl %v: exit %d", argv, code)
 				}
 			}
-			checksOK(t, dir, roundList)
+			legacyChecks(t, dir, roundList)
 			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 				t.Fatalf("claims: %v", err)
 			}
@@ -5588,5 +5661,551 @@ func TestARestartlessItemHasNoAttemptLine(t *testing.T) {
 	}
 	if item["Attempt"] != float64(1) {
 		t.Fatalf("every item starts in attempt 1, got %v", item["Attempt"])
+	}
+}
+
+// ── I89/R37: the frozen test file, and the format-2 row ─────────────────────
+
+// testMainBlock is the run contract's main block (I89, B4): it prints `bl-test: <name>` as its
+// first action, exits 1 on a failed assertion, 3 on any other exception and 4 on an unknown
+// name.
+const testMainBlock = `
+if __name__ == "__main__":
+    _name = sys.argv[1] if len(sys.argv) > 1 else ""
+    print("bl-test: " + _name)
+    _fn = globals().get(_name)
+    if _name.startswith("_") or not callable(_fn):
+        sys.exit(4)
+    try:
+        _fn()
+    except AssertionError:
+        sys.exit(1)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sys.exit(3)
+`
+
+// testFileWith is a test file whose one public function is name, decorated with a `_covers`
+// naming path.
+func testFileWith(path, name string) string {
+	return "import sys\n\n" +
+		"def _covers(*paths):\n    def mark(fn):\n        return fn\n    return mark\n\n" +
+		"@_covers(" + fmt.Sprintf("%q", path) + ")\n" +
+		"def " + name + "():\n    assert True\n" + testMainBlock
+}
+
+func checksWithTests(t *testing.T, dir, list, tests string) error {
+	t.Helper()
+	return call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "checks.tsv", list), "--tests", tests)
+}
+
+// B1: --tests copies the file beside checks.tsv, and the event records its path and hash.
+func TestR37ChecksCopiesAndHashesTheTestFile(t *testing.T) {
+	dir := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "R1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\ttest a\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("checks --tests: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "tests.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := os.ReadFile(src)
+	if string(got) != string(want) {
+		t.Fatalf("tests.py is not byte-identical to the supplied file")
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.T != "checks" || ev.Format != 2 || ev.Tests != ".backlog/items/A1/tests.py" || ev.TestsSHA != shaHex(want) {
+		t.Fatalf("checks event = %+v", ev)
+	}
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+}
+
+// B2: a test row's expect is exactly `exit 0`, and a test-row attempt is never a shell row.
+func TestR37ATestRowMustExitZero(t *testing.T) {
+	dir := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "R1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\tstdout matches ok\t\t\ttest a\n"
+	r := wantRefusal(t, checksWithTests(t, dir, list, src))
+	if r.rule != "R37" || !strings.Contains(r.msg, "R1") || !strings.Contains(r.msg, "exit 0") {
+		t.Fatalf("refusal = %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "tests.py")); err == nil {
+		t.Fatal("a refused freeze left the test file behind")
+	}
+}
+
+func TestR37TestRowAttemptsAreRefused(t *testing.T) {
+	for _, cmd := range []string{
+		"python3  .backlog/items/A1/tests.py a",
+		"python3 ./.backlog/items/A1/tests.py a",
+		"python3 .backlog/items/A1/tests.py _a",
+		"python3 .backlog/items/A1/tests.py a extra",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			dir := openItem(t)
+			src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+			list := checksHeader + "R1\tbl\tblocking\tB1\t" + cmd + "\texit 0\t\t\ttest a\n"
+			r := wantRefusal(t, checksWithTests(t, dir, list, src))
+			if r.rule != "R37" || !strings.Contains(r.msg, "R1") {
+				t.Fatalf("refusal = %+v", r)
+			}
+		})
+	}
+}
+
+// B3: the test file must parse, the rows and the file must agree, and a public top-level name
+// is a test row's function.
+func TestR37TestFileContract(t *testing.T) {
+	good := testFileWith("SKILL.md", "a")
+	two := "import sys\n\ndef _covers(*paths):\n    return lambda fn: fn\n\ndef a():\n    assert True\n\ndef b():\n    assert True\n" + testMainBlock
+	cases := []struct {
+		name, src, list, names string
+	}{
+		{
+			"does not parse",
+			"def a(:\n",
+			checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n",
+			"",
+		},
+		{
+			"names a missing function",
+			good,
+			checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py c\texit 0\t\t\tc\n",
+			"c",
+		},
+		{
+			"two rows name one function",
+			good,
+			checksHeader +
+				"T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n" +
+				"T2\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n",
+			"a",
+		},
+		{
+			"a public def no row names",
+			two,
+			checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n",
+			"b",
+		},
+		{
+			"a public class",
+			"import sys\n\ndef a():\n    assert True\n\nclass Helper:\n    pass\n" + testMainBlock,
+			checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n",
+			"Helper",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := openItem(t)
+			src := writeFile(t, t.TempDir(), "t.py", c.src)
+			r := wantRefusal(t, checksWithTests(t, dir, c.list, src))
+			if r.rule != "R37" {
+				t.Fatalf("want R37, got %s: %s", r.rule, r.msg)
+			}
+			if c.names != "" && !strings.Contains(r.msg, c.names) {
+				t.Fatalf("the refusal must name %q: %s", c.names, r.msg)
+			}
+		})
+	}
+}
+
+// B5: the freeze probe runs each test row once. Exit 0 and 1 are the contract; anything else,
+// a timeout or a missing bl-test line is refused, and the test file is restored.
+func TestR37FreezeProbe(t *testing.T) {
+	raise := "import sys\n\ndef a():\n    raise NameError(\"boom\")\n" + testMainBlock
+	fail := "import sys\n\ndef a():\n    assert False\n" + testMainBlock
+	noMain := "def a():\n    assert True\n"
+	badImport := "import does_not_exist\n\ndef a():\n    assert True\n" + testMainBlock
+	junk := "import sys\n\ndef a():\n    open(\".backlog/items/A1/junk.txt\", \"w\").write(\"x\")\n" + testMainBlock
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	cases := []struct{ name, src, want string }{
+		{"a raising test", raise, "exit 3"},
+		{"a failed assertion", fail, ""},
+		{"no main block", noMain, "no bl-test line"},
+		{"an import that fails", badImport, "no bl-test line"},
+		{"a test that writes .backlog", junk, "directory changed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := openItem(t)
+			src := writeFile(t, t.TempDir(), "t.py", c.src)
+			err := checksWithTests(t, dir, list, src)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("a test that exits 1 must be accepted: %v", err)
+				}
+				return
+			}
+			r := wantRefusal(t, err)
+			if r.rule != "R37" || !strings.Contains(r.msg, c.want) {
+				t.Fatalf("want R37 naming %q, got %s: %s", c.want, r.rule, r.msg)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "tests.py")); err == nil {
+				t.Fatal("a refused freeze left the test file behind")
+			}
+		})
+	}
+}
+
+// B5: a refusal restores the test file that was already frozen.
+func TestR37ARefusedProbeRestoresTheFrozenTestFile(t *testing.T) {
+	dir := openItem(t)
+	good := testFileWith("SKILL.md", "a")
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, writeFile(t, t.TempDir(), "t.py", good)); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	bad := good + "\ndef extra():\n    raise NameError(\"boom\")\n"
+	added := list + "T2\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py extra\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", added), "--tests", writeFile(t, t.TempDir(), "t2.py", bad)))
+	if r.rule != "R37" {
+		t.Fatalf("want R37, got %s: %s", r.rule, r.msg)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "tests.py"))
+	if string(got) != good {
+		t.Fatalf("the frozen test file was not restored")
+	}
+}
+
+// B6: a format-2 shell row is one simple command with an `exit <code>` expect.
+func TestR37ShellRowsAreSimpleCommands(t *testing.T) {
+	okRows := []string{
+		"go -C scripts test ./...\texit 0",
+		"echo \\$(date)\texit 0",
+		"echo \"it's here\"\texit 0",
+	}
+	for _, row := range okRows {
+		t.Run("ok "+row, func(t *testing.T) {
+			checksOK(t, openItem(t), checksHeader+"S1\tbl\tblocking\tB1\t"+row+"\t\t\tc\n")
+		})
+	}
+	badRows := []string{
+		"cd scripts && go test ./...\texit 0",
+		"go -C scripts test ./... | tail -1\texit 0",
+		"echo \"it's\" | wc -l\texit 0",
+		"grep -c x f\tstdout matches ^3$",
+		"ls\texit 300",
+	}
+	for _, row := range badRows {
+		t.Run("refused "+row, func(t *testing.T) {
+			r := wantRefusal(t, call(t, cmdChecks, openItem(t), "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", checksHeader+"S1\tbl\tblocking\tB1\t"+row+"\t\t\tc\n")))
+			if r.rule != "R37" || !strings.Contains(r.msg, "S1") {
+				t.Fatalf("refusal = %+v", r)
+			}
+		})
+	}
+}
+
+// B7: a test row covers a hunk or a bare path through its @_covers, never through its cmd.
+func TestR37CoverageComesFromTheCoversDecorator(t *testing.T) {
+	roundWith := func(t *testing.T, path, file string) error {
+		t.Helper()
+		dir := gitItemWith(t, map[string]string{"SKILL.md": "one\n"})
+		src := writeFile(t, t.TempDir(), "tests.py", testFileWith(path, "touch"))
+		list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py touch\texit 0\t\t\tc\n"
+		if err := checksWithTests(t, dir, list, src); err != nil {
+			t.Fatalf("freeze: %v", err)
+		}
+		if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+			t.Fatalf("claims: %v", err)
+		}
+		writeFile(t, dir, file, "two\n")
+		rows := runAndVerdicts(t, dir, "T1\tPASS\t")
+		return call(t, cmdRound, dir, "A1", "--rows", rows)
+	}
+	if err := roundWith(t, "SKILL.md", "SKILL.md"); err != nil {
+		t.Fatalf("a covered hunk refused the round: %v", err)
+	}
+	r := wantRefusal(t, roundWith(t, "README.md", "SKILL.md"))
+	if r.rule != "R10" {
+		t.Fatalf("want R10, got %s: %s", r.rule, r.msg)
+	}
+}
+
+// B7: a file added with no textual hunk is covered by a test row's @_covers naming it.
+func TestR37CoversAnAddedEmptyFile(t *testing.T) {
+	dir := gitItemWith(t, nil)
+	src := writeFile(t, t.TempDir(), "tests.py", testFileWith("e.txt", "touch"))
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py touch\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	writeFile(t, dir, "e.txt", "")
+	rows := runAndVerdicts(t, dir, "T1\tPASS\t")
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("a covered added file refused the round: %v", err)
+	}
+}
+
+// B8: the frozen test file is re-hashed at the point of use, and an amendment may only insert
+// text before the frozen file's main-block line.
+func TestR37TheFrozenTestFileIsRehashed(t *testing.T) {
+	dir := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	frozen := filepath.Join(dir, ".backlog", "items", "A1", "tests.py")
+	if err := os.WriteFile(frozen, append(mustRead(frozen), []byte("# edited\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := wantRefusal(t, call(t, cmdRun, dir, "A1"))
+	if r.rule != "R20" || !strings.Contains(r.msg, "tests.py") {
+		t.Fatalf("run refusal = %+v", r)
+	}
+}
+
+func TestR37AmendInsertsBeforeTheMainBlock(t *testing.T) {
+	dir := openItem(t)
+	good := testFileWith("SKILL.md", "a")
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, writeFile(t, t.TempDir(), "t.py", good)); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	grown := strings.Replace(good, testMainBlock, "\ndef b():\n    assert True\n"+testMainBlock, 1)
+	added := list + "T2\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py b\texit 0\t\t\tc\n"
+	if err := call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", added), "--tests", writeFile(t, t.TempDir(), "t2.py", grown)); err != nil {
+		t.Fatalf("an inserted def must be accepted: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.Format != 2 || ev.TestsSHA != shaHex([]byte(grown)) {
+		t.Fatalf("amended event = %+v", ev)
+	}
+
+	// one changed byte is not an insertion
+	changed := strings.Replace(good, "assert True", "assert Truth", 1)
+	added2 := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n" +
+		"T2\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py b\texit 0\t\t\tc\n" +
+		"T3\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py b\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", added2), "--tests", writeFile(t, t.TempDir(), "t3.py", changed)))
+	if r.rule != "R37" {
+		t.Fatalf("want R37, got %s: %s", r.rule, r.msg)
+	}
+}
+
+// B8: an amendment cannot introduce a test file; only a re-baseline can.
+func TestR37AmendCannotIntroduceATestFile(t *testing.T) {
+	dir := openItem(t)
+	checksOK(t, dir, goodList)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + goodRows + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--tests", src))
+	if r.rule != "R37" || !strings.Contains(r.msg, "rebaseline") {
+		t.Fatalf("refusal = %+v", r)
+	}
+}
+
+// B9: a format-1 list is untouched. An amendment without --tests keeps format 1, and an
+// amendment with --tests on it is refused.
+func TestR37FormatOneIsUnchanged(t *testing.T) {
+	dir := openItem(t)
+	legacyChecks(t, dir, goodList)
+	added := checksHeader + goodRows + "ADD1\tbl\tblocking\tB1\techo a\texit 0\t\t\tc\n"
+	if err := call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", added)); err != nil {
+		t.Fatalf("amend: %v", err)
+	}
+	events, _ := readLedger(dir)
+	if ev := events[len(events)-1]; ev.T != "checks" || ev.Format != 1 || ev.Tests != "" {
+		t.Fatalf("amended format-1 event = %+v", ev)
+	}
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + goodRows + "ADD1\tbl\tblocking\tB1\techo a\texit 0\t\t\tc\n" +
+		"ADD2\tbl\tblocking\tB1\techo a\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c2.tsv", list), "--tests", src))
+	if r.rule != "R37" || !strings.Contains(r.msg, "rebaseline") {
+		t.Fatalf("refusal = %+v", r)
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byID["a1"].ChecksFormat != 1 {
+		t.Fatalf("format = %d, want 1", byID["a1"].ChecksFormat)
+	}
+}
+
+// B9: a format-2 list of judge and shell rows needs no test file, and a test file is refused
+// for a list with no test row.
+func TestR37ATestFileNeedsATestRow(t *testing.T) {
+	dir := openItem(t)
+	judgeOnly := checksHeader + "J1\tjudge\tblocking\tB1\techo x\t\tit fails\ta reading of the intent\tc\n"
+	checksOK(t, dir, judgeOnly)
+	events, _ := readLedger(dir)
+	if ev := events[len(events)-1]; ev.Format != 2 || ev.Tests != "" {
+		t.Fatalf("checks event = %+v", ev)
+	}
+
+	dir2 := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	r := wantRefusal(t, checksWithTests(t, dir2, judgeOnly, src))
+	if r.rule != "R37" {
+		t.Fatalf("want R37, got %s: %s", r.rule, r.msg)
+	}
+
+	// a carried-over test file with a re-baseline that has no test row is refused too
+	dir3 := openItem(t)
+	testRow := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir3, testRow, src); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	r = wantRefusal(t, call(t, cmdRebaseline, dir3, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", judgeOnly), "--reason", "no test row"))
+	if r.rule != "R37" {
+		t.Fatalf("want R37, got %s: %s", r.rule, r.msg)
+	}
+}
+
+// B9: a format-1 list runs, rounds and checks exactly as before.
+func TestR37FormatOneStillRuns(t *testing.T) {
+	dir := gitItem(t)
+	legacyChecks(t, dir, roundList)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatalf("claims: %v", err)
+	}
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if err := call(t, cmdCheck, dir); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+}
+
+// B10: the schema lists the new fields of a checks or rebaseline event.
+func TestR37SchemaListsTheFormatAndTestFields(t *testing.T) {
+	events := schemaJSON()["events"].(map[string]map[string][]string)
+	for _, kind := range []string{"checks", "rebaseline"} {
+		opt := strings.Join(events[kind]["optional"], ",")
+		for _, field := range []string{"format", "tests", "tests_sha"} {
+			if !strings.Contains(opt, field) {
+				t.Errorf("the %s event's optional fields must name %s: %v", kind, field, events[kind]["optional"])
+			}
+		}
+	}
+}
+
+// B8: a module docstring that contains the main-block text does not move the split.
+func TestR37ADocstringDoesNotMoveTheMainBlock(t *testing.T) {
+	dir := openItem(t)
+	good := "\"\"\"\nif __name__ == \"__main__\":\n\"\"\"\n" + testFileWith("SKILL.md", "a")
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, writeFile(t, t.TempDir(), "t.py", good)); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	grown := strings.Replace(good, testMainBlock, "\ndef b():\n    assert True\n"+testMainBlock, 1)
+	added := list + "T2\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py b\texit 0\t\t\tc\n"
+	if err := call(t, cmdChecks, dir, "A1", "--amend", "--file", writeFile(t, t.TempDir(), "c.tsv", added), "--tests", writeFile(t, t.TempDir(), "t2.py", grown)); err != nil {
+		t.Fatalf("the docstring moved the split: %v", err)
+	}
+}
+
+// B8: `bl check` reports a missing or changed test file as a problem, not a refusal, and keeps
+// checking the other items.
+func TestR37CheckReportsATestFileProblem(t *testing.T) {
+	dir := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, ".backlog", "items", "A1", "tests.py")); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	out := capture(t, func() { err = call(t, cmdCheck, dir) })
+	if !errors.Is(err, errFailed) {
+		t.Fatalf("check = %v, want a problem", err)
+	}
+	if !strings.Contains(out, "FAIL A1 tests .backlog/items/A1/tests.py is missing") {
+		t.Fatalf("check output = %q", out)
+	}
+}
+
+// B8: a re-baseline without --tests keeps the frozen test file and carries its hash.
+func TestR37RebaselineCarriesTheTestFile(t *testing.T) {
+	dir := openItem(t)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	want, _ := os.ReadFile(src)
+	if err := call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--reason", "same premise, new list"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.Format != 2 || ev.Tests != ".backlog/items/A1/tests.py" || ev.TestsSHA != shaHex(want) {
+		t.Fatalf("rebaseline event = %+v", ev)
+	}
+}
+
+// B9: `bl rebaseline --tests` moves a format-1 list to format 2.
+func TestR37RebaselineMovesFormatOneToTwo(t *testing.T) {
+	dir := openItem(t)
+	legacyChecks(t, dir, goodList)
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	if err := call(t, cmdRebaseline, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list), "--tests", src, "--reason", "the premise moved"); err != nil {
+		t.Fatalf("rebaseline: %v", err)
+	}
+	events, _ := readLedger(dir)
+	ev := events[len(events)-1]
+	if ev.Format != 2 || ev.TestsSHA != shaHex(mustRead(src)) {
+		t.Fatalf("rebaseline event = %+v", ev)
+	}
+}
+
+// B9: a freeze with a test row and no test file is refused.
+func TestR37ATestRowNeedsATestFile(t *testing.T) {
+	dir := openItem(t)
+	list := checksHeader + "T1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tc\n"
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "c.tsv", list)))
+	if r.rule != "R37" || !strings.Contains(r.msg, "test file") {
+		t.Fatalf("refusal = %+v", r)
+	}
+}
+
+// R36 + I89: attempt 2's test file lands beside its own checks.tsv, in a2/, and attempt 1's
+// test path is never written.
+func TestARestartPutsTheNextAttemptsTestFileUnderA2(t *testing.T) {
+	dir := restartItem(t)
+	restartOK(t, dir, "the list is the wrong premise", "a list that runs a test file")
+	if err := call(t, cmdOpen, dir, "A1"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	src := writeFile(t, t.TempDir(), "t.py", testFileWith("SKILL.md", "a"))
+	list := checksHeader + "R1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/a2/tests.py a\texit 0\t\t\ttest a\n"
+	if err := checksWithTests(t, dir, list, src); err != nil {
+		t.Fatalf("checks --tests in attempt 2: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "a2", "tests.py"))
+	if err != nil {
+		t.Fatalf("attempt 2's test file is not in a2/: %v", err)
+	}
+	want, _ := os.ReadFile(src)
+	if string(got) != string(want) {
+		t.Fatalf("a2/tests.py is not byte-identical to the supplied file")
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := events[len(events)-1]
+	if ev.T != "checks" || ev.Tests != ".backlog/items/A1/a2/tests.py" || ev.TestsSHA != shaHex(want) {
+		t.Fatalf("checks event = %+v", ev)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "tests.py")); err == nil {
+		t.Fatal("attempt 2 wrote attempt 1's test path")
 	}
 }

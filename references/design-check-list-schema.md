@@ -52,6 +52,7 @@ All paths are relative to the repository root.
 |---|---|---|---|
 | brief | `.backlog/items/<id>/brief.md` | `bl open`, `bl brief` | yes — `brief_sha` |
 | check list | `.backlog/items/<id>/checks.tsv` | `bl checks` | yes — `checks_sha` |
+| test file | `.backlog/items/<id>/tests.py` | `bl checks --tests`, `bl rebaseline --tests` | yes — `tests_sha` (format 2, when one is frozen) |
 | claims | `.backlog/items/<id>/claims.md` | `bl claims` | yes — `claims_sha` |
 | run | `.backlog/evidence/<id>-run<N>.json` | `bl run` | yes — `run_sha` |
 | verdicts | `.backlog/items/<id>/verdicts.tsv` | the verifier | no — an input to `bl round` |
@@ -126,6 +127,22 @@ each exactly once. A row must have exactly nine fields, in the header's order.
 | `fail_if` | for `decider: judge` only; the frozen fail condition (R3) |
 | `why_not_mech` | for `decider: judge` only; why the row cannot be machine-decided (R3) |
 | `criterion` | one line, human-readable, the thing being checked |
+
+**Format 1 and format 2.** A list is **format 1** or **format 2** (I89, R37). Every `checks` and
+`rebaseline` event written after R37 took effect carries `format` as an integer; an event written
+before it carries none and is format 1. `bl checks` without `--amend` writes format 2, and
+`--amend` keeps the format of the list it amends. `bl rebaseline --tests` writes format 2;
+without `--tests` it keeps the list's format. Format 1 is the list exactly as this document first
+described it; format 2 gives a `decider: bl` row one of two shapes, a **test row** (a call of the
+frozen test file) or a **shell row** (one simple command), and R37 defines both. A format-2 list
+may also freeze a **test file**, beside the check list, whose hash the event records as
+`tests_sha`.
+
+**The test file (format 2).** `.backlog/items/<id>/tests.py` is a python3 file the verifier writes
+before the code exists. It holds one named function per assertion and a fixed main block, and it
+is driven by the rows: a test row's cmd is `python3 .backlog/items/<id>/tests.py <name>`. `bl`
+copies the supplied file, hashes it into the list's event, parses it with `ast` and probes it
+before the list is frozen; R37 states the contract, the template and the refusals.
 
 **Verdicts format** (the verifier's input to `bl round`). A header line naming the columns, then one line per frozen
 check id:
@@ -277,14 +294,17 @@ run. A `why_not_mech` that names a command result ("the tests failing is a comma
 must not ship — `bl` cannot detect it, and the record shows the text so a reader can.
 
 **R4 — the list is written once.** `bl checks` is refused if the item already has a check list, except with
-`--amend`, which may do exactly three things: reclassify a row from `decider: judge` to `decider: bl` — which also
+`--amend`, which may do exactly four things: reclassify a row from `decider: judge` to `decider: bl` — which also
 requires setting that row's `expect` and clearing its `fail_if` and `why_not_mech`, because R1 would otherwise refuse
-the result — fill an empty `brief_ref` on an advisory row, and ADD a row. An amendment never changes the `id`,
+the result — fill an empty `brief_ref` on an advisory row, ADD a row, and (format 2 only) replace the frozen test file
+with a file that inserts text at exactly one point, immediately before the frozen file's main-block line (R37). An
+amendment never changes the `id`,
 `severity`, `cmd`, `expect`, `criterion`, `fail_if` or `why_not_mech` of a row that is already in the list (except
 that clearing them is part of a `judge → bl` reclassification), and it never removes a row. An amendment never
 reorders rows.
 A row added by an amendment is a row like any other: R1, R2, R3, R8 and R34 apply to it, and its `id` must not be
-one the list already holds. It is how a defective row is corrected — the added row asserts the thing the defective
+one the list already holds. (In a format-2 list R37 governs a `decider: bl` row's expect and command, and R8 applies
+only to a format-1 list — see R37.) It is how a defective row is corrected — the added row asserts the thing the defective
 row was written for — and adding it can only tighten the round, because the derived verdict is the AND over the
 blocking rows (R12): a new blocking row that FAILs makes the round FAIL, and no row that is added can turn a FAIL
 into a PASS. That is why growth is allowed after the claims and a change is not (R5).
@@ -336,6 +356,10 @@ row runs, be it a file or a directory; `<hash>` is a 40-character lowercase hex 
 row can know when the list is written, and `tree ==` against the verified tree can only be written in a
 `second-check`.
 
+R8's text is unchanged, but R8 applies to a **format-1** list only. In a format-2 list a `decider: bl` row's `expect`
+is R37's (`exit 0` for a test row, `exit <code>` for a shell row); a `decider: judge` row carries no `expect` in
+either format.
+
 **R9 — a judge row is anchored, and the anchor is checked.** The anchor's form is determined syntactically (§2), and
 only that form is checked. A judge row about the change and a judge row about a command's output are told apart by the
 form of the anchor, not by a rule: the author picks the form, and the form must be valid for what the row reads.
@@ -353,14 +377,19 @@ command's output — is a refusal.
 **R10 — hunk coverage.** Every hunk in the round's diff must be covered by at least one **blocking** row, of either
 decider. A row covers a hunk if either:
 - it is a `decider: judge` row whose source anchor lies in that hunk's new-side range; or
-- its `cmd` contains the hunk's file path as a literal substring.
+- its `cmd` contains the hunk's file path as a literal substring; or
+- (format 2) it is a test row whose function carries `@_covers("<path>", ...)` with a string-literal argument equal
+  to that file's path as a whole string.
 
 The comparison is literal: a row that exercises a file without naming it covers nothing. A check list written to
 drive a binary never names a source file, so on its own it leaves every hunk uncovered and no round can be recorded
-at all. The path belongs in the command, next to the thing it exercises.
+at all. The path belongs in the command, next to the thing it exercises — or, for a format-2 test row, in the
+`@_covers` decorator, because its cmd names only the test file and its function (R37). A test row covers nothing
+through its cmd, so a repository file whose path is a substring of the cmd is covered only by `_covers` or by another
+row.
 
 A file that is added, deleted, or mode-changed without any textual hunk (a binary file, an empty file) is covered
-only by a blocking row whose `cmd` names that path.
+only by a blocking row whose `cmd` names that path, or by a test row's `@_covers` naming it.
 
 An uncovered hunk refuses the round. Advisory rows do not count towards coverage.
 
@@ -426,11 +455,14 @@ cannot become six failing rounds. The number of harness and dispute rounds is
 recorded and shown by `bl status`.
 
 **R20 — hashes, and the frozen artefacts are re-verified at every command.** The brief, the check list, the claims, the
-run file and the evidence file are each hashed (sha256) and the hash is stored in the ledger event that references the
-file. `bl check` re-hashes every one of them and fails if any file no longer matches its recorded hash.
+frozen test file, the run file and the evidence file are each hashed (sha256) and the hash is stored in the ledger event
+that references the file. `bl check` re-hashes every one of them and fails if any file no longer matches its recorded
+hash — except the test file, which `bl check` reports as a problem line (`FAIL <id> tests <path> is missing` or
+`does not match its hash`) and keeps checking the other items.
 
 More important: `bl run`, `bl round`, `bl claims` and `bl close` each start by re-hashing the item's brief, check list
-and claims — and, for `bl close`, the evidence file of the last round — and refuse if any of them differs from the hash
+and claims — and the test file, when the latest `checks` or `rebaseline` event carries `tests_sha` — and, for
+`bl close`, the evidence file of the last round — and refuse if any of them differs from the hash
 of the latest event that recorded it. A frozen artefact that was edited
 after the freeze is therefore refused at the point of use, not merely detected later by `bl check`. A run file that
 has no `run` event, or whose hash differs from that event's, is refused by R6.
@@ -562,6 +594,10 @@ The same goes the other way: an `expect` pattern is Go's RE2, so two alternative
 backslash before a pipe there means a literal pipe rather than an alternation. The refusal names the row that holds
 the mistake.
 
+R34 still applies to every `decider: judge` row, in either format, and to every format-1 row. It does not reach a
+format-2 `decider: bl` row (R37): a test row holds no shell syntax, and a shell row is checked by R37's
+simple-command scan, which reads quotes and backslashes exactly as R34's scanner does.
+
 **R35 — only the item in flight is worked on.** A verb that works on an item — `bl run` and `bl round` — refuses
 when that item is not the item in flight, and reports R35. The loop keeps one item in verification at a time, and
 the lock is what keeps it that way: two items in flight at once would each hold a half-written tree, and the run
@@ -573,9 +609,9 @@ that pins a tree cannot tell which half it pinned. A refusal under R35 writes no
 attempt 1, each accepted restart adds 1, and the event records the attempt it **ends**, the record it wrote, and no
 actor.
 
-What a restart clears is everything that belongs to the attempt: the brief, the check list and the claims it
-recorded, its scope and before-state, and — for a closed item — the status (closed becomes open), the commit and the
-reason. It keeps the id, text, source, `--after`, notes, priority and the whole event history. The item is open and out
+What a restart clears is everything that belongs to the attempt: the brief, the check list and its format, the frozen
+test file, the claims it recorded, its scope and before-state, and — for a closed item — the status (closed becomes
+open), the commit and the reason. It keeps the id, text, source, `--after`, notes, priority and the whole event history. The item is open and out
 of flight, so `bl next` can name it and `bl open` records the scope and before-state anew; `bl brief`, `bl checks`,
 `bl claims`, `bl run` and `bl round` are then accepted, the last five only after `bl open`.
 
@@ -643,6 +679,166 @@ The four worked examples:
   --change b` exits 2, `bl show A1` prints `status: parked` and a reason containing `restart limit`, the ledger has
   exactly one more line, and `bl next` does not name A1. After `bl reopen A1` the same call parks it again. A closed
   item in attempt 3 is refused with no write at all.
+**R37 — a format-2 row is a test call or one simple command, and the test file is frozen with the list.** Free-form
+shell one-liners were the loop's biggest defect source: escaped pipes, `&&`, redirections, exact spacing, a `sed`
+that matched nothing, a `$` that missed a trailing newline. A format-2 list replaces them with a black-box test file:
+the blind verifier writes a python3 file, one named function per assertion, **before** the code exists; `bl` freezes
+and hashes that file with the list; and a row is one call of one function. Shell rows remain only for whole-suite
+commands such as `go -C scripts test ./...`.
+
+**The format.** Every `checks` and `rebaseline` event written from now on carries `format: 1` or `format: 2`. An event
+written before this rule carries no `format` and is format 1. `bl checks` without `--amend` writes format 2;
+`--amend` keeps the format of the list it amends. `bl rebaseline --tests` writes format 2; without `--tests` it keeps
+the list's format. A format-1 list behaves exactly as this document described before R37: five R8 forms, R34, and the
+amendment rules that do not involve a test file.
+
+**The test file.** `bl checks <id> --file <tsv> --tests <py>` copies `<py>` to `.backlog/items/<id>/tests.py`. The
+`checks` event, and a `rebaseline` event, records the path in `tests` and the sha256 in `tests_sha` **exactly when** a
+test file is frozen after the command — supplied with `--tests`, or carried over by an amendment or a re-baseline
+without `--tests`. An event that freezes no test file carries neither field.
+
+**Row types.** In a format-2 list:
+
+- **test row** — `decider: bl`, cmd **exactly** `python3 .backlog/items/<id>/tests.py <name>` (single spaces, `<name>`
+  matching `[A-Za-z][A-Za-z0-9_]*`), expect **exactly** `exit 0`. It is one call of the frozen test file.
+- **test-row attempt** — a `decider: bl` row whose cmd's first word is `python3` and which contains
+  `.backlog/items/`. If it is not exactly the test-row form (two spaces, `./`, an underscore name, an extra
+  argument) it is refused under R37 and is **never** treated as a shell row.
+- **shell row** — any other `decider: bl` row. Its expect is `exit <code>`, the integer 0..255 form R8 defines, and
+  its cmd is **one simple command**: refused if it holds, outside single or double quotes, any of `|`, `;`, `&`, `<`,
+  `>`, `$(`, a backtick, or a newline. The scan reads quotes and backslashes exactly as R34's scanner does.
+
+A `decider: judge` row is unchanged in either format: R1, R3 and R34 still apply, and its cmd may be a shell script.
+
+**The test file contract.** The file is a python3 module:
+
+- one function per assertion, and every function a row names is a top-level `def`;
+- two rows never name the same function;
+- every top-level `def` or `class` whose name does not start with `_` is a function named by a row — a helper's
+  name starts with `_`, and a public class is refused;
+- other top-level statements (imports, assignments, helper decorators, the main block) are allowed;
+- coverage comes from a decorator `@_covers("<path>", ...)`: one of its string-literal arguments must equal the
+  file's path as a whole string (R10). `bl` reads the decorator from the parsed file and never runs it for coverage.
+
+`bl` parses the file with python3's `ast`, without running it, at every freeze that keeps a test file: `bl checks`,
+`bl checks --amend` and `bl rebaseline`, with or without `--tests`, parse the file that will be frozen after the
+command (the supplied one, or the frozen one carried over). It refuses (exit 2, `bl: refused`, `(R37)`, nothing
+written) when the file does not parse, a row names no top-level def, two rows name one def, or a public top-level
+name is not a row's function.
+
+**The run contract.** `python3 <tests path> <name>` prints the line `bl-test: <name>` to stdout as its first action,
+before looking up the name, calls the named function, and exits 0 when the assertion holds, 1 when it is false, 3 when
+the test itself raised anything else (with a traceback on stderr), and 4 for an unknown name. bl treats 0 and 1 as
+results and any other exit, a timeout, or a missing `bl-test` line as a broken test. The template, which the verifier
+copies:
+
+```python
+import os
+import subprocess
+import sys
+import tempfile
+
+def _covers(*paths):
+    def mark(fn):
+        return fn
+    return mark
+
+def _bl(*args, cwd=None):
+    """The binary the gate names in BL, in the repository cwd when one is given."""
+    return subprocess.run([os.environ["BL"], *args], cwd=cwd, capture_output=True, text=True)
+
+def _repo():
+    """A scratch repository with an initialised ledger, outside this one."""
+    root = tempfile.mkdtemp(prefix="bl-test-repo-")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    _bl("init", cwd=root)
+    return root
+
+@_covers("SKILL.md")
+def the_thing_holds():
+    assert True
+
+if __name__ == "__main__":
+    name = sys.argv[1] if len(sys.argv) > 1 else ""
+    print("bl-test: " + name)
+    fn = globals().get(name)
+    if name.startswith("_") or not callable(fn):
+        sys.exit(4)
+    try:
+        fn()
+    except AssertionError:
+        sys.exit(1)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        sys.exit(3)
+```
+
+The **main-block line** is the first line of the first module-level `if` statement (as Python's `ast` reports its
+`lineno`) whose source line, after removing trailing whitespace and a trailing `#` comment, is exactly
+`if __name__ == "__main__":`; a line inside a string literal never counts. The template's main block starts at that
+line and is the last top-level statement of the file. bl does not inject or rewrite any part of the file.
+
+**The freeze probe.** Every format-2 freeze that holds a test row first writes the supplied test file, if one is
+given, to its path, then hashes `.backlog/`, then runs the test rows of the resulting list once each on the current
+tree, in list order, exactly as `bl run` runs a row (`/bin/sh -c` from the repository root, R21's environment, the row
+timeout). It stops at the first row that exits with a code other than 0 or 1, times out, or lacks the line
+`bl-test: <name>` on stdout. It then checks the verified tree and `.backlog/` hash against their values from before
+the rows ran, in every case, and refuses (exit 2, `bl: refused`, `(R37)`) naming the first failing condition: the row
+and its exit code, `timeout`, or `no bl-test line`; then the tree; then `.backlog/`. A row that exits 0 or 1 is
+accepted — an exit 1 means the work is not done yet, and `bl run` records it like any other row and does not check the
+`bl-test` line. On a refusal the test file's path is restored to its bytes before the command (removed if it did not
+exist) and nothing else is written; on success the list and the event are written. The probe writes no run file and no
+event.
+
+**Order.** Every existing rule keeps its place (P1, P11). R37's block runs after all of them, in this order: the row
+checks (the test-row form, the shell-row form, and B9's presence rules), then the test file's parse and amendment
+checks, then the probe, immediately before the write. The test file's own re-hash is the exception: it is a state
+guard, and it runs at the top of each verb, before the submitted list is read.
+
+**Amending the test file.** R4's fourth amendment action: `bl checks <id> --amend --file <tsv> --tests <py>` accepts
+a new test file only when one is already frozen and the new file is the frozen file with new text inserted at exactly
+one point, immediately before the frozen file's main-block line — the frozen bytes before that line are a prefix of
+the new file, and the frozen bytes from that line to the end are its suffix. Otherwise the amendment is refused under
+R37. With no frozen test file, `--amend --tests` is refused and only `bl rebaseline` can introduce one. The amendment
+must still add or change a row as R4 requires, and the amended event keeps the list's format.
+
+**Format 1, and which files a list needs.** A format-2 list with a test row needs a test file; a freeze with a test
+row and no frozen file is refused. A format-2 list of judge and shell rows only needs none, and `--tests` given with
+such a list is refused. Every format-2 freeze in which a test file stays frozen — supplied, or carried over by an
+amendment or a re-baseline — must hold at least one test row, so a carried-over file is always parsed and probed. A
+format-1 list is untouched: it runs, rounds, closes and checks as before; `--amend` without `--tests` keeps format 1,
+and `--amend --tests` on it is refused, because only `bl rebaseline` can move a list to format 2.
+
+**Worked examples.**
+
+- `bl checks A1 --file c.tsv --tests t.py`, where c.tsv holds one test row: exits 0; `.backlog/items/A1/tests.py` is
+  byte-identical to t.py; the last ledger line holds `"format":2`, `"tests":".backlog/items/A1/tests.py"` and a
+  `"tests_sha"` equal to the sha256 of t.py.
+- row `R1` with cmd `python3 .backlog/items/A1/tests.py restart_prints_attempt` and expect `exit 0` is accepted; the
+  same row with `stdout matches ok` is refused at `bl checks` with exit 2, a stderr line starting `bl: refused`, the
+  row id `R1` and the tag `(R37)`. `python3  .backlog/items/A1/tests.py a` (two spaces) and
+  `python3 ./.backlog/items/A1/tests.py a` are both refused `(R37)`.
+- t.py defines `_repo()`, `a()` and `b()`: rows naming `a` and `b` are accepted; rows naming only `a` are refused
+  naming `b`; rows naming `a`, `b` and `c` are refused naming `c`; adding `class Helper: pass` makes the first list
+  refused naming `Helper`.
+- a test whose function raises `NameError` exits 3: the list is refused naming that row and `exit 3`, and
+  `.backlog/items/A1/tests.py` does not exist afterwards; the same function fixed to `assert False` exits 1 and the
+  list is accepted; a file with no main block exits 0 and is refused naming that row and `no bl-test line`; a file
+  whose first line is `import does_not_exist` exits 1 with no such line and is refused the same way; a test function
+  that writes `.backlog/items/A1/junk.txt` is refused on the `.backlog/` check.
+- `go -C scripts test ./...` with `exit 0` is accepted; `cd scripts && go test ./...`, `go -C scripts test ./... |
+  tail -1`, and `echo "it's" | wc -l` are refused `(R37)`; `echo \$(date)` is accepted; `grep -c x f` with `stdout
+  matches ^3$` is refused for its expect; `ls` with `exit 300` is refused.
+- a diff touching only `SKILL.md`, with one blocking test row carrying `@_covers("SKILL.md")`, is covered;
+  `@_covers("README.md")` leaves the hunk uncovered and `bl round` refuses under R10; a diff adding an empty `e.txt`
+  is covered by `@_covers("e.txt")`.
+- after the freeze, appending `def c(): assert True` to tests.py on disk makes `bl run A1` exit 2 naming tests.py;
+  `bl checks A1 --amend --file c2.tsv --tests t2.py`, where t2.py inserts `def c(): assert True` before its main block
+  and c2.tsv adds a row naming `c`, exits 0; a module docstring that contains the text
+  `if __name__ == "__main__":` does not move the split; a t2.py that changes one byte of t.py is refused `(R37)`.
+- `bl rebaseline A1 --file t.tsv` with only judge rows, on a format-2 list with a frozen tests.py, is refused
+  `(R37)`; the repository's own ledger, whose items are format 1, checks exactly as before.
 
 **P1 is a rule about the whole list, not about one row.** The precedence in §4 applies across the list: if one row
 breaks R1 and another breaks R8, the refusal names R1. Evaluating rule by rule and row by row lets the rule that
@@ -660,7 +856,8 @@ list, added by item I9 when the implementation found the gap.
 *the list is read* → R1 (schema) → R34 (the command is a shell script, not a pattern) → R4 (the amend scope, when
 `--amend` is given: the amendment may only add a row, and an amendment is refused once the item has a PASS round) →
 R5 (an amendment that CHANGES a row is refused once the claims exist) → R2 (brief clause) → R3 (judge
-justification) → R8 (expectation form). The state guards that do not depend on the rows come first, because a
+justification) → R8 (expectation form, format 1 only) → **R37** (the test file and the format-2 rows: the row rules,
+then the file's parse and amendment checks, then the freeze probe immediately before the write). The state guards that do not depend on the rows come first, because a
 command that is not allowed to write a list has no use for the list, and refusing before the input is read means a
 doomed command never waits on stdin. The guards that do depend on the rows come after the rows are read: an
 amendment is judged on what it does to them, so an amendment that changes a row is refused under R5 whatever else
@@ -669,9 +866,9 @@ this order: before it, R1 came before R5 and R4, so item I7's brief said "R1 acr
 wording is superseded. Item I23 changed it again: R5 moved to where the amendment's scope is judged, because the
 claims now freeze the list's content and not its corrections.
 
-**P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were) → R1 (schema) → R34 (the command is a shell script, not a pattern) → R2 (brief clause) → R3
-(judge justification) → R8 (expectation form) → R5 (the claims freeze the list) → R4 (the list is written once, and
-the amend scope). The list's rules come first here because the list IS the proposal: a re-baseline that names a
+**P11 — `bl rebaseline` order.** R20 (the frozen artefacts are what they were, including the test file) → R1 (schema) → R34 (the command is a shell script, not a pattern) → R2 (brief clause) → R3
+(judge justification) → R8 (expectation form, format 1 only) → R5 (the claims freeze the list) → R4 (the list is written once, and
+the amend scope) → **R37** (the test file and the format-2 rows, with the probe immediately before the write). The list's rules come first here because the list IS the proposal: a re-baseline that names a
 broken list is refused for the list's own fault, not for the state of the item.
 
 The six per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4), `bl close` (P5) and
@@ -717,7 +914,6 @@ and the supplied one is refused (R12, R23), except that R13 overrides the derive
 **P10 — one rule per command, one refusal per call.** A command that reaches a refusing rule stops there and reports
 that rule; it does not continue to later rules. A refusal writes nothing to the ledger, to the evidence and to the
 item's artefacts, except the `misclassified` event in R16, which is not a round. The run.log is the log of every
-call, refusals included, so it grows; that is not state.
 call, refusals included, so it grows; that is not state.
 
 ---
@@ -912,12 +1108,12 @@ Computed with the rules above.
 
 | quantity | value | how it is derived |
 |---|---|---|
-| checks `bl` validates before storing a list | 6 | R1, R2, R3, R4, R5, R8 |
-| refusals `bl checks` can raise | 6 | R1, R2, R3, R4, R5, R8 |
-| refusals `bl round` can raise | 11 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
-| refusals `bl run` can raise | 6 | R1, R8, R20, R26, R27, R35 |
+| checks `bl` validates before storing a list | 7 | R1, R2, R3, R4, R5, R8, R37 |
+| refusals `bl checks` can raise | 7 | R1, R2, R3, R4, R5, R8, R37 |
+| refusals `bl round` can raise | 12 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35, R37 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
+| refusals `bl run` can raise | 6 | R1, R8 (format 1), R20, R26, R27, R35 |
 | refusals `bl close` can raise | 4 | R15, R18, R20, R25 |
-| frozen artefacts re-verified before a command | 3 | the brief, the check list and the claims, each against its latest recorded hash — R20 |
+| frozen artefacts re-verified before a command | 4 | the brief, the check list and the claims, and the frozen test file when there is one, each against its latest recorded hash — R20 |
 | code rounds a failing item may have | 3 | R19 |
 | harness rounds an item may have | 3 | R19 |
 | dispute rounds an item may have | 3 | R19, R13 |

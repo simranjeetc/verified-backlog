@@ -41,8 +41,8 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
 | `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock |
 | `bl brief A1 --file brief.md` | yes | amends the item's brief; a new event with a new hash, and the old brief keeps its own |
-| `bl checks A1 --file checks.tsv` | yes | freezes the verifier's check list; written once, and `--amend` may only reclassify a row (judge → bl) |
-| `bl rebaseline A1 --file checks.tsv --reason "…"` | yes | replaces the frozen list with a new premise and the reason for it; refused once claims exist |
+| `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
+| `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
 | `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with the exit code and the full output of each row, and records the file's hash |
 | `bl round A1 --rows verdicts.tsv` | yes | records one round: the verdict is derived from the blocking rows, the cause is constrained, and the evidence file holds one line per frozen check id |

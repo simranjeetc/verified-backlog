@@ -13,8 +13,8 @@
 //	bl file --id A1 --text "..." [--after B2] [--source human] [--urgent]
 //	bl open A1                                            (writes .backlog/items/A1/brief.md)
 //	bl brief A1 --file brief.md                           (amends the brief; a new event)
-//	bl checks A1 [--file checks.tsv] [--amend]            (list from stdin without --file)
-//	bl rebaseline A1 --file checks.tsv --reason "..."      (replaces the frozen list)
+//	bl checks A1 [--file checks.tsv] [--tests tests.py] [--amend]  (list from stdin without --file)
+//	bl rebaseline A1 --file checks.tsv [--tests tests.py] --reason "..."  (replaces the frozen list)
 //	bl claims A1 --file claims.md
 //	bl run A1                                            (runs the frozen rows; writes the run file)
 //	bl round A1 --verdict FAIL --cause code --rows -      (rows from stdin)
@@ -73,6 +73,7 @@ const (
 	itemsDir    = "items"
 	briefName   = "brief.md"
 	checksName  = "checks.tsv"
+	testsName   = "tests.py"
 	claimsName  = "claims.md"
 )
 
@@ -123,6 +124,13 @@ type Event struct {
 	Checks    string `json:"checks,omitempty"`
 	ChecksSHA string `json:"checks_sha,omitempty"`
 	PrevSHA   string `json:"prev_checks_sha,omitempty"`
+	// The check list's format (I89, B1): 1 for a list frozen before the test file existed, 2
+	// for a list that may hold test rows. An event written before the field is format 1.
+	Format int `json:"format,omitempty"`
+	// The frozen test file and its hash (I89, B1): present exactly when a test file is frozen
+	// after the command that wrote the event.
+	Tests     string `json:"tests,omitempty"`
+	TestsSHA  string `json:"tests_sha,omitempty"`
 	Claims    string `json:"claims,omitempty"`
 	ClaimsSHA string `json:"claims_sha,omitempty"`
 	// The run (R7): the run id, and the sha256 of the run file it names.
@@ -180,6 +188,11 @@ type Item struct {
 	Brief, BriefSHA   string
 	Checks, ChecksSHA string
 	Claims, ClaimsSHA string
+	// The check list's format and the frozen test file (I89, B1): a list frozen before the
+	// test file existed has no format and is format 1.
+	ChecksFormat int
+	Tests        string
+	TestsSHA     string
 	// The scope and the before-state (R28): the scope paths, the ignored files the item may
 	// write, the tree the item was opened against, and the ignored files under the scope
 	// with the hash each had then.
@@ -497,11 +510,21 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 				return nil, nil, corrupt("checks event for %s after its claims", ev.ID)
 			}
 			it.Checks, it.ChecksSHA = ev.Checks, ev.ChecksSHA
+			it.ChecksFormat = ev.Format
+			if it.ChecksFormat == 0 {
+				it.ChecksFormat = 1
+			}
+			it.Tests, it.TestsSHA = ev.Tests, ev.TestsSHA
 		case "rebaseline":
 			if it.Claims != "" {
 				return nil, nil, corrupt("rebaseline event for %s after its claims", ev.ID)
 			}
 			it.Checks, it.ChecksSHA = ev.Checks, ev.ChecksSHA
+			it.ChecksFormat = ev.Format
+			if it.ChecksFormat == 0 {
+				it.ChecksFormat = 1
+			}
+			it.Tests, it.TestsSHA = ev.Tests, ev.TestsSHA
 			it.RebaselineSeq = ev.Seq
 		case "claims":
 			if it.Checks == "" {
@@ -524,10 +547,10 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Status, it.Reason, it.Opened = "open", "", false
 		case "restart":
 			// R36: a restart ends the attempt it names and starts the next one. Everything that
-			// belongs to the attempt goes — the brief, the check list, the claims, the scope and
-			// the before-state — and the item leaves flight. The rounds, the runs and the second
-			// checks stay in the history, where they are void: the numbering continues and the
-			// evidence of the attempt that ended is still on disk to be checked.
+			// belongs to the attempt goes — the brief, the check list, its format, the test file,
+			// the claims, the scope and the before-state — and the item leaves flight. The rounds,
+			// the runs and the second checks stay in the history, where they are void: the numbering
+			// continues and the evidence of the attempt that ended is still on disk to be checked.
 			if ev.Attempt == nil {
 				return nil, nil, corrupt("restart event for %s names no attempt", ev.ID)
 			}
@@ -541,6 +564,8 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Opened = false
 			it.Brief, it.BriefSHA = "", ""
 			it.Checks, it.ChecksSHA = "", ""
+			it.ChecksFormat = 0
+			it.Tests, it.TestsSHA = "", ""
 			it.Claims, it.ClaimsSHA = "", ""
 			it.Scope, it.ScopeIgnored = nil, nil
 			it.BeforeTree, it.IgnoredBefore = "", nil
@@ -1238,6 +1263,18 @@ func verifyFrozen(root string, it *Item) error {
 	return nil
 }
 
+// verifyTests re-hashes the item's frozen test file, when the latest `checks` or `rebaseline`
+// event carries `tests_sha` (I89, B8). It is the same comparison R31 requires, through the same
+// helper, so the test file joins the brief, the check list and the claims as a frozen artefact.
+// An item without a frozen test file has nothing to re-hash.
+func verifyTests(root string, it *Item) error {
+	if it.TestsSHA == "" {
+		return nil
+	}
+	_, err := verifyArtefact(root, it.Tests, it.TestsSHA, "test file")
+	return err
+}
+
 // requireInFlight refuses when the item is not the item in flight. The rule argument names the
 // design rule the refusal is reported under: "R35" for `bl run` and `bl round`, the two verbs
 // the design's rule R35 covers. The other paths that hold the lock — brief, checks, claims,
@@ -1377,8 +1414,9 @@ func parseChecks(text string) ([]checkRow, error) {
 // the caller can record it as the previous hash of the amendment.
 //
 // This is the one sweep over a list: `bl checks` and `bl rebaseline` both use it, so the two
-// commands cannot drift apart on what a list may say.
-func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string, error) {
+// commands cannot drift apart on what a list may say. format is the format the event will
+// carry: R34 and R8 are the format-1 rules, and a format-2 `decider: bl` row is R37's.
+func validateChecks(root string, it *Item, rows []checkRow, amend bool, format int) (string, error) {
 	if err := validateR1(rows); err != nil {
 		return "", err
 	}
@@ -1386,7 +1424,7 @@ func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string,
 	// pipe; a pipe with an odd number of backslashes before it is read by the shell as a
 	// literal pipe, and the row then does not do what it says. The list is refused here, before
 	// it is frozen, so the mistake cannot reach a round.
-	if err := validateR34(rows); err != nil {
+	if err := validateR34(rows, format); err != nil {
 		return "", err
 	}
 	prevSHA := ""
@@ -1417,7 +1455,7 @@ func validateChecks(root string, it *Item, rows []checkRow, amend bool) (string,
 	if err := validateR3(rows); err != nil {
 		return "", err
 	}
-	if err := validateR8(rows); err != nil {
+	if err := validateR8(rows, format); err != nil {
 		return "", err
 	}
 	return prevSHA, nil
@@ -1480,8 +1518,14 @@ func validateR1(rows []checkRow) error {
 //
 // Only the cmd field is checked. An expect pattern is Go's RE2, where a backslash before a
 // pipe means a literal pipe — and there that is what the pattern says, not a fault.
-func validateR34(rows []checkRow) error {
+//
+// R34 does not reach a format-2 `decider: bl` row (I89, B10): a format-2 test row holds no
+// shell syntax, and a format-2 shell row is governed by B6's simple-command scan instead.
+func validateR34(rows []checkRow, format int) error {
 	for _, r := range rows {
+		if format == 2 && r.f["decider"] == "bl" {
+			continue
+		}
 		if n, ok := escapedPipe(r.f["cmd"]); ok {
 			return refuseRule("R34", "row %s: the command holds an odd number of backslashes (%d) before a pipe — the shell reads that as a literal pipe; write the pipe as a pipe",
 				r.f["id"], n)
@@ -1560,9 +1604,13 @@ func validateR3(rows []checkRow) error {
 	return nil
 }
 
-// validateR8 applies R8 — an expectation is one of five forms — to every row. Only a decider bl
-// row carries an expectation.
-func validateR8(rows []checkRow) error {
+// validateR8 applies R8 — an expectation is one of five forms — to every row of a format-1
+// list. R8's text is unchanged, but it no longer applies to a format-2 list: there a
+// `decider: bl` row's expect is R37's (I89, B10), and a judge row carries no expect at all.
+func validateR8(rows []checkRow, format int) error {
+	if format != 1 {
+		return nil
+	}
 	for _, r := range rows {
 		if r.f["decider"] != "bl" {
 			continue
@@ -1682,6 +1730,483 @@ func amendGuards(root string, it *Item, rows []checkRow) error {
 	return nil
 }
 
+// ── R37: the test file, and the format-2 row ─────────────────────────────────
+
+// testRowRe matches a test row's cmd exactly (I89, B2): `python3 <tests path> <name>`, with
+// single spaces, the path being the item's frozen test file, and the name a Python function
+// name that does not start with an underscore.
+var testRowRe = regexp.MustCompile(`^python3 (\S+) ([A-Za-z][A-Za-z0-9_]*)$`)
+
+// testPath is the frozen test file's repository-relative path (I89, B1): beside the attempt's
+// checks.tsv, so attempt n >= 2 keeps its file under a<n>/ (R36) and attempt 1 keeps the path
+// it has always had, `.backlog/items/<id>/tests.py`.
+func testPath(id string, attempt int) string { return attemptFile(id, attempt, testsName) }
+
+// testRowName reports whether a row of the given format is a test row (I89, B2) and, if it is,
+// the test function it names. A test row is a format-2 `decider: bl` row whose cmd is exactly
+// `python3 <the item's tests path> <name>`.
+func testRowName(format int, it *Item, r checkRow) (string, bool) {
+	if format != 2 || r.f["decider"] != "bl" {
+		return "", false
+	}
+	m := testRowRe.FindStringSubmatch(r.f["cmd"])
+	if m == nil || m[1] != testPath(it.ID, it.Attempt) {
+		return "", false
+	}
+	return m[2], true
+}
+
+// testRowAttempt reports whether a row is a test-row ATTEMPT (I89, B2): a format-2
+// `decider: bl` row whose cmd's first word is `python3` and which contains `.backlog/items/`.
+// Such a row must be exactly the test-row form; it is never treated as a shell row.
+func testRowAttempt(format int, it *Item, r checkRow) bool {
+	if format != 2 || r.f["decider"] != "bl" {
+		return false
+	}
+	fields := strings.Fields(r.f["cmd"])
+	return len(fields) > 0 && fields[0] == "python3" && strings.Contains(r.f["cmd"], backlogDir+"/"+itemsDir+"/")
+}
+
+// validExitExpect reports whether an expect is B6's `exit <code>`: the integer 0..255 form R8
+// defines, checked under R37's tag.
+func validExitExpect(expect string) bool {
+	if !strings.HasPrefix(expect, "exit ") {
+		return false
+	}
+	code := strings.TrimPrefix(expect, "exit ")
+	n, err := strconv.Atoi(code)
+	return err == nil && exitCodeRe.MatchString(code) && n <= 255
+}
+
+// shellMeta reports the first character outside quotes that makes a format-2 shell row more
+// than one simple command (I89, B6), and whether there is one. It reads quotes and backslashes
+// exactly as escapedPipe (R34) does: inside a single-quoted string everything is text; inside
+// a double-quoted string a backslash escapes the next character and a quote of the other kind
+// is text; outside quotes a backslash escapes the next character.
+func shellMeta(cmd string) (string, bool) {
+	var quote byte
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				quote = 0
+			}
+		case c == '\\':
+			i++
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '|' || c == ';' || c == '&' || c == '<' || c == '>' || c == '`' || c == '\n':
+			return string(c), true
+		case c == '$' && i+1 < len(cmd) && cmd[i+1] == '(':
+			return "$(", true
+		}
+	}
+	return "", false
+}
+
+// testFile is what bl reads of a test file without running it (I89, B3, B4): its top-level
+// defs and classes, the paths each def's `@_covers(...)` names, and the line of the
+// module-level `if __name__ == "__main__":` block.
+type testFile struct {
+	defs     map[string]testDef
+	classes  map[string]bool
+	mainLine int
+}
+
+type testDef struct{ covers []string }
+
+// testFileScript reads the file with python3's ast and prints one JSON object. It never runs
+// the file: the run contract is the template's main block, not bl's.
+const testFileScript = `import ast, json, sys
+
+path = sys.argv[1]
+try:
+    with open(path, "rb") as fh:
+        src = fh.read()
+    tree = ast.parse(src, filename=path)
+except SyntaxError as exc:
+    print(json.dumps({"ok": False, "error": "%s (line %s)" % (exc.msg, exc.lineno)}))
+    sys.exit(0)
+
+
+def string_args(node):
+    out = []
+    for a in node.args:
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            out.append(a.value)
+    return out
+
+
+defs = []
+classes = []
+main_line = 0
+lines = src.split(b"\n")
+for node in tree.body:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        covers = []
+        for d in node.decorator_list:
+            if isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "_covers":
+                covers.extend(string_args(d))
+        defs.append({"name": node.name, "line": node.lineno, "covers": covers})
+    elif isinstance(node, ast.ClassDef):
+        classes.append({"name": node.name, "line": node.lineno})
+    elif isinstance(node, ast.If) and main_line == 0 and 0 < node.lineno <= len(lines):
+        text = lines[node.lineno - 1].decode("utf-8", "replace").rstrip()
+        if "#" in text:
+            text = text.split("#", 1)[0].rstrip()
+        if text == 'if __name__ == "__main__":':
+            main_line = node.lineno
+print(json.dumps({"ok": True, "defs": defs, "classes": classes, "main_line": main_line}))
+`
+
+// testFileReport is the JSON testFileScript prints.
+type testFileReport struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error"`
+	Defs  []struct {
+		Name   string   `json:"name"`
+		Line   int      `json:"line"`
+		Covers []string `json:"covers"`
+	} `json:"defs"`
+	Classes []struct {
+		Name string `json:"name"`
+		Line int    `json:"line"`
+	} `json:"classes"`
+	MainLine int `json:"main_line"`
+}
+
+// parseTestFile reads a test file with python3's ast, without running it (I89, B3, B4).
+func parseTestFile(root, rel string) (testFile, error) {
+	tf := testFile{defs: map[string]testDef{}, classes: map[string]bool{}}
+	cmd := exec.Command("python3", "-c", testFileScript, filepath.Join(root, filepath.FromSlash(rel)))
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		return tf, refuseRule("R37", "python3 could not read the test file %s: %v: %s", rel, err, strings.TrimSpace(errOut.String()))
+	}
+	var rep testFileReport
+	if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
+		return tf, refuseRule("R37", "python3 returned no test-file report for %s: %v", rel, err)
+	}
+	if !rep.OK {
+		return tf, refuseRule("R37", "the test file %s does not parse: %s", rel, rep.Error)
+	}
+	for _, d := range rep.Defs {
+		tf.defs[d.Name] = testDef{covers: d.Covers}
+	}
+	for _, c := range rep.Classes {
+		tf.classes[c.Name] = true
+	}
+	tf.mainLine = rep.MainLine
+	return tf, nil
+}
+
+// mainLineOffset returns the byte offset of the start of line n (1-based) in data, which is
+// where B8's insert-only amendment puts its text.
+func mainLineOffset(data []byte, line int) (int, bool) {
+	if line < 1 {
+		return 0, false
+	}
+	off := 0
+	for n := 1; n < line; n++ {
+		i := bytes.IndexByte(data[off:], '\n')
+		if i < 0 {
+			return 0, false
+		}
+		off += i + 1
+	}
+	return off, true
+}
+
+// checkInsertOnly is B8's amendment rule: the new test file is the frozen one with new text
+// inserted at exactly one point, immediately before the frozen file's main-block line.
+func checkInsertOnly(frozen, next []byte, mainLine int) error {
+	off, ok := mainLineOffset(frozen, mainLine)
+	if mainLine == 0 || !ok {
+		return refuseRule("R37", "the frozen test file has no `if __name__ == \"__main__\":` line to insert before")
+	}
+	if !bytes.HasPrefix(next, frozen[:off]) || !bytes.HasSuffix(next, frozen[off:]) {
+		return refuseRule("R37", "an amended test file may only insert text at one point, immediately before the frozen file's main-block line — it may not change or remove the frozen text")
+	}
+	return nil
+}
+
+// validateR37Rows applies R37's row rules to a list: B2 (a test row's exact form and its
+// `exit 0` expect), B6 (a shell row is one simple command with an `exit <code>` expect), and
+// the test-row attempt. In a format-1 list no row is a test row and none of this applies.
+func validateR37Rows(it *Item, rows []checkRow, format int) error {
+	for _, r := range rows {
+		if format != 2 || r.f["decider"] != "bl" {
+			continue
+		}
+		if _, ok := testRowName(format, it, r); ok {
+			if r.f["expect"] != "exit 0" {
+				return refuseRule("R37", "row %s: a test row's expect is exactly `exit 0`, not %q", r.f["id"], r.f["expect"])
+			}
+			continue
+		}
+		if testRowAttempt(format, it, r) {
+			return refuseRule("R37", "row %s: a test row is exactly `python3 %s <name>` — single spaces, the item's test file, and a name matching [A-Za-z][A-Za-z0-9_]*, not %q", r.f["id"], testPath(it.ID, it.Attempt), r.f["cmd"])
+		}
+		if !validExitExpect(r.f["expect"]) {
+			return refuseRule("R37", "row %s: a format-2 shell row's expect is exactly `exit <code>` for 0-255, not %q", r.f["id"], r.f["expect"])
+		}
+		if meta, ok := shellMeta(r.f["cmd"]); ok {
+			return refuseRule("R37", "row %s: a format-2 shell row is one simple command — %q is outside quotes", r.f["id"], meta)
+		}
+	}
+	return nil
+}
+
+// validateR37Presence is B9: a test row needs a frozen test file, and a frozen test file needs
+// at least one test row. A format-2 list of judge and shell rows only carries no test file.
+func validateR37Presence(it *Item, rows []checkRow, format int, willFreeze bool) error {
+	n := 0
+	for _, r := range rows {
+		if _, ok := testRowName(format, it, r); ok {
+			n++
+		}
+	}
+	if n > 0 && !willFreeze {
+		return refuseRule("R37", "%s: the list has a test row, so a test file must be frozen — pass --tests", it.ID)
+	}
+	if willFreeze && n == 0 {
+		return refuseRule("R37", "%s: a frozen test file must be used by at least one test row — this list has none", it.ID)
+	}
+	return nil
+}
+
+// validateR37File applies B3 to a test file: every test row names a top-level def, no two rows
+// name the same def, and every public top-level def or class is named by a row. A helper's
+// name starts with `_`, and a helper is never named by a row.
+func validateR37File(it *Item, rows []checkRow, format int, tf testFile) error {
+	named := map[string]bool{}
+	for _, r := range rows {
+		name, ok := testRowName(format, it, r)
+		if !ok {
+			continue
+		}
+		if named[name] {
+			return refuseRule("R37", "rows name the same test function %q twice", name)
+		}
+		if _, ok := tf.defs[name]; !ok {
+			if tf.classes[name] {
+				return refuseRule("R37", "row %s names %q, which is a class, not a top-level def", r.f["id"], name)
+			}
+			return refuseRule("R37", "row %s names %q, which is not a top-level def in the test file", r.f["id"], name)
+		}
+		named[name] = true
+	}
+	defs := make([]string, 0, len(tf.defs))
+	for name := range tf.defs {
+		defs = append(defs, name)
+	}
+	sort.Strings(defs)
+	for _, name := range defs {
+		if strings.HasPrefix(name, "_") || named[name] {
+			continue
+		}
+		return refuseRule("R37", "the test file defines %q, which no test row names — a helper's name starts with _", name)
+	}
+	classes := make([]string, 0, len(tf.classes))
+	for name := range tf.classes {
+		classes = append(classes, name)
+	}
+	sort.Strings(classes)
+	for _, name := range classes {
+		if strings.HasPrefix(name, "_") {
+			continue
+		}
+		return refuseRule("R37", "the test file defines the public class %q — a helper's name starts with _", name)
+	}
+	return nil
+}
+
+// probeTests is B5: every test row of the list runs once on the current tree, exactly as
+// `bl run` runs a row, and the tree and .backlog/ must not move. A test exits 0 when its
+// assertion holds and 1 when it is false; any other exit, a timeout, or a missing
+// `bl-test: <name>` line means the test itself is broken and the list is refused. The probe
+// writes no run file and no event.
+func probeTests(root string, it *Item, rows []checkRow, format int) error {
+	var probe []checkRow
+	for _, r := range rows {
+		if _, ok := testRowName(format, it, r); ok {
+			probe = append(probe, r)
+		}
+	}
+	if len(probe) == 0 {
+		return nil
+	}
+	treeBefore, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	ledgerBefore, err := backlogHash(root)
+	if err != nil {
+		return err
+	}
+	env, cleanup, err := execEnv(root)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	var rowErr error
+	for _, r := range probe {
+		name, _ := testRowName(format, it, r)
+		rec := execRow(root, r, env, runTimeout)
+		switch {
+		case rec.TimedOut:
+			rowErr = refuseRule("R37", "row %s: timeout — the test did not finish", r.f["id"])
+		case rec.Exit != 0 && rec.Exit != 1:
+			rowErr = refuseRule("R37", "row %s: exit %d — a test exits 0 or 1; any other code means the test itself is broken", r.f["id"], rec.Exit)
+		case !hasTestLine(rec.Stdout, name):
+			rowErr = refuseRule("R37", "row %s: no bl-test line — the test did not print `bl-test: %s`", r.f["id"], name)
+		}
+		if rowErr != nil {
+			break
+		}
+	}
+	// The state checks run after the last row that ran, in every case; the refusal names the
+	// first failing condition: the row, then the tree, then .backlog/.
+	treeAfter, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	ledgerAfter, err := backlogHash(root)
+	if err != nil {
+		return err
+	}
+	if rowErr != nil {
+		return rowErr
+	}
+	if treeAfter != treeBefore {
+		return refuseRule("R37", "the tree moved under the test probe: %s before, %s after — a test changed the tree it ran against", treeBefore, treeAfter)
+	}
+	if ledgerAfter != ledgerBefore {
+		return refuseRule("R37", "the %s directory changed under the test probe: %s before, %s after — a test wrote to the ledger, the evidence or the item files", backlogDir, ledgerBefore, ledgerAfter)
+	}
+	return nil
+}
+
+// hasTestLine reports whether stdout holds the line `bl-test: <name>` the run contract prints
+// as its first action (I89, B4, B5).
+func hasTestLine(stdout, name string) bool {
+	want := "bl-test: " + name
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.TrimSuffix(line, "\r") == want {
+			return true
+		}
+	}
+	return false
+}
+
+// frozenTests is the test file a freeze writes (I89, B1): whether one is frozen at all, and
+// the bytes the next `checks` or `rebaseline` event records a hash of.
+type frozenTests struct {
+	set  bool
+	data []byte
+}
+
+// validateR37 applies R37's block to a list that is about to be frozen, in the order B5 gives:
+// the row rules (B2, B6, B9), then the test file's parse and amendment checks (B3, B8), then
+// the freeze probe (B5). It returns the test file the command will freeze, if one is frozen.
+//
+// supplied is the file given with --tests; suppliedSet says the flag was given, so an empty
+// file is still supplied. carry says a list already frozen may lend its test file to the new
+// event (an amendment or a re-baseline without --tests). insertOnly is the amendment rule of
+// B8: a new test file may only insert text before the frozen file's main-block line.
+func validateR37(root string, it *Item, rows []checkRow, format int, supplied []byte, suppliedSet, carry, insertOnly bool) (frozenTests, error) {
+	var frozen frozenTests
+	// B9: a test file is format 2's, and only a re-baseline can move a format-1 list to it.
+	if suppliedSet && format == 1 {
+		return frozen, refuseRule("R37", "%s: a test file needs a format-2 list — only `bl rebaseline` can move a list to format 2", it.ID)
+	}
+	// B8: an amendment may grow the frozen test file in one point, never introduce one.
+	if suppliedSet && insertOnly && it.TestsSHA == "" {
+		return frozen, refuseRule("R37", "%s has no frozen test file — an amendment may only grow one; only `bl rebaseline` can introduce one", it.ID)
+	}
+	if err := validateR37Rows(it, rows, format); err != nil {
+		return frozen, err
+	}
+	willFreeze := format == 2 && (suppliedSet || (carry && it.TestsSHA != ""))
+	if err := validateR37Presence(it, rows, format, willFreeze); err != nil {
+		return frozen, err
+	}
+	if !willFreeze {
+		return frozen, nil
+	}
+	rel := testPath(it.ID, it.Attempt)
+	abs := filepath.Join(root, rel)
+	before, readErr := os.ReadFile(abs)
+	existed := readErr == nil
+	// B8: the insertion point is the FROZEN file's main-block line, so it is read before the
+	// new file replaces it.
+	mainLine := 0
+	if insertOnly && suppliedSet {
+		tf, err := parseTestFile(root, rel)
+		if err != nil {
+			return frozen, err
+		}
+		mainLine = tf.mainLine
+	}
+	if suppliedSet {
+		if err := atomicWrite(abs, string(supplied)); err != nil {
+			return frozen, err
+		}
+	}
+	restore := func() {
+		if existed {
+			_ = atomicWrite(abs, string(before))
+		} else {
+			_ = os.Remove(abs)
+		}
+	}
+	// B3: the file that will be frozen after this command is the supplied one, or the frozen
+	// one carried over.
+	data := supplied
+	if !suppliedSet {
+		d, err := os.ReadFile(abs)
+		if err != nil {
+			restore()
+			return frozen, refuseRule("R20", "the test file %s is missing", rel)
+		}
+		if shaHex(d) != it.TestsSHA {
+			restore()
+			return frozen, refuseRule("R20", "the test file %s no longer matches the hash recorded in the ledger", rel)
+		}
+		data = d
+	}
+	if insertOnly && suppliedSet {
+		if err := checkInsertOnly(before, supplied, mainLine); err != nil {
+			restore()
+			return frozen, err
+		}
+	}
+	tf, err := parseTestFile(root, rel)
+	if err != nil {
+		restore()
+		return frozen, err
+	}
+	if err := validateR37File(it, rows, format, tf); err != nil {
+		restore()
+		return frozen, err
+	}
+	if err := probeTests(root, it, rows, format); err != nil {
+		restore()
+		return frozen, err
+	}
+	frozen.set, frozen.data = true, data
+	return frozen, nil
+}
+
 func cmdChecks(root string, a args) error {
 	if err := requireLedger(root); err != nil {
 		return err
@@ -1705,6 +2230,15 @@ func cmdChecks(root string, a args) error {
 	// the list is written once (R4). A frozen item is therefore refused without waiting on
 	// stdin, and a list that was never allowed to be written is not read at all.
 	amend := a.flag("amend")
+	// The format the event will carry (I89, B1): a plain `bl checks` writes format 2, and an
+	// amendment keeps the format of the list it amends.
+	format := 2
+	if amend {
+		format = it.ChecksFormat
+		if format == 0 {
+			format = 1
+		}
+	}
 	// R5: the claims freeze the list. An amendment is judged on what it does to the rows, so it
 	// is refused below, once its list is read; a list written plainly is refused here.
 	if it.Claims != "" && !(amend && it.Checks != "") {
@@ -1716,6 +2250,20 @@ func cmdChecks(root string, a args) error {
 	}
 	if it.Checks == "" && amend {
 		return refuseRule("R4", "%s has no check list to amend", it.ID)
+	}
+	// B8: the frozen test file is re-hashed before the list is read (R20), so an edited test
+	// file is refused at the point of use. It is a state guard, so it keeps this place.
+	if err := verifyTests(root, it); err != nil {
+		return err
+	}
+	suppliedSet := a.get("tests") != ""
+	var supplied []byte
+	if suppliedSet {
+		data, err := os.ReadFile(a.get("tests"))
+		if err != nil {
+			return refuse("--tests %s: %v", a.get("tests"), err)
+		}
+		supplied = data
 	}
 	// Only now is the list read — from --file, or from stdin.
 	text, err := a.input("file")
@@ -1732,7 +2280,7 @@ func cmdChecks(root string, a args) error {
 		if err := validateR1(rows); err != nil {
 			return err
 		}
-		if err := validateR34(rows); err != nil {
+		if err := validateR34(rows, format); err != nil {
 			return err
 		}
 		if err := amendGuards(root, it, rows); err != nil {
@@ -1743,14 +2291,23 @@ func cmdChecks(root string, a args) error {
 	// (the command's dialect), then R4 (the amend scope), then R2 (the brief clause), then R3
 	// (the judge's justification), then R8 (the expectation form) — so the refusal names the
 	// earliest broken rule, and within one rule the first broken row in file order.
-	prevSHA, err := validateChecks(root, it, rows, amend)
+	prevSHA, err := validateChecks(root, it, rows, amend, format)
+	if err != nil {
+		return err
+	}
+	// R37: the test file and the format-2 rows. The existing rules keep their place; this block
+	// runs after all of them, and its probe runs immediately before the write (I89, B5).
+	tests, err := validateR37(root, it, rows, format, supplied, suppliedSet, amend, amend && suppliedSet)
 	if err != nil {
 		return err
 	}
 	rel := attemptFile(it.ID, it.Attempt, checksName)
-	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text))}
+	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text)), Format: format}
 	if amend {
 		ev.PrevSHA = prevSHA
+	}
+	if tests.set {
+		ev.Tests, ev.TestsSHA = testPath(it.ID, it.Attempt), shaHex(tests.data)
 	}
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
 		return err
@@ -1798,13 +2355,33 @@ func cmdRebaseline(root string, a args) error {
 	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
-	// R20: the frozen artefacts are what they were — before anything else on this path.
+	// R20: the frozen artefacts are what they were — before anything else on this path. The
+	// frozen test file is one of them (I89, B8).
 	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	if err := verifyTests(root, it); err != nil {
 		return err
 	}
 	reason, err := cleanText(a.get("reason"), "reason")
 	if err != nil {
 		return err
+	}
+	// The format the event will carry (I89, B9): --tests moves the list to format 2; without it
+	// the list keeps its current format, and a format-2 list keeps its frozen test file.
+	format := it.ChecksFormat
+	if format == 0 {
+		format = 1
+	}
+	suppliedSet := a.get("tests") != ""
+	var supplied []byte
+	if suppliedSet {
+		data, err := os.ReadFile(a.get("tests"))
+		if err != nil {
+			return refuse("--tests %s: %v", a.get("tests"), err)
+		}
+		supplied = data
+		format = 2
 	}
 	// The list's own rules first, in the order §4 gives: R1 (the schema) across all rows, then
 	// R34 (the command's dialect), then R2 (the brief clause), then R3 (the judge's
@@ -1817,7 +2394,7 @@ func cmdRebaseline(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if _, err := validateChecks(root, it, rows, false); err != nil {
+	if _, err := validateChecks(root, it, rows, false, format); err != nil {
 		return err
 	}
 	// Then the state rules: the claims freeze the list (R5), and the list is written once (R4).
@@ -1827,13 +2404,21 @@ func cmdRebaseline(root string, a args) error {
 	if it.Checks == "" {
 		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
 	}
+	// R37's block runs after every existing rule, and its probe immediately before the write.
+	tests, err := validateR37(root, it, rows, format, supplied, suppliedSet, true, false)
+	if err != nil {
+		return err
+	}
 	rel := attemptFile(it.ID, it.Attempt, checksName)
 	if err := atomicWrite(filepath.Join(root, rel), text); err != nil {
 		return err
 	}
 	ev := Event{
 		T: "rebaseline", ID: it.ID, Checks: rel,
-		ChecksSHA: shaHex([]byte(text)), PrevSHA: it.ChecksSHA, Reason: reason,
+		ChecksSHA: shaHex([]byte(text)), PrevSHA: it.ChecksSHA, Reason: reason, Format: format,
+	}
+	if tests.set {
+		ev.Tests, ev.TestsSHA = testPath(it.ID, it.Attempt), shaHex(tests.data)
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
@@ -1868,6 +2453,9 @@ func cmdClaims(root string, a args) error {
 		return refuseRule("R5", "%s already has a claims event — the claims are frozen once", it.ID)
 	}
 	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	if err := verifyTests(root, it); err != nil {
 		return err
 	}
 	path := a.get("file")
@@ -1967,6 +2555,10 @@ func cmdRun(root string, a args) error {
 	// re-hashed and compared with the hash of the latest event that recorded each of them, so a
 	// frozen artefact that was edited after the freeze is refused at the point of use.
 	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	// R20: the frozen test file is a frozen artefact too (I89, B8).
+	if err := verifyTests(root, it); err != nil {
 		return err
 	}
 	// R1: the frozen list still parses.
@@ -3148,19 +3740,49 @@ func inHunk(hunks []hunk, file string, line int) bool {
 	return false
 }
 
+// testCovers reads the frozen test file and returns, per test row id, the repository paths its
+// function's `@_covers(...)` decorator names (I89, B7). A test row covers a hunk or a bare path
+// through these, never through its cmd. The file parsed when it was frozen and B8 re-hashes it
+// at the top of the round, so a parse failure here is a defect of the frozen file and is
+// refused under R37 rather than silently covering nothing.
+func testCovers(root string, it *Item, frozen []checkRow) (map[string]map[string]bool, error) {
+	out := map[string]map[string]bool{}
+	if it.ChecksFormat != 2 || it.TestsSHA == "" {
+		return out, nil
+	}
+	tf, err := parseTestFile(root, it.Tests)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range frozen {
+		name, ok := testRowName(it.ChecksFormat, it, r)
+		if !ok {
+			continue
+		}
+		paths := map[string]bool{}
+		for _, p := range tf.defs[name].covers {
+			paths[p] = true
+		}
+		out[r.f["id"]] = paths
+	}
+	return out, nil
+}
+
 // checkCoverage is R10: every hunk in the round's diff must be covered by at least one
 // blocking row. A row covers a hunk if it is a judge row whose source anchor lies in the
 // hunk's new-side range, or if its cmd contains the hunk's file path as a literal substring.
-// Advisory rows do not count.
-func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string) error {
+// A format-2 test row covers a hunk only through its function's `@_covers(...)` (I89, B7):
+// its cmd is `python3 <test file> <name>`, which names no repository file, and it is never
+// read as a path by substring. Advisory rows do not count.
+func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string, covers map[string]map[string]bool) error {
 	for _, h := range hunks {
-		if coveredHunk(vf, frozen, h) {
+		if coveredHunk(vf, frozen, h, covers) {
 			continue
 		}
 		return refuseRule("R10", "the hunk in %s at line %d is covered by no blocking row", h.file, h.start)
 	}
 	for _, f := range bare {
-		if coveredPath(frozen, f) {
+		if coveredPath(frozen, f, covers) {
 			continue
 		}
 		return refuseRule("R10", "the change in %s is covered by no blocking row", f)
@@ -3168,10 +3790,17 @@ func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []str
 	return nil
 }
 
-// coveredHunk reports whether a blocking row covers a hunk.
-func coveredHunk(vf *verdictsFile, frozen []checkRow, h hunk) bool {
+// coveredHunk reports whether a blocking row covers a hunk. covers holds, for each test row,
+// the paths its function's `@_covers(...)` names; a test row's cmd covers nothing.
+func coveredHunk(vf *verdictsFile, frozen []checkRow, h hunk, covers map[string]map[string]bool) bool {
 	for _, row := range frozen {
 		if row.f["severity"] != "blocking" {
+			continue
+		}
+		if paths, ok := covers[row.f["id"]]; ok {
+			if paths[h.file] {
+				return true
+			}
 			continue
 		}
 		if strings.Contains(row.f["cmd"], h.file) {
@@ -3191,10 +3820,17 @@ func coveredHunk(vf *verdictsFile, frozen []checkRow, h hunk) bool {
 	return false
 }
 
-// coveredPath reports whether a blocking row names a file path in its cmd.
-func coveredPath(frozen []checkRow, path string) bool {
+// coveredPath reports whether a blocking row names a file path in its cmd. A format-2 test row
+// names the path in its `@_covers(...)` instead (I89, B7).
+func coveredPath(frozen []checkRow, path string, covers map[string]map[string]bool) bool {
 	for _, row := range frozen {
 		if row.f["severity"] != "blocking" {
+			continue
+		}
+		if paths, ok := covers[row.f["id"]]; ok {
+			if paths[path] {
+				return true
+			}
 			continue
 		}
 		if strings.Contains(row.f["cmd"], path) {
@@ -3513,6 +4149,9 @@ func cmdSecondCheck(root string, a args) error {
 	if err := verifyFrozen(root, it); err != nil {
 		return err
 	}
+	if err := verifyTests(root, it); err != nil {
+		return err
+	}
 	row := strings.TrimSpace(a.get("row"))
 	if row == "" {
 		return refuse("--row is required")
@@ -3596,6 +4235,9 @@ func cmdRound(root string, a args) error {
 	}
 	// R20: the frozen artefacts are what they were when the round was written against.
 	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	if err := verifyTests(root, it); err != nil {
 		return err
 	}
 	// R23 (P2): a harness round has no rows and stops here. The check sits right after R20 and
@@ -3708,8 +4350,12 @@ func cmdRound(root string, a args) error {
 	if err := checkAnchors(root, it, vf, frozen, &rf, hunks); err != nil {
 		return err
 	}
-	// R10: the hunk coverage.
-	if err := checkCoverage(vf, frozen, hunks, bare); err != nil {
+	// R10: the hunk coverage. A format-2 test row covers through its `@_covers(...)` (B7).
+	covers, err := testCovers(root, it, frozen)
+	if err != nil {
+		return err
+	}
+	if err := checkCoverage(vf, frozen, hunks, bare, covers); err != nil {
 		return err
 	}
 	// R16: a second check that disagrees with the row's recorded verdict.
@@ -4022,6 +4668,9 @@ func cmdClose(root string, a args) error {
 	}
 	// R20: the frozen artefacts are what they were when the round was written against.
 	if err := verifyFrozen(root, it); err != nil {
+		return err
+	}
+	if err := verifyTests(root, it); err != nil {
 		return err
 	}
 	// R24: the rows the last round was written against must still resolve against the brief, or
@@ -5023,6 +5672,16 @@ func cmdCheck(root string, a args) error {
 				problems = append(problems, line)
 			}
 		}
+		// B8: the frozen test file is reported like a run file — a problem, not a refusal, so
+		// `bl check` keeps checking the other items.
+		if it.TestsSHA != "" {
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(it.Tests)))
+			if err != nil {
+				problems = append(problems, it.ID+" tests "+it.Tests+" is missing")
+			} else if shaHex(data) != it.TestsSHA {
+				problems = append(problems, it.ID+" tests "+it.Tests+" does not match its hash")
+			}
+		}
 		if it.BlockedBy != "" {
 			if _, ok := byID[strings.ToLower(it.BlockedBy)]; !ok {
 				problems = append(problems, it.ID+" waits on unknown item "+it.BlockedBy)
@@ -5107,8 +5766,8 @@ func schemaJSON() map[string]any {
 			"file":          {"required": {"id", "text"}, "optional": {"after", "source", "urgent", "by"}},
 			"open":          {"required": {"id"}, "optional": {"brief", "brief_sha", "scope", "scope_ignored", "before_tree", "ignored_before"}},
 			"brief":         {"required": {"id", "brief", "brief_sha"}, "optional": {}},
-			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha"}},
-			"rebaseline":    {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason"}},
+			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "format", "tests", "tests_sha"}},
+			"rebaseline":    {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason", "format", "tests", "tests_sha"}},
 			"claims":        {"required": {"id", "claims", "claims_sha"}, "optional": {}},
 			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
 			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding"}},

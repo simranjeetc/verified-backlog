@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -129,7 +130,7 @@ def head(root: Path) -> str:
 # judge's.
 ROUND_LIST = (
     "id\tdecider\tseverity\tbrief_ref\tcmd\texpect\tfail_if\twhy_not_mech\tcriterion\n"
-    "S1\tbl\tblocking\tB1\techo two\tstdout matches ^two\t\t\tprints two\n"
+    "S1\tbl\tblocking\tB1\techo two\texit 0\t\t\tprints two\n"
     "J1\tjudge\tblocking\tB1\techo two\t\tif the output is not two, FAIL\ttwo is a reading of intent\tthe output is two\n"
 )
 
@@ -844,6 +845,109 @@ def lint_reports_unparseable_lines():
     r = run(root, "lint", "TODO.md", "PROGRESS.md")
     assert r.returncode == 1 and "checkbox without a readable id" in r.stdout
     assert "parsed 1 items" in r.stdout
+
+
+# ── the frozen test file and the format-2 row (I89, R37) ─────────────────────
+
+TEST_TEMPLATE = """import sys
+
+
+def _covers(*paths):
+    def mark(fn):
+        return fn
+
+    return mark
+
+
+def a():
+    assert True
+
+
+if __name__ == "__main__":
+    name = sys.argv[1] if len(sys.argv) > 1 else ""
+    print("bl-test: " + name)
+    fn = globals().get(name)
+    if name.startswith("_") or not callable(fn):
+        sys.exit(4)
+    try:
+        fn()
+    except AssertionError:
+        sys.exit(1)
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(3)
+"""
+
+
+def r37_item() -> tuple[Path, Path]:
+    """An open item A1, and a directory outside the repository holding a checks list with one
+    test row and the test file it names."""
+    root = fresh()
+    ok(root, "file", "--id", "A1", "--text", "first")
+    ok(root, "open", "A1")
+    outside = Path(tempfile.mkdtemp(prefix="bl-r37-"))
+    listing = outside / "c.tsv"
+    listing.write_text(
+        "id\tdecider\tseverity\tbrief_ref\tcmd\texpect\tfail_if\twhy_not_mech\tcriterion\n"
+        "R1\tbl\tblocking\tB1\tpython3 .backlog/items/A1/tests.py a\texit 0\t\t\tthe test a\n",
+        encoding="utf-8",
+    )
+    return root, listing
+
+
+@test
+def r37_checks_copies_the_test_file_and_records_its_hash():
+    root, listing = r37_item()
+    tests = Path(tempfile.mkdtemp(prefix="bl-r37-tests-")) / "t.py"
+    tests.write_text(TEST_TEMPLATE, encoding="utf-8")
+    ok(root, "checks", "A1", "--file", str(listing), "--tests", str(tests))
+    copied = root / ".backlog" / "items" / "A1" / "tests.py"
+    assert copied.read_bytes() == tests.read_bytes(), "the test file is not copied byte for byte"
+    ev = json.loads((root / ".backlog" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert ev["format"] == 2, ev
+    assert ev["tests"] == ".backlog/items/A1/tests.py", ev
+    assert ev["tests_sha"] == hashlib.sha256(tests.read_bytes()).hexdigest(), ev
+
+
+@test
+def r37_a_test_row_expect_is_exit_zero():
+    root, listing = r37_item()
+    bad = listing.parent / "bad.tsv"
+    bad.write_text(listing.read_text(encoding="utf-8").replace("\texit 0\t", "\tstdout matches ok\t"), encoding="utf-8")
+    tests = Path(tempfile.mkdtemp(prefix="bl-r37-tests-")) / "t.py"
+    tests.write_text(TEST_TEMPLATE, encoding="utf-8")
+    r = run(root, "checks", "A1", "--file", str(bad), "--tests", str(tests))
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert r.stderr.startswith("bl: refused"), r.stderr
+    assert "R1" in r.stderr and "(R37)" in r.stderr, r.stderr
+    assert not (root / ".backlog" / "items" / "A1" / "tests.py").exists()
+
+
+@test
+def r37_the_probe_refuses_a_test_that_exits_three():
+    root, listing = r37_item()
+    tests = Path(tempfile.mkdtemp(prefix="bl-r37-tests-")) / "t.py"
+    tests.write_text(TEST_TEMPLATE.replace('assert True', 'raise NameError("boom")'), encoding="utf-8")
+    r = run(root, "checks", "A1", "--file", str(listing), "--tests", str(tests))
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert "exit 3" in r.stderr and "R1" in r.stderr and "(R37)" in r.stderr, r.stderr
+    assert not (root / ".backlog" / "items" / "A1" / "tests.py").exists(), "a refused probe left the test file"
+
+
+@test
+def r37_the_frozen_test_file_is_rehashed_before_a_run():
+    root, listing = r37_item()
+    tests = Path(tempfile.mkdtemp(prefix="bl-r37-tests-")) / "t.py"
+    tests.write_text(TEST_TEMPLATE, encoding="utf-8")
+    ok(root, "checks", "A1", "--file", str(listing), "--tests", str(tests))
+    frozen = root / ".backlog" / "items" / "A1" / "tests.py"
+    with frozen.open("a", encoding="utf-8") as fh:
+        fh.write("# edited\n")
+    r = run(root, "run", "A1")
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    assert "tests.py" in r.stderr and "(R20)" in r.stderr, r.stderr
 
 
 def main() -> int:
