@@ -5299,6 +5299,55 @@ func TestCloseRefusesCommitAfterVerifiedTreeChanged(t *testing.T) {
 	wantRule(t, err, "R18")
 }
 
+func TestCloseRefusesTamperedEvidence(t *testing.T) {
+	dir, _, change := pinnedChangeItem(t)
+	last := mustLastRound(t, dir)
+	evidence := filepath.Join(dir, last.Rows)
+	if err := os.WriteFile(evidence, []byte("tampered evidence\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := ledgerBytes(t, dir)
+	err := call(t, cmdClose, dir, "A1", "--commit", change)
+	wantRule(t, err, "R20")
+	if !strings.Contains(err.Error(), filepath.Base(last.Rows)) {
+		t.Fatalf("refusal does not name evidence file %s: %v", last.Rows, err)
+	}
+	if after := ledgerBytes(t, dir); after != before {
+		t.Fatal("refused close appended an event")
+	}
+}
+
+func TestCloseRefusesDeletedEvidence(t *testing.T) {
+	dir, _, change := pinnedChangeItem(t)
+	last := mustLastRound(t, dir)
+	if err := os.Remove(filepath.Join(dir, last.Rows)); err != nil {
+		t.Fatal(err)
+	}
+	before := ledgerBytes(t, dir)
+	err := call(t, cmdClose, dir, "A1", "--commit", change)
+	wantRule(t, err, "R20")
+	if !strings.Contains(err.Error(), filepath.Base(last.Rows)) {
+		t.Fatalf("refusal does not name evidence file %s: %v", last.Rows, err)
+	}
+	if after := ledgerBytes(t, dir); after != before {
+		t.Fatal("refused close appended an event")
+	}
+}
+
+func TestCloseAcceptsUntouchedEvidence(t *testing.T) {
+	dir, _, change := pinnedChangeItem(t)
+	if err := call(t, cmdClose, dir, "A1", "--commit", change); err != nil {
+		t.Fatalf("close with untouched evidence: %v", err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-1].T != "close" {
+		t.Fatalf("last event = %q, want close", events[len(events)-1].T)
+	}
+}
+
 func mustLastRound(t *testing.T, dir string) Event {
 	t.Helper()
 	events, err := readLedger(dir)

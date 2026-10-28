@@ -438,7 +438,7 @@ def close_refuses_dirty_tree():
     rows = ready(root)
     ok(root, "round", "A1", "--verdict", "PASS", "--rows", str(rows))
     (root / "BRIEF.md").write_text("changed\n", encoding="utf-8")
-    refused(root, "close", "A1", "--commit", head(root), match="dirty")
+    refused(root, "close", "A1", "--commit", head(root), match="R18")
 
 
 @test

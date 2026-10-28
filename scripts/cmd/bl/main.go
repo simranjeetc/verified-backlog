@@ -4759,6 +4759,11 @@ func cmdClose(root string, a args) error {
 	if err := verifyTests(root, it); err != nil {
 		return err
 	}
+	if last := it.last(); last != nil && last.Rows != "" {
+		if _, err := verifyArtefact(root, last.Rows, last.RowsSHA, "evidence file"); err != nil {
+			return err
+		}
+	}
 	// R24: the rows the last round was written against must still resolve against the brief, or
 	// the round closed on a criterion the brief no longer holds.
 	if err := verifyBriefRefs(root, it); err != nil {
