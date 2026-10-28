@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"syscall"
@@ -5178,6 +5179,80 @@ func TestRestartEndsTheAttemptAndStartsTheNext(t *testing.T) {
 	checksOK(t, dir, roundFailList)
 	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "a2", "checks.tsv")); err != nil {
 		t.Fatalf("the new attempt's list is not in a2/: %v", err)
+	}
+}
+
+func scopedRestartItem(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "add a verb; test it"}} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	if err := call(t, cmdOpen, dir, "A1", "--scope", "src/", "--scope", "README.md", "--scope-ignored", "build/out.bin"); err != nil {
+		t.Fatal(err)
+	}
+	legacyChecks(t, dir, roundFailList)
+	claimsOK(t, dir)
+	failRound(t, dir, roundFail...)
+	restartOK(t, dir, "bad check", "change check")
+	return dir
+}
+
+func TestRestartCarriesScopeAndOpenUsesIt(t *testing.T) {
+	dir := scopedRestartItem(t)
+	var err error
+	out := capture(t, func() { err = call(t, cmdOpen, dir, "A1") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "bl: A1 scope carried from attempt 1: src/, README.md\nbl: A1 in flight\n" {
+		t.Fatalf("open printed %q", out)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := events[len(events)-1]
+	if !reflect.DeepEqual(ev.Scope, []string{"src/", "README.md"}) || !reflect.DeepEqual(ev.ScopeIgnored, []string{"build/out.bin"}) {
+		t.Fatalf("open scope = %#v / %#v", ev.Scope, ev.ScopeIgnored)
+	}
+}
+
+func TestOpenExplicitScopeReplacesCarriedScope(t *testing.T) {
+	dir := scopedRestartItem(t)
+	var err error
+	out := capture(t, func() { err = call(t, cmdOpen, dir, "A1", "--scope", "lib/") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "bl: A1 in flight\n" {
+		t.Fatalf("open printed %q", out)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := events[len(events)-1]
+	if !reflect.DeepEqual(ev.Scope, []string{"lib/"}) || len(ev.ScopeIgnored) != 0 {
+		t.Fatalf("open scope = %#v / %#v", ev.Scope, ev.ScopeIgnored)
+	}
+}
+
+func TestRestartWithoutScopeDoesNotCarry(t *testing.T) {
+	dir := restartItem(t)
+	restartOK(t, dir, "bad check", "change check")
+	var err error
+	out := capture(t, func() { err = call(t, cmdOpen, dir, "A1") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "bl: A1 in flight\n" {
+		t.Fatalf("open printed %q", out)
 	}
 }
 

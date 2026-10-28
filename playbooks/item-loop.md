@@ -240,7 +240,8 @@ its record, and only the four classes are reasons for one:
 ```
 
 The restart writes the failure record of the attempt it ends and leaves the item open and out of
-flight; `bl open A1` starts attempt 2 with its own brief (which carries that record), its own list
+flight. Its scope and ignored-scope lists carry into the next `bl open` unless either scope flag is
+given; explicit scope flags replace both. `bl open A1` starts attempt 2 with its own brief (which carries that record), its own list
 and its own claims, under `.backlog/items/A1/a2/`. The rounds of the attempt it ended are void: the
 code-round cap starts again, `bl show` marks them ` void`, and its runs can no longer be cited. Two
 restarts, three attempts; a third is refused and parks the item for the human.

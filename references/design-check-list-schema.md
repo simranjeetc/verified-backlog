@@ -610,9 +610,11 @@ attempt 1, each accepted restart adds 1, and the event records the attempt it **
 actor.
 
 What a restart clears is everything that belongs to the attempt: the brief, the check list and its format, the frozen
-test file, the claims it recorded, its scope and before-state, and — for a closed item — the status (closed becomes
+test file, the claims it recorded, its attempt scope and before-state, and — for a closed item — the status (closed becomes
 open), the commit and the reason. It keeps the id, text, source, `--after`, notes, priority and the whole event history. The item is open and out
-of flight, so `bl next` can name it and `bl open` records the scope and before-state anew; `bl brief`, `bl checks`,
+of flight, so `bl next` can name it. The ended attempt's scope and ignored-scope lists are carried into the next
+`bl open` unless either scope flag is given; explicit scope flags replace both carried lists. `bl open` records the
+selected scope and before-state anew; `bl brief`, `bl checks`,
 `bl claims`, `bl run` and `bl round` are then accepted, the last five only after `bl open`.
 
 Everything the ended attempt produced is **void**: a void round, run or second check satisfies no rule of the new

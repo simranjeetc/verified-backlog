@@ -196,10 +196,13 @@ type Item struct {
 	// The scope and the before-state (R28): the scope paths, the ignored files the item may
 	// write, the tree the item was opened against, and the ignored files under the scope
 	// with the hash each had then.
-	Scope         []string
-	ScopeIgnored  []string
-	BeforeTree    string
-	IgnoredBefore []string
+	Scope               []string
+	ScopeIgnored        []string
+	CarriedScope        []string
+	CarriedScopeIgnored []string
+	CarriedScopeAttempt int
+	BeforeTree          string
+	IgnoredBefore       []string
 	// The second checks (R16) the item has.
 	SecondChecks []Event
 	// The seq of the latest re-baseline: a re-baseline is a new premise, so it is recorded
@@ -558,6 +561,12 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			// and the numbering would disagree about which rounds belong to which attempt.
 			if *ev.Attempt != it.Attempt {
 				return nil, nil, corrupt("restart event for %s ends attempt %d, but the item is in attempt %d", ev.ID, *ev.Attempt, it.Attempt)
+			}
+			it.CarriedScope, it.CarriedScopeIgnored, it.CarriedScopeAttempt = nil, nil, 0
+			if len(it.Scope) > 0 || len(it.ScopeIgnored) > 0 {
+				it.CarriedScope = append([]string(nil), it.Scope...)
+				it.CarriedScopeIgnored = append([]string(nil), it.ScopeIgnored...)
+				it.CarriedScopeAttempt = *ev.Attempt
 			}
 			it.Attempt, it.restartSeq = *ev.Attempt+1, ev.Seq
 			it.Restarts = append(it.Restarts, ev)
@@ -1099,6 +1108,11 @@ func cmdOpen(root string, a args) error {
 	// recorded with the hash each had then.
 	scope := a.list("scope")
 	scopeIgnored := a.list("scope-ignored")
+	carried := it.Attempt > 1 && len(a.lists["scope"]) == 0 && len(a.lists["scope-ignored"]) == 0 && it.CarriedScopeAttempt > 0
+	if carried {
+		scope = append([]string(nil), it.CarriedScope...)
+		scopeIgnored = append([]string(nil), it.CarriedScopeIgnored...)
+	}
 	before, err := verifiedTreeWriting(root)
 	if err != nil {
 		return err
@@ -1113,6 +1127,9 @@ func cmdOpen(root string, a args) error {
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
+	}
+	if carried {
+		fmt.Printf("bl: %s scope carried from attempt %d: %s\n", it.ID, it.CarriedScopeAttempt, strings.Join(scope, ", "))
 	}
 	fmt.Printf("bl: %s in flight\n", it.ID)
 	return nil
