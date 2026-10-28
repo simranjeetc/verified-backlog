@@ -45,6 +45,11 @@ func schemaJSON() map[string]any {
 }
 
 func cmdSchema(root string, a args) error {
+	if a.pos(0) == "intake" {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(intakeSchema())
+	}
 	if a.flag("json") {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

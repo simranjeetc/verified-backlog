@@ -1,5 +1,9 @@
 # Design — the check list schema, and who decides a row
 
+## Intake
+
+An intake JSONL file contains `source` records (`t`, `id`, `path`, `lines`, `sha`), `decision` records (`t`, `id`, `text`, `by`), `item` records (`t`, `id`, `title`, `after`, `scope`, `source`, `decisions`), and `clause` records (`t`, `item`, `id`, `observe`, `expect`, `example`). `bl schema intake` prints their JSON Schemas. Validation errors use `<path>:<line>: <field>: <reason>`. `bl intake --check` and `bl intake --render` write nothing; filing is I111.
+
 **Status:** proposal, and **not yet verified**. Nothing here is implemented; `bl` does not yet have `checks`, `claims`,
 `run`, or a derived verdict. Seven verification rounds are recorded in §8; the last one still found blocking defects,
 which are fixed in this revision but have not been through an eighth round. One finding from round 7 is

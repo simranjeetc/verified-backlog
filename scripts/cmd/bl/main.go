@@ -104,7 +104,7 @@ func (a args) input(name string) (string, error) {
 	return string(data), nil
 }
 
-var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true}
+var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true, "check": true, "render": true}
 
 // repeatableFlagNames are the flags that may be given more than once: the item's scope is a
 // set of paths, and the scope-ignored list is a set of files.
@@ -166,6 +166,7 @@ var handlers = map[string]func(string, args) error{
 	"render":       cmdRender,
 	"check":        cmdCheck,
 	"schema":       cmdSchema,
+	"intake":       cmdIntake,
 	"audit":        cmdAudit,
 	"import":       cmdImport,
 	"lint":         cmdLint,
@@ -176,7 +177,7 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
   drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | packet | status | check
-  render | schema | audit | import | lint
+  render | schema | intake | audit | import | lint
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`
@@ -223,7 +224,9 @@ verb:
 		err = handler(abs, a)
 		code = report(err)
 	}
-	logRun(abs, rest[1:], code, started)
+	if verb != "intake" && !(verb == "schema" && len(rest) > 1 && rest[1] == "intake") {
+		logRun(abs, rest[1:], code, started)
+	}
 	return code
 }
 
@@ -235,6 +238,10 @@ func report(err error) int {
 	var corruption Corruption
 	switch {
 	case errors.As(err, &refusal):
+		if refusal.rule == "intake" {
+			fmt.Fprintln(os.Stderr, refusal.msg)
+			return 2
+		}
 		if refusal.rule != "" {
 			fmt.Fprintf(os.Stderr, "bl: refused (%s): %s\n", refusal.rule, refusal.msg)
 		} else {
