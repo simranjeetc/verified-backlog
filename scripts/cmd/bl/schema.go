@@ -27,7 +27,7 @@ func schemaJSON() map[string]any {
 			"rebaseline":    {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason", "format", "tests", "tests_sha"}},
 			"claims":        {"required": {"id", "claims", "claims_sha"}, "optional": {}},
 			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
-			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding"}},
+			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding", "report_sha", "dispositions"}},
 			"restart":       {"required": {"id", "reason", "why", "change", "attempt", "record", "record_sha"}, "optional": {}},
 			"second-check":  {"required": {"id", "row", "run", "computed"}, "optional": {"cmd", "expect", "ms"}},
 			"misclassified": {"required": {"id", "row", "computed"}, "optional": {"run", "cmd", "expect"}},

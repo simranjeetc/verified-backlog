@@ -903,7 +903,7 @@ broken list is refused for the list's own fault, not for the state of the item.
 The six per-command lists are `bl checks` (P1), `bl round` (P2), `bl run` (P3), `bl claims` (P4), `bl close` (P5) and
 `bl rebaseline` (P11).
 
-**P2 — `bl round` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R6 (the verdicts file matches the
+**P2 — `bl round` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R23-harness (a harness round has no rows and stops here) → R38 (B0 report requirement and report dispositions) → R6 (the verdicts file matches the
 list, names the latest run, and names the run's tree, which is the current tree) → R28 (no ignored file under the scope
 changed) → R25 (artefacts are excluded) → R7 (the round consumes the run, and the row-verdicts of the `decider: bl` rows
 are the ones the binary computed from the run's observed values) → R9
@@ -1139,7 +1139,7 @@ Computed with the rules above.
 |---|---|---|
 | checks `bl` validates before storing a list | 7 | R1, R2, R3, R4, R5, R8, R37 |
 | refusals `bl checks` can raise | 7 | R1, R2, R3, R4, R5, R8, R37 |
-| refusals `bl round` can raise | 12 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35, R37 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
+| refusals `bl round` can raise | 13 | R6, R9, R10, R12, R14, R16, R20, R23, R25, R28, R35, R37, R38 — R13 derives rather than refuses, R27 moved to the run, and R19's cap refusal and R24's removed-clause refusal are counted separately because they are caps and premise faults rather than checks |
 | refusals `bl run` can raise | 6 | R1, R8 (format 1), R20, R26, R27, R35 |
 | refusals `bl close` can raise | 4 | R15, R18, R20, R25 |
 | frozen artefacts re-verified before a command | 4 | the brief, the check list and the claims, and the frozen test file when there is one, each against its latest recorded hash — R20 |
@@ -1322,3 +1322,5 @@ changed", not "the agent cannot rewrite history". And anything outside the tree 
 config, an ignored file — can change what the commands do while the record stays clean; R28 closes the ignored-file
 case under the scope, and nothing closes the rest. Both are in §7 with the options. Both need a human, not another
 round of wording.
+
+**R38 — report-only findings need one recorded disposition each.** `bl round <id> --rows <verdicts> --report <report>` reads the report as plain lines, with no Markdown parsing. After trimming trailing carriage returns, spaces and tabs, it requires exactly one line of the form `Report-only: N` where N is a decimal with no leading zero (and may be 0). Every `[RO<n>]` tag anywhere in the report names a note; the tag set must be exactly `[RO1]` through `[RON]`. Repeated tags are allowed. A missing or duplicate count line, a missing or extra tag, or a malformed tag spelling is refused under R38 before writing a round. The verdicts file carries exactly one line per note, exactly `# report RO<n>: fix`, `# report RO<n>: filed <ID>`, or `# report RO<n>: waived <reason>` with a non-empty reason. Any other line starting with `# report` (case-insensitive) is refused. A missing, duplicate or extra disposition, or a filed ID absent from the ledger, closed or dropped, refuses under R38 with exit 2 before writing a round. A `fix` derives FAIL, cause `code` (cause `dispute` when the round also carries a `# finding:` line, R13); an explicit PASS is refused. When the current brief has B0, `--report` is required except on a harness round, and a harness round refuses `--report` because it reads none. The event records the report's sha256 and dispositions in note order. `bl brief` also refuses under R2 when a submitted brief lacks B0; `bl open` may still write filed text without B0.

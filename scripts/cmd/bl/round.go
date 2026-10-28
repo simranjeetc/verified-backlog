@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -155,10 +157,43 @@ func cmdRound(root string, a args) error {
 	// A harness round carries no rows: the verifier did not run, so there is nothing to
 	// record and nothing to hash. It skips R6, R9, R10, R12 and R14 (P2), and stops here.
 	if cause == "harness" {
+		// R38: a harness round reads no report, so a report given to one would go unread.
+		if a.get("report") != "" {
+			return refuseRule("R38", "a harness round reads no report — drop --report or record a code round")
+		}
 		if verdict != "FAIL" {
 			return refuseRule("R23", "a harness round is a failure — it needs --verdict FAIL")
 		}
 		return recordHarnessRound(root, it, a)
+	}
+	var reportSHA string
+	var dispositions []string
+	if it.Brief != "" {
+		brief, e := verifyArtefact(root, it.Brief, it.BriefSHA, "brief")
+		if e != nil {
+			return e
+		}
+		if briefClauses(string(brief))["B0"] && a.get("report") == "" {
+			return refuseRule("R38", "a brief with B0 requires --report <path>")
+		}
+	}
+	if a.get("report") != "" {
+		raw, e := os.ReadFile(a.get("report"))
+		if e != nil {
+			return refuseRule("R38", "cannot read --report: %v", e)
+		}
+		reportSHA = shaHex(raw)
+		notes, e := reportOnlyTags(string(raw))
+		if e != nil {
+			return e
+		}
+		dispositions, e = parseReportDispositions(a.get("rows"), notes, byID)
+		if e != nil {
+			return e
+		}
+		if hasFixDisposition(dispositions) && verdict == "PASS" {
+			return refuseRule("R38", "a fix disposition requires FAIL; explicit --verdict PASS is refused")
+		}
 	}
 	// R6: the verdicts file. It must match the frozen list, name the item's latest run, and
 	// name the tree the round verifies.
@@ -289,6 +324,9 @@ func cmdRound(root string, a args) error {
 		// R13 overrides the derived verdict: a dispute is never a PASS.
 		derived = "FAIL"
 	}
+	if hasFixDisposition(dispositions) {
+		derived = "FAIL"
+	}
 	if verdict != "" && verdict != derived {
 		return refuseRule("R12", "the derived verdict is %s — a submitted --verdict %s is refused", derived, verdict)
 	}
@@ -300,6 +338,10 @@ func cmdRound(root string, a args) error {
 		}
 		cause = "dispute"
 	case derived == "FAIL":
+		// R38: a fix disposition is the orchestrator agreeing the code is wrong.
+		if cause == "" && hasFixDisposition(dispositions) {
+			cause = "code"
+		}
 		if cause == "" {
 			return refuseRule("R23", "a FAIL needs --cause %s", strings.Join(causes, "|"))
 		}
@@ -309,7 +351,7 @@ func cmdRound(root string, a args) error {
 		if cause == "harness" {
 			return refuseRule("R23", "--cause harness is accepted only when the verdicts file is absent or carries no rows")
 		}
-		if !blockingFailed {
+		if !blockingFailed && !hasFixDisposition(dispositions) {
 			return refuseRule("R23", "--cause code is accepted only when a blocking row has row-verdict FAIL")
 		}
 	default:
@@ -344,8 +386,9 @@ func cmdRound(root string, a args) error {
 	ev := Event{
 		T: "round", ID: it.ID, Verdict: derived, Cause: cause,
 		Run: runEv.Run, Tree: tree,
-		Rows:    backlogDir + "/" + evidenceDir + "/" + name,
-		RowsSHA: shaHex([]byte(body)),
+		Rows:      backlogDir + "/" + evidenceDir + "/" + name,
+		RowsSHA:   shaHex([]byte(body)),
+		ReportSHA: reportSHA, Dispositions: dispositions,
 	}
 	if finding != "" {
 		ev.Finding = finding
@@ -359,6 +402,115 @@ func cmdRound(root string, a args) error {
 		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, derived)
 	}
 	return nil
+}
+
+func hasFixDisposition(ds []string) bool {
+	for _, d := range ds {
+		// a disposition reads "<n> <kind> [...]"; only the kind decides
+		if f := strings.Fields(d); len(f) >= 2 && f[1] == "fix" {
+			return true
+		}
+	}
+	return false
+}
+
+// reportCountRe is the sole report declaration accepted by R38.
+var (
+	reportCountRe        = regexp.MustCompile(`^Report-only: (0|[1-9][0-9]*)$`)
+	reportTagRe          = regexp.MustCompile(`\[RO([1-9][0-9]*)\]`)
+	malformedReportTagRe = regexp.MustCompile(`(?i)\[\s*ro[\s-]*[0-9]`)
+	reportLineRe         = regexp.MustCompile(`(?i)^#\s*report\b`)
+	dispositionRe        = regexp.MustCompile(`^# report RO([1-9][0-9]*): (fix|filed (\S+)|waived (\S.*))$`)
+)
+
+// reportOnlyTags reads the fixed plain-line marker and note tags; it deliberately knows no Markdown.
+func reportOnlyTags(report string) (int, error) {
+	count := -1
+	tagged := map[int]bool{}
+	for _, line := range strings.Split(report, "\n") {
+		line = strings.TrimRight(line, "\r 	")
+		if reportCountRe.MatchString(line) {
+			if count >= 0 {
+				return 0, refuseRule("R38", "report has more than one Report-only: N line")
+			}
+			m := reportCountRe.FindStringSubmatch(line)
+			count, _ = strconv.Atoi(m[1])
+		}
+		stripped := reportTagRe.ReplaceAllString(line, "")
+		if malformedReportTagRe.MatchString(stripped) {
+			return 0, refuseRule("R38", "malformed report-only tag in line %q", line)
+		}
+		for _, m := range reportTagRe.FindAllStringSubmatch(line, -1) {
+			n, _ := strconv.Atoi(m[1])
+			tagged[n] = true
+		}
+	}
+	if count < 0 {
+		return 0, refuseRule("R38", "report needs exactly one `Report-only: N` line")
+	}
+	for n := 1; n <= count; n++ {
+		if !tagged[n] {
+			return 0, refuseRule("R38", "report is missing tag RO%d", n)
+		}
+	}
+	for n := range tagged {
+		if n > count {
+			return 0, refuseRule("R38", "report has extra tag RO%d above Report-only: %d", n, count)
+		}
+	}
+	return count, nil
+}
+
+func parseReportDispositions(path string, notes int, byID map[string]*Item) ([]string, error) {
+	if path == "" {
+		if notes > 0 {
+			return nil, refuseRule("R38", "report note RO1 has no disposition: --rows is required")
+		}
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, refuseRule("R38", "cannot read verdicts file for report dispositions: %v", err)
+	}
+	seen := map[int]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r 	")
+		if !reportLineRe.MatchString(line) {
+			continue
+		}
+		m := dispositionRe.FindStringSubmatch(line)
+		if m == nil {
+			return nil, refuseRule("R38", "disposition line %q is malformed", line)
+		}
+		n, _ := strconv.Atoi(m[1])
+		if _, ok := seen[n]; ok {
+			return nil, refuseRule("R38", "report note RO%d has duplicate dispositions", n)
+		}
+		if m[3] != "" {
+			target, ok := byID[strings.ToLower(m[3])]
+			if !ok {
+				return nil, refuseRule("R38", "report note RO%d: filed item %s does not exist", n, m[3])
+			}
+			if target.Status == "closed" || target.Status == "declined" {
+				return nil, refuseRule("R38", "report note RO%d: filed item %s is closed or dropped", n, m[3])
+			}
+		}
+		seen[n] = m[2]
+	}
+	for n := range seen {
+		if n > notes {
+			return nil, refuseRule("R38", "disposition for extra report note RO%d", n)
+		}
+	}
+	out := make([]string, notes)
+	for n := 1; n <= notes; n++ {
+		v, ok := seen[n]
+		if !ok {
+			return nil, refuseRule("R38", "report note RO%d has no disposition", n)
+		}
+		out[n-1] = "RO" + strconv.Itoa(n) + " " + v
+	}
+	return out, nil
 }
 
 // frozenRows reads the item's frozen check list: the rows the round is written against.

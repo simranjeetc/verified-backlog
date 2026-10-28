@@ -300,7 +300,7 @@ func TestRestartBriefCarriesTheRecordsOfEveryEarlierAttempt(t *testing.T) {
 		t.Fatalf("a2's brief must end with a1's record:\n%s", brief2)
 	}
 	// `bl brief` stores the submitted text followed by the records, adding the missing newline
-	submitted := "B1: add a verb. Example: adds a verb.\nB2: test it, narrowly. Example: runs the focused test."
+	submitted := "B1: add a verb. Example: adds a verb.\nB2: test it, narrowly. Example: runs the focused test.\nB0: purpose. Example: x."
 	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", submitted)); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRestartLeavesEveryEarlierAttemptsFileAlone(t *testing.T) {
 	if err := call(t, cmdOpen, dir, "A1"); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it narrowly. Example: runs the focused test.\n")); err != nil {
+	if err := call(t, cmdBrief, dir, "A1", "--file", writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it narrowly. Example: runs the focused test.\nB0: purpose. Example: x.\n")); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	checksOK(t, dir, roundFailList)

@@ -205,7 +205,7 @@ const r24List = checksHeader +
 	"S2\tbl\tblocking\tB2\ttrue\texit 0\t\t\tother tests pass\n"
 
 // r24BriefWithoutB2 is the brief after an amendment that removed B2.
-const r24BriefWithoutB2 = "B1: add a verb. Example: adds a verb.\n"
+const r24BriefWithoutB2 = "B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\n"
 
 // r24Setup is the state a round is written against: the list is frozen, an amendment removed the
 // clause S2 cites, and the claims are recorded.
@@ -321,9 +321,9 @@ func TestR24ARefusedRoundWritesNothing(t *testing.T) {
 func TestR24ARoundIsUnaffectedByAnUnrelatedAmendment(t *testing.T) {
 	cases := map[string][]string{
 		// the amendment adds a clause and leaves the cited ones alone
-		"an amendment that adds a clause": {"B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB3: and a third thing. Example: shows the third result.\n"},
+		"an amendment that adds a clause": {"B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB3: and a third thing. Example: shows the third result.\n"},
 		// a clause removed and then restored by a later amendment exists in the latest brief
-		"a clause removed and then restored": {"B1: add a verb. Example: adds a verb.\n", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n"},
+		"a clause removed and then restored": {"B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\n", "B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n"},
 	}
 	for name, amendments := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -338,7 +338,8 @@ func TestR24ARoundIsUnaffectedByAnUnrelatedAmendment(t *testing.T) {
 				t.Fatalf("claims: %v", err)
 			}
 			rows := runAndVerdicts(t, dir, "S1\tPASS\t", "S2\tPASS\t")
-			if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows); err != nil {
+			report := writeFile(t, t.TempDir(), "report.md", "Report-only: 0\n")
+			if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows, "--report", report); err != nil {
 				t.Fatalf("round: %v", err)
 			}
 			events, _ := readLedger(dir)

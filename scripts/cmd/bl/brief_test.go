@@ -49,12 +49,12 @@ func artefactSHA(t *testing.T, dir, what string) string {
 
 func TestBriefRecordsEventAndHash(t *testing.T) {
 	dir := openItem(t)
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB0: purpose. Example: x.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 	events, _ := readLedger(dir)
@@ -65,13 +65,13 @@ func TestBriefRecordsEventAndHash(t *testing.T) {
 	first := ev.BriefSHA
 
 	// a second brief is a second event, and the first event keeps its own hash
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", second); err != nil {
 		t.Fatalf("second brief: %v", err)
 	}
 	events, _ = readLedger(dir)
 	ev = events[len(events)-1]
-	if ev.T != "brief" || ev.BriefSHA != shaHex([]byte("B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")) {
+	if ev.T != "brief" || ev.BriefSHA != shaHex([]byte("B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\nB0: purpose. Example: x.\n")) {
 		t.Fatalf("second brief event = %+v", ev)
 	}
 	if ev.BriefSHA == first {
@@ -88,7 +88,7 @@ func TestBriefRecordsEventAndHash(t *testing.T) {
 
 func TestBriefReadsStdinWithoutFile(t *testing.T) {
 	dir := openItem(t)
-	f, err := os.Open(writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n"))
+	f, err := os.Open(writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB0: purpose. Example: x.\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestBriefReadsStdinWithoutFile(t *testing.T) {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB0: purpose. Example: x.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 }
@@ -112,7 +112,7 @@ func TestBriefRefusedAfterClaims(t *testing.T) {
 	if err := call(t, cmdClaims, dir, "A1", "--file", claims); err != nil {
 		t.Fatalf("claims: %v", err)
 	}
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB0: purpose. Example: x.\n")
 	wantRule(t, call(t, cmdBrief, dir, "A1", "--file", brief), "R5")
 	events, _ := readLedger(dir)
 	if last := events[len(events)-1]; last.T != "claims" {
@@ -134,14 +134,28 @@ func TestBriefRefusedWithoutClause(t *testing.T) {
 	}
 }
 
+func TestBriefRefusedWithoutB0(t *testing.T) {
+	dir := openItem(t)
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
+	before, _ := readLedger(dir)
+	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", brief))
+	if r.rule != "R2" || !strings.Contains(r.msg, "B0") {
+		t.Fatalf("want R2 naming B0, got %s: %s", r.rule, r.msg)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatalf("a refused brief wrote an event: before %d after %d", len(before), len(after))
+	}
+}
+
 func TestBriefRequiresExamplePerClause(t *testing.T) {
 	dir := openItem(t)
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: prints ok.\nB2: exits 3. Example: empty repo exits 3.\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: prints ok.\nB2: exits 3. Example: empty repo exits 3.\n")
 	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", brief))
 	if r.rule != "R2" || !strings.Contains(r.msg, "B1") || strings.Contains(r.msg, "B2") {
 		t.Fatalf("want R2 naming only B1, got %s: %s", r.rule, r.msg)
 	}
-	if err := os.WriteFile(brief, []byte("B1: prints ok. Example: prints ok and exits 0.\nB2: exits 3. example: empty repo exits 3.\n"), 0o644); err != nil {
+	if err := os.WriteFile(brief, []byte("B0: purpose. Example: x.\nB1: prints ok. Example: prints ok and exits 0.\nB2: exits 3. example: empty repo exits 3.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
@@ -149,13 +163,13 @@ func TestBriefRequiresExamplePerClause(t *testing.T) {
 	}
 
 	dir = openItem(t)
-	brief = writeFile(t, t.TempDir(), "brief.md", "B1: prints ok.\n  Example: `bl x` prints ok and exits 0.\n")
+	brief = writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: prints ok.\n  Example: `bl x` prints ok and exits 0.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
 		t.Fatalf("continuation example: %v", err)
 	}
 
 	dir = openItem(t)
-	brief = writeFile(t, t.TempDir(), "brief.md", "B1: prints ok. Example without colon\n")
+	brief = writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: prints ok. Example without colon\n")
 	r = wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", brief))
 	if r.rule != "R2" || !strings.Contains(r.msg, "B1") {
 		t.Fatalf("want R2 naming B1, got %s: %s", r.rule, r.msg)
@@ -164,12 +178,12 @@ func TestBriefRequiresExamplePerClause(t *testing.T) {
 
 func TestBriefAmendmentRequiresExamplesAndKeepsPriorBrief(t *testing.T) {
 	dir := openItem(t)
-	good := writeFile(t, t.TempDir(), "brief.md", "B1: prints ok. Example: prints ok.\n")
+	good := writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: prints ok. Example: prints ok.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", good); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	bad := writeFile(t, t.TempDir(), "brief2.md", "B1: prints ok. Example: prints ok.\nB2: exits 3.\n")
+	bad := writeFile(t, t.TempDir(), "brief2.md", "B0: purpose. Example: x.\nB1: prints ok. Example: prints ok.\nB2: exits 3.\n")
 	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", bad))
 	if r.rule != "R2" || !strings.Contains(r.msg, "B2") {
 		t.Fatalf("want R2 naming B2, got %s: %s", r.rule, r.msg)
@@ -183,7 +197,7 @@ func TestBriefAmendmentRequiresExamplesAndKeepsPriorBrief(t *testing.T) {
 // R20 at use: `bl brief` re-hashes the stored brief before it overwrites it.
 func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 	dir := openItem(t)
-	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
+	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", first); err != nil {
 		t.Fatalf("first brief: %v", err)
 	}
@@ -198,7 +212,7 @@ func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\nB0: purpose. Example: x.\n")
 	r := wantRefusal(t, call(t, cmdBrief, dir, "A1", "--file", second))
 	if r.rule != "R20" {
 		t.Fatalf("want a refusal under R20, got %s: %s", r.rule, r.msg)
@@ -225,17 +239,17 @@ func TestBriefRefusesEditedStoredBrief(t *testing.T) {
 
 func TestBriefRecordsOverUntouchedStoredBrief(t *testing.T) {
 	dir := openItem(t)
-	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
+	first := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", first); err != nil {
 		t.Fatalf("first brief: %v", err)
 	}
 	// the stored brief was not touched: the verb proceeds
-	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n")
+	second := writeFile(t, t.TempDir(), "brief2.md", "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", second); err != nil {
 		t.Fatalf("second brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB2: test it twice. Example: runs the test twice.\nB0: purpose. Example: x.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 	events, _ := readLedger(dir)
@@ -256,12 +270,12 @@ func TestBriefProceedsWhenNoStoredBrief(t *testing.T) {
 			t.Fatalf("append %s: %v", ev.T, err)
 		}
 	}
-	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
+	brief := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB0: purpose. Example: x.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", brief); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".backlog", "items", "A1", "brief.md"))
-	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\n" {
+	if err != nil || string(data) != "B1: add a verb. Example: adds a verb.\nB0: purpose. Example: x.\n" {
 		t.Fatalf("brief.md = %q, %v", data, err)
 	}
 }

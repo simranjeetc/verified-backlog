@@ -40,13 +40,13 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl init` | – | creates `.backlog/` and renders empty views; refuses over a foreign `TODO.md` |
 | `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
 | `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock; after a restart, carries the ended attempt's scope unless either scope flag is given |
-| `bl brief A1 --file brief.md` | yes | records or amends the brief; every numbered clause needs an `Example:` (R2) |
+| `bl brief A1 --file brief.md` | yes | records or amends the brief; B0 purpose is required, every numbered clause needs an `Example:` (R2), and verifiers declare `Report-only: N` |
 | `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
 | `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
 | `bl intake --check|--render --file <intake.jsonl>`; `bl schema intake` | no | validates an intake without writing, or renders it for approval; schema lists source, decision, item and clause records; filing is I111 |
 | `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with each row's exit code, `ms` duration and full output, and records the file's hash |
-| `bl round A1 --rows verdicts.tsv` | yes | records one round: the verdict is derived from the blocking rows, the cause is constrained, and the evidence file holds one line per frozen check id |
+| `bl round A1 --rows verdicts.tsv --report report.md` | yes | records one round: B0 briefs require `--report`; the verifier declares `Report-only: N` and each note needs a disposition (except harness rounds) |
 | `bl second-check A1 --row J1 --cmd "…" --expect "stdout matches ^two"` | yes | runs a second judge's command under the same fixed environment and records the verdict it computes; regex expects ignore one trailing newline; a disagreement refuses the round |
 | `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round whose pinned tree matches the working directory, no tracked non-artefact diff from the commit, and a real commit |
 | `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |

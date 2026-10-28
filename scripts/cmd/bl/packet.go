@@ -127,7 +127,16 @@ func packetRules(root string, it *Item, brief string) (cited, omitted []packetRu
 }
 
 func (p packet) printTo(w io.Writer) {
-	fmt.Fprintf(w, "# %s packet (role %s)\n\n## Intent\n", p.item.ID, p.role)
+	fmt.Fprintf(w, "# %s packet (role %s)\n", p.item.ID, p.role)
+	if p.role == "verifier" {
+		if clause := packetClause(p.brief, "B0"); clause != "" {
+			fmt.Fprint(w, "\n## Purpose (B0)\n")
+			writePacketText(w, clause)
+			fmt.Fprintln(w, "A defect that breaks this purpose is a failure, not report-only.")
+			fmt.Fprintln(w, "End the report with one line `Report-only: N` and tag each report-only note [RO1]..[ROn]; with no notes write `Report-only: 0`.")
+		}
+	}
+	fmt.Fprint(w, "\n## Intent\n")
 	writePacketText(w, p.item.Text)
 	fmt.Fprint(w, "\n## Brief\n")
 	writePacketText(w, p.brief)
@@ -157,6 +166,27 @@ func (p packet) printTo(w io.Writer) {
 		fmt.Fprint(w, "\n## Claims\n")
 		writePacketText(w, p.claims)
 	}
+}
+
+func packetClause(brief, id string) string {
+	lines := strings.Split(brief, "\n")
+	start := -1
+	for i, line := range lines {
+		m := clauseRe.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if m == nil {
+			continue
+		}
+		if start >= 0 {
+			return strings.TrimRight(strings.Join(lines[start:i], "\n"), "\n")
+		}
+		if m[1] == id {
+			start = i
+		}
+	}
+	if start >= 0 {
+		return strings.TrimRight(strings.Join(lines[start:], "\n"), "\n")
+	}
+	return ""
 }
 
 // writePacketText prints a recorded text verbatim, adding the newline it may lack.

@@ -126,7 +126,7 @@ func TestCheckRefusesRowWhoseBriefRefIsGone(t *testing.T) {
 	}
 
 	// the brief is amended so that it holds only B1 — the frozen row cites B2, which is gone
-	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\n")
+	amended := writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", amended); err != nil {
 		t.Fatalf("brief: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestCheckAcceptsRowsWithEmptyBriefRef(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	// the brief keeps its clauses: nothing dangles
-	amended := writeFile(t, t.TempDir(), "brief.md", "B1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
+	amended := writeFile(t, t.TempDir(), "brief.md", "B0: purpose. Example: x.\nB1: add a verb. Example: adds a verb.\nB2: test it. Example: runs the test.\n")
 	if err := call(t, cmdBrief, dir, "A1", "--file", amended); err != nil {
 		t.Fatalf("brief: %v", err)
 	}

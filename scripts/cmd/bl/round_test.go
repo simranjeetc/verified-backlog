@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -98,6 +99,46 @@ func TestRoundOverAWellFormedRunAndVerdictsFileWritesTheEvidenceFile(t *testing.
 	// and the ledger still verifies
 	if err := call(t, cmdCheck, dir); err != nil {
 		t.Fatalf("check: %v", err)
+	}
+}
+
+func TestR38ReportMarkersAndDispositions(t *testing.T) {
+	if got, err := reportOnlyTags("Report-only: 2\n[RO1] one\n[RO2] two\n"); err != nil || got != 2 {
+		t.Fatalf("marker count = %d (%v), want 2", got, err)
+	}
+	for _, report := range []string{"", "Report-only: 0\nReport-only: 0\n", "Report-only: 2\n[RO1] one\n", "Report-only: 1\n[RO01] one\n", "Report-only: 1\n[ro1] one\n"} {
+		if _, err := reportOnlyTags(report); err == nil {
+			t.Errorf("accepted invalid report %q", report)
+		} else if r := wantRefusal(t, err); r.rule != "R38" {
+			t.Errorf("expected R38, got %s", r.rule)
+		}
+	}
+	if !hasFixDisposition([]string{"RO1 waived cosmetic", "RO2 fix"}) {
+		t.Fatal("fix must force FAIL")
+	}
+	if hasFixDisposition([]string{"RO1 waived not a fix"}) {
+		t.Fatal("waiver reason must not force FAIL")
+	}
+}
+
+func TestR38RejectsMissingMalformedAndExtraDispositions(t *testing.T) {
+	byID := map[string]*Item{"a1": {ID: "A1", Status: "open"}}
+	for _, row := range []string{"# report RO1: waived x\n# report RO1: fix\n", "# report RO2: fix\n", "# report RO1 waived x\n", "# report RO1: waived\n", "# report RO1: filed NOPE\n"} {
+		path := writeFile(t, t.TempDir(), "rows.tsv", row)
+		if _, err := parseReportDispositions(path, 1, byID); err == nil {
+			t.Errorf("accepted disposition %q", row)
+		} else if r := wantRefusal(t, err); r.rule != "R38" {
+			t.Errorf("expected R38, got %s", r.rule)
+		}
+	}
+	path := writeFile(t, t.TempDir(), "rows.tsv", "# report RO1: waived reason\n# report RO2: filed A1\n")
+	got, err := parseReportDispositions(path, 2, byID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"RO1 waived reason", "RO2 filed A1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dispositions = %#v, want %#v", got, want)
 	}
 }
 
@@ -1029,5 +1070,15 @@ func TestAuditWritesUnderBacklogAndLeavesTheTreeAlone(t *testing.T) {
 	}
 	if err := call(t, cmdAudit, dir, "--due"); err != nil {
 		t.Errorf("audit --due: %v", err)
+	}
+}
+
+// R38: a waived reason that ends in the word "fix" is not a fix disposition.
+func TestR38AWaivedReasonEndingInFixIsNotAFix(t *testing.T) {
+	if hasFixDisposition([]string{"1 waived not a fix", "2 filed A1"}) {
+		t.Fatal("a waived reason ending in fix must not count as a fix")
+	}
+	if !hasFixDisposition([]string{"1 waived cosmetic", "2 fix"}) {
+		t.Fatal("a fix disposition must count")
 	}
 }

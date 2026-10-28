@@ -131,6 +131,10 @@ func cmdBrief(root string, a args) error {
 	if len(briefClauses(text)) == 0 {
 		return refuseRule("R2", "the brief has no numbered clause — a clause is a line matching %s", clauseRe.String())
 	}
+	clauses := briefClauses(text)
+	if !clauses["B0"] {
+		return refuseRule("R2", "the brief has no B0 purpose clause")
+	}
 	if missing := clausesWithoutExamples(text); len(missing) != 0 {
 		return refuseRule("R2", "clauses %s have no Example:", strings.Join(missing, ", "))
 	}

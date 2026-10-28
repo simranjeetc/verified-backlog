@@ -31,7 +31,8 @@ func claimsOK(t *testing.T, dir string) {
 func failRound(t *testing.T, dir string, rows ...string) {
 	t.Helper()
 	path := runAndVerdicts(t, dir, rows...)
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", path); err != nil {
+	report := writeFile(t, t.TempDir(), "report.md", "Report-only: 0\n")
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "FAIL", "--cause", "code", "--rows", path, "--report", report); err != nil {
 		t.Fatalf("FAIL round: %v", err)
 	}
 }
@@ -40,7 +41,8 @@ func failRound(t *testing.T, dir string, rows ...string) {
 func passRound(t *testing.T, dir string) {
 	t.Helper()
 	path := runAndVerdicts(t, dir, roundPass...)
-	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", path); err != nil {
+	report := writeFile(t, t.TempDir(), "report.md", "Report-only: 0\n")
+	if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", path, "--report", report); err != nil {
 		t.Fatalf("PASS round: %v", err)
 	}
 }

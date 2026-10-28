@@ -55,22 +55,24 @@ var (
 
 // Event is one line of the ledger.
 type Event struct {
-	Seq     int    `json:"seq"`
-	At      string `json:"at"`
-	T       string `json:"t"`
-	MS      *int64 `json:"ms,omitempty"`
-	ID      string `json:"id,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Note    string `json:"note,omitempty"`
-	After   string `json:"after,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Verdict string `json:"verdict,omitempty"`
-	Cause   string `json:"cause,omitempty"`
-	Rows    string `json:"rows,omitempty"`
-	RowsSHA string `json:"rows_sha,omitempty"`
-	Commit  string `json:"commit,omitempty"`
-	Reason  string `json:"reason,omitempty"`
-	By      string `json:"by,omitempty"`
+	Seq          int      `json:"seq"`
+	At           string   `json:"at"`
+	T            string   `json:"t"`
+	MS           *int64   `json:"ms,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	Text         string   `json:"text,omitempty"`
+	Note         string   `json:"note,omitempty"`
+	After        string   `json:"after,omitempty"`
+	Source       string   `json:"source,omitempty"`
+	Verdict      string   `json:"verdict,omitempty"`
+	Cause        string   `json:"cause,omitempty"`
+	ReportSHA    string   `json:"report_sha,omitempty"`
+	Dispositions []string `json:"dispositions,omitempty"`
+	Rows         string   `json:"rows,omitempty"`
+	RowsSHA      string   `json:"rows_sha,omitempty"`
+	Commit       string   `json:"commit,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	By           string   `json:"by,omitempty"`
 	// The order of work (I79): the ids a bump or unbump names, in the order given; the ranking
 	// a rank records; and a file that puts its item at the front of tier 1.
 	IDs     []string `json:"ids,omitempty"`

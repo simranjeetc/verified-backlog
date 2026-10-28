@@ -1,11 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestVerifierPacketLeadsWithPurposeB0(t *testing.T) {
+	p := packet{item: &Item{ID: "A1"}, role: "verifier", brief: "B0: purpose. Example: x.\nB1: checks. Example: y.\n"}
+	var out bytes.Buffer
+	p.printTo(&out)
+	text := out.String()
+	if !strings.HasPrefix(text, "# A1 packet (role verifier)\n\n## Purpose (B0)\nB0: purpose. Example: x.\nA defect that breaks this purpose is a failure, not report-only.\n") {
+		t.Fatalf("verifier packet does not lead with B0 purpose:\n%s", text)
+	}
+}
 
 func TestPacketIncludesOnlyCitedRulesAndScope(t *testing.T) {
 	dir := t.TempDir()
