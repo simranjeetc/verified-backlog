@@ -671,3 +671,16 @@ Verdict: PASS — closed at 78dbbdea8d709586a1e9cfecf085e13684410412
 - r2 PASS — .backlog/evidence/I109-r2.txt (3f6beaae75af)
 - code failures: 0 / cap 3
 
+## I110 — bl open's dirty-tree check (I109, open.go refuseDirtyResume) parses git status --porcelain by line[3:], so a C-quoted path (spaces) or a rename 'a -> b' inside a tracked .backlog/ is not recognised as an artefact and a resume is falsely refused; use --porcelain -z
+
+Decision: declined — fixed by I113 (1e554cf): open reads git status -z, so quoted and renamed paths are judged by their real names (not verified)
+
+
+## I113 — a fresh bl open (no claims) on a working tree with uncommitted changes records them into the before-tree, so the item's own work drops out of its round diff and R10 checks nothing (I87 attempt 3, 2026-10-28: a zsh stash miss left intake.go in the tree at open); open should refuse uncommitted changes outside artefacts, as I109's resume does
+
+Verdict: PASS — closed at 1e554cfd654943b0dccd13c76e1a51adfcd8a3af
+
+- r1 FAIL cause=code — .backlog/evidence/I113-r1.txt (f856eba89670)
+- r2 PASS — .backlog/evidence/I113-r2.txt (915a3d94873d)
+- code failures: 1 / cap 3
+
