@@ -448,11 +448,11 @@ there, and an `anchor` field that is not one of the two anchor forms is refused 
 
 **R18 — the close is pinned to the verified tree, and to the brief the round was written against.** `bl close A1
 --commit <sha>` requires: the last round is `PASS`; the brief hash recorded in that round equals the current brief
-hash, so a brief amended after the round invalidates the round and the item needs a new one; the commit's tree
-(`<sha>^{tree}`, as a 40-character hex value) equals the verified tree pinned by that round; the
-working tree is clean apart from artefacts (§2) — clean means no tracked file differs from `<sha>^{tree}` and no
-untracked file exists outside `.backlog/`; and the item satisfies R15. Trees are compared as full 40-character hex
-strings, never by prefix. The close event records the commit and the pinned tree.
+hash, so a brief amended after the round invalidates the round and the item needs a new one; the verified tree
+computed from the current working directory equals the tree pinned by that round, as full 40-character hex strings;
+and no tracked file outside the artefacts (`.backlog/`, `TODO.md`, `PROGRESS.md`) differs between `<sha>^{tree}` and
+the working directory. No untracked file may exist outside `.backlog/`; and the item satisfies R15. The close event
+records the commit and the pinned tree.
 
 **R19 — the code-round cap.** Three code rounds per item; a fourth code round is refused and the item escalates to a
 human. A code round is a round whose cause is `code`; a `PASS` round carries no cause and is not a code round. The

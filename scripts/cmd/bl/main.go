@@ -4779,6 +4779,21 @@ func cmdClose(root string, a args) error {
 		return refuse("commit %s does not exist in this repository", commit)
 	}
 	commit = strings.TrimSpace(out)
+	last := it.last()
+	currentTree, err := verifiedTree(root)
+	if err != nil {
+		return err
+	}
+	if len(last.Tree) != 40 || len(currentTree) != 40 || currentTree != last.Tree {
+		return refuseRule("R18", "%s verified tree %s does not match the PASS tree %s", commit, currentTree, last.Tree)
+	}
+	changed, code := git(root, "diff", "--name-only", "--no-renames", commit, "--", ".", ":!.backlog", ":!TODO.md", ":!PROGRESS.md")
+	if code != 0 {
+		return refuseRule("R18", "could not compare %s with the working directory", commit)
+	}
+	if strings.TrimSpace(changed) != "" {
+		return refuseRule("R18", "%s differs from the working directory outside artefacts: %s", commit, strings.TrimSpace(changed))
+	}
 	statusOut, _ := git(root, "status", "--porcelain")
 	var dirty []string
 	for _, line := range strings.Split(statusOut, "\n") {
@@ -4797,7 +4812,7 @@ func cmdClose(root string, a args) error {
 		}
 		return refuse("working tree is dirty — commit or stash before closing: %s", strings.Join(shown, "; "))
 	}
-	if _, err := appendEvent(root, Event{T: "close", ID: it.ID, Commit: commit}); err != nil {
+	if _, err := appendEvent(root, Event{T: "close", ID: it.ID, Commit: commit, Tree: last.Tree}); err != nil {
 		return err
 	}
 	short := commit

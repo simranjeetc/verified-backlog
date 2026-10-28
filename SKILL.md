@@ -47,7 +47,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with each row's exit code, `ms` duration and full output, and records the file's hash |
 | `bl round A1 --rows verdicts.tsv` | yes | records one round: the verdict is derived from the blocking rows, the cause is constrained, and the evidence file holds one line per frozen check id |
 | `bl second-check A1 --row J1 --cmd "…" --expect "stdout matches ^two"` | yes | runs a second judge's command under the same fixed environment and records the verdict it computes; regex expects ignore one trailing newline; a disagreement refuses the round |
-| `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round, a clean tree, a real commit |
+| `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round whose pinned tree matches the working directory, no tracked non-artefact diff from the commit, and a real commit |
 | `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |
 | `bl defer A1 --reason "…"` | yes | parked: visible, skipped by `next` |
 | `bl reopen A1` | yes | reverses a decline or a park |

@@ -3324,7 +3324,9 @@ func TestRunRecordsNonnegativeRowDuration(t *testing.T) {
 }
 
 func TestRunWithoutMSStillRoundsShowsChecksAndCloses(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
+	legacyChecks(t, dir, roundList)
+	claimsOK(t, dir)
 	rows := runAndVerdicts(t, dir, roundPass...)
 	path := filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")
 	var run map[string]any
@@ -5223,7 +5225,7 @@ func closeItem(t *testing.T, dir string) string {
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(backlogDir+"/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, argv := range [][]string{{"add", "-A", "."}, {"commit", "-qm", "work"}} {
+	for _, argv := range [][]string{{"add", "-A", "."}, {"commit", "--allow-empty", "-qm", "work"}} {
 		if out, err := exec.Command("git", append([]string{"-C", dir}, argv...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", argv, err, out)
 		}
@@ -5233,6 +5235,83 @@ func closeItem(t *testing.T, dir string) string {
 		t.Fatalf("close: %v", err)
 	}
 	return sha
+}
+
+func commitWork(t *testing.T, dir string) string {
+	t.Helper()
+	for _, argv := range [][]string{{"add", "-A", "."}, {"commit", "-qm", "work"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, argv...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", argv, err, out)
+		}
+	}
+	return strings.TrimSpace(string(mustOutput(t, exec.Command("git", "-C", dir, "rev-parse", "HEAD"))))
+}
+
+func pinnedChangeItem(t *testing.T) (string, string, string) {
+	t.Helper()
+	dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
+	list := strings.ReplaceAll(roundList, "echo two", "echo two a.go")
+	legacyChecks(t, dir, list)
+	claimsOK(t, dir)
+	base := commitWork(t, dir)
+	writeFile(t, dir, "a.go", "package a\n")
+	passRound(t, dir)
+	change := commitWork(t, dir)
+	return dir, base, change
+}
+
+func TestCloseRefusesCommitMissingPinnedChange(t *testing.T) {
+	dir, base, _ := pinnedChangeItem(t)
+	before := ledgerBytes(t, dir)
+	err := call(t, cmdClose, dir, "A1", "--commit", base)
+	wantRule(t, err, "R18")
+	if !strings.Contains(err.Error(), base) {
+		t.Fatalf("refusal does not name %s: %v", base, err)
+	}
+	if after := ledgerBytes(t, dir); after != before {
+		t.Fatal("refused close changed the ledger")
+	}
+}
+
+func TestCloseAcceptsPinnedChangeWithDirtyArtifactsAndRecordsTree(t *testing.T) {
+	dir, _, change := pinnedChangeItem(t)
+	last := mustLastRound(t, dir)
+	writeFile(t, dir, "TODO.md", "view changed\n")
+	writeFile(t, dir, "PROGRESS.md", "view changed\n")
+	if err := call(t, cmdClose, dir, "A1", "--commit", change); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := events[len(events)-1]
+	if ev.T != "close" || ev.Commit != change || ev.Tree != last.Tree {
+		t.Fatalf("close event = %+v; want commit %s and tree %s", ev, change, last.Tree)
+	}
+}
+
+func TestCloseRefusesCommitAfterVerifiedTreeChanged(t *testing.T) {
+	dir, _, _ := pinnedChangeItem(t)
+	writeFile(t, dir, "a.go", "package a\n// changed after pass\n")
+	later := commitWork(t, dir)
+	err := call(t, cmdClose, dir, "A1", "--commit", later)
+	wantRule(t, err, "R18")
+}
+
+func mustLastRound(t *testing.T, dir string) Event {
+	t.Helper()
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].T == "round" {
+			return events[i]
+		}
+	}
+	t.Fatal("no round event")
+	return Event{}
 }
 
 func mustOutput(t *testing.T, cmd *exec.Cmd) []byte {
@@ -5602,7 +5681,9 @@ func TestRestartLeavesEveryEarlierAttemptsFileAlone(t *testing.T) {
 // an item closed on a PASS round whose evidence was overwritten is reopened by a restart, and
 // `bl check` passes while the evidence still hashes to what the record says it now holds.
 func TestCheckExcusesTheDamageAFailureRecordLists(t *testing.T) {
-	dir := roundItem(t, roundList)
+	dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
+	legacyChecks(t, dir, roundList)
+	claimsOK(t, dir)
 	passRound(t, dir)
 	closeItem(t, dir)
 	evidence := filepath.Join(dir, ".backlog", "evidence", "A1-r1.txt")
@@ -5703,7 +5784,9 @@ func TestRestartRefusals(t *testing.T) {
 		{
 			name: "closed and the class is not damaged-evidence",
 			setup: func(t *testing.T) string {
-				dir := roundItem(t, roundList)
+				dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
+				legacyChecks(t, dir, roundList)
+				claimsOK(t, dir)
 				passRound(t, dir)
 				closeItem(t, dir)
 				return dir
@@ -5835,7 +5918,10 @@ func TestRestartLimitParksTheItemForAHuman(t *testing.T) {
 
 // R36: a closed item in its last attempt is refused with no write at all.
 func TestARestartOfAClosedItemInTheLastAttemptWritesNothing(t *testing.T) {
-	dir := restartItem(t)
+	dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
+	legacyChecks(t, dir, roundFailList)
+	claimsOK(t, dir)
+	failRound(t, dir, roundFail...)
 	restartOK(t, dir, "first attempt", "first change")
 	nextAttempt(t, dir, roundFailList)
 	failRound(t, dir, roundFail...)
