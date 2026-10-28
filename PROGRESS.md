@@ -464,9 +464,11 @@ Source: supervisor:format-audit
 
 ## I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round
 
-Decision: parked — resume kept the first open's before-tree, so the round diff holds I105/I106/I108 hunks; waits for I109 (not verified)
+Verdict: PASS — closed at 2c57689311b5df5ff215f99078ceb345c22049f0
 Source: supervisor:format-audit
 
+- r1 PASS — .backlog/evidence/I76-r1.txt (1a8bf7c5977d)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified, from the 2026-10-26 format audit): bl brief (or a read-only bl rules <id>) prints only the design sections and R-rules the item text and brief.md cite, extracted by rule id from the doc, so the dispatch pastes that slice instead of naming the whole file; risk to weigh: a verifier blind to an uncited rule may miss an interaction, so the slice should name the rules it left out
 - note: Scope clarification from human-requested context-efficiency improvements (2026-10-28): extend the relevant-rule slice into a role-specific item reading packet containing verbatim item intent, current brief, applicable accepted decisions with source references, relevant rule sections plus an index of omitted rules, and concerned source/test paths. Producer and checks-writer packets must preserve blind verification: the checks writer never receives producer plans or claims. No new canonical state or generated guess about which decision supersedes another; surface unresolved conflicts. Reuse I101 concise read surfaces and coordinate I87 decision propagation rather than duplicating them. Example: an I57 checks writer receives I57 intent/brief and applicable constraints, without unrelated closed-item notes or producer claims. This remains context selection, not authority to omit relevant evidence during verification.
 
