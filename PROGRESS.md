@@ -464,7 +464,7 @@ Source: supervisor:format-audit
 
 ## I76 — every blind verifier dispatch reads all of references/design-check-list-schema.md, 22.1k tokens (o200k), although an item cites a handful of its rules - I58 cites 12 of them plus section 2 - so most of each verifier's reading budget goes on rules the item does not touch, and the cost repeats on every dispatch and every round
 
-Status: open
+Decision: parked — resume kept the first open's before-tree, so the round diff holds I105/I106/I108 hunks; waits for I109 (not verified)
 Source: supervisor:format-audit
 
 - note: candidate fix (unverified, from the 2026-10-26 format audit): bl brief (or a read-only bl rules <id>) prints only the design sections and R-rules the item text and brief.md cite, extracted by rule id from the doc, so the dispatch pastes that slice instead of naming the whole file; risk to weigh: a verifier blind to an uncited rule may miss an interaction, so the slice should name the rules it left out
@@ -655,4 +655,12 @@ Verdict: PASS — closed at b655fab5c4a1685bebcb992bb2b003eb205d6300
 - r2 FAIL cause=code — .backlog/evidence/I108-r2.txt (c61eb383fc59)
 - r3 PASS — .backlog/evidence/I108-r3.txt (d0a917564bd7)
 - code failures: 2 / cap 3
+
+## I109 — bl open's resume (I108) repeats the first open's before-tree, so when other items commit while the item is parked, its round diff holds their hunks and R10 refuses (I76 run2: references/design-check-list-schema.md:321 from I108 uncovered); resume on a clean tree should record the current verified tree as the before-tree, and refuse on a dirty tree so no uncommitted work escapes the diff
+
+Verdict: PASS — closed at 78dbbdea8d709586a1e9cfecf085e13684410412
+
+- r1 FAIL cause=code — .backlog/evidence/I109-r1.txt (5c4122bda654)
+- r2 PASS — .backlog/evidence/I109-r2.txt (3f6beaae75af)
+- code failures: 0 / cap 3
 
