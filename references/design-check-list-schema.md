@@ -346,7 +346,8 @@ something a model typed into a cell, and the judge and the record read the same 
 command: it consumes a run.
 
 **R8 — a binary-decided expectation is one of five forms.** `expect` is exactly one of: `exit <code>`,
-`stdout matches <regex>`, `stderr matches <regex>`, `file exists <path>`, `tree == <hash>`. Any other form is a
+`stdout matches <regex>`, `stderr matches <regex>`, `file exists <path>`, `tree == <hash>`. Regex expects ignore one
+trailing newline. Any other form is a
 refusal at `bl checks` time, and again at `bl run` time when a frozen row carries one, because the run computes that
 row's verdict from it. The regex dialect is Go's `regexp` (RE2), applied with search semantics (not a full
 match) to the **full** captured output, not the 4096-byte excerpt. `<code>` is an integer between 0 and 255 — `-1` is reserved for the timeout and is not a valid expectation, so a

@@ -4112,7 +4112,7 @@ func expectVerdict(root, id, expect string, rec runRow, tree string) (string, er
 		if err != nil {
 			return "", refuseRule("R8", "row %s: regex %q is not valid RE2: %v", id, expect, err)
 		}
-		if re.MatchString(rec.Stdout) {
+		if matchStream(re, rec.Stdout) {
 			return "PASS", nil
 		}
 		return "FAIL", nil
@@ -4121,7 +4121,7 @@ func expectVerdict(root, id, expect string, rec runRow, tree string) (string, er
 		if err != nil {
 			return "", refuseRule("R8", "row %s: regex %q is not valid RE2: %v", id, expect, err)
 		}
-		if re.MatchString(rec.Stderr) {
+		if matchStream(re, rec.Stderr) {
 			return "PASS", nil
 		}
 		return "FAIL", nil
@@ -4139,6 +4139,11 @@ func expectVerdict(root, id, expect string, rec runRow, tree string) (string, er
 		return "FAIL", nil
 	}
 	return "", refuseRule("R8", "row %s: expect %q is not one of: exit <code>, stdout matches <regex>, stderr matches <regex>, file exists <path>, tree == <hash>", id, expect)
+}
+
+// matchStream also tries the captured stream with one final newline removed.
+func matchStream(re *regexp.Regexp, s string) bool {
+	return re.MatchString(s) || (strings.HasSuffix(s, "\n") && re.MatchString(s[:len(s)-1]))
 }
 
 // cmdSecondCheck is R16's verb: the orchestrator dispatches a second judge to write a command

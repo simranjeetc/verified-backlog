@@ -3408,6 +3408,22 @@ func TestTheRowVerdictIsComputedFormByForm(t *testing.T) {
 	}
 }
 
+func TestMatchStreamIgnoresExactlyOneTrailingNewline(t *testing.T) {
+	cases := []struct {
+		pattern, input string
+		want           bool
+	}{
+		{"^gofmt-clean$", "gofmt-clean\n", true}, {"^a$", "a\n\n", false},
+		{"^a$", "a", true}, {"^oops$", "oops\n", true},
+	}
+	for _, c := range cases {
+		re := regexp.MustCompile(c.pattern)
+		if got := matchStream(re, c.input); got != c.want {
+			t.Errorf("matchStream(%q) = %v, want %v", c.input, got, c.want)
+		}
+	}
+}
+
 // R8: `file exists` is true when the path is there when the row runs, and `tree ==` is true
 // when the tree the run verified is the one the row names.
 func TestTheRowVerdictIsComputedForTheFileAndTheTreeForms(t *testing.T) {
@@ -4280,10 +4296,14 @@ func TestR16ASecondCheckThatAgreesLetsTheRoundStand(t *testing.T) {
 	if err := call(t, cmdSecondCheck, dir, "A1", "--row", "J1", "--cmd", "echo two", "--expect", "stdout matches ^two"); err != nil {
 		t.Fatalf("second check: %v", err)
 	}
+	events, _ := readLedger(dir)
+	if ev := events[len(events)-1]; ev.T != "second-check" || ev.Computed != "PASS" {
+		t.Fatalf("second-check event = %+v, want computed PASS", ev)
+	}
 	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
 		t.Fatalf("round: %v", err)
 	}
-	events, _ := readLedger(dir)
+	events, _ = readLedger(dir)
 	ev := events[len(events)-1]
 	if ev.T != "round" || ev.Verdict != "PASS" {
 		t.Fatalf("round event = %+v", ev)
