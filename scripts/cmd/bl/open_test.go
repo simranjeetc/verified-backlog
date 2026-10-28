@@ -117,6 +117,55 @@ func TestOpenResumeRefusesDirtyTree(t *testing.T) {
 	}
 }
 
+func TestOpenRefusesDirtyTree(t *testing.T) {
+	dir := t.TempDir()
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "brief"}} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	writeFile(t, dir, "a.go", "package a // clean\n")
+	writeFile(t, dir, ".gitignore", ".backlog/\n")
+	for _, argv := range [][]string{{"init", "-q"}, {"config", "user.email", "a@b.c"}, {"config", "user.name", "a"}, {"add", "a.go", ".gitignore"}, {"commit", "-qm", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, argv...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", argv, err, out)
+		}
+	}
+	writeFile(t, dir, "a.go", "package a // modified\n")
+	before, _ := readLedger(dir)
+	r := wantRefusal(t, call(t, cmdOpen, dir, "A1"))
+	if r.rule != "R5" || !strings.Contains(r.msg, "commit or stash") || !strings.Contains(r.msg, "a.go") {
+		t.Fatalf("want R5 dirty-tree refusal naming a.go and commit or stash, got %s: %s", r.rule, r.msg)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "brief.md")); !os.IsNotExist(err) {
+		t.Fatalf("refused fresh open wrote brief: %v", err)
+	}
+	after, _ := readLedger(dir)
+	if len(after) != len(before) {
+		t.Fatal("refused fresh open wrote an event")
+	}
+}
+
+func TestOpenDirtyCheckReadsRealNames(t *testing.T) {
+	dir := t.TempDir()
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "brief"}} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	writeFile(t, dir, "a.go", "package a\n")
+	for _, argv := range [][]string{{"init", "-q"}, {"config", "user.email", "a@b.c"}, {"config", "user.name", "a"}, {"add", "a.go"}, {"commit", "-qm", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, argv...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", argv, err, out)
+		}
+	}
+	writeFile(t, dir, "my file.go", "package m\n")
+	r := wantRefusal(t, call(t, cmdOpen, dir, "A1"))
+	if !strings.Contains(r.msg, "my file.go") || strings.Contains(r.msg, `"my file.go"`) {
+		t.Fatalf("dirty path was not reported unquoted: %s", r.msg)
+	}
+}
+
 func TestOpenResumeRefusesDifferentScope(t *testing.T) {
 	dir := openResumeItem(t)
 	events, _ := readLedger(dir)

@@ -78,7 +78,8 @@ the producer's changes are uncommitted and because the index can hide them. The 
 directory's files, excluding `.git/`, the artefacts of R25, and every path ignored by `.gitignore`; hash each with
 `git hash-object`; write the resulting tree with `git mktree`. The index is never consulted, so a staged-but-unstaged
 path, a `skip-worktree` path and an `assume-unchanged` path cannot hide a change from the tree. The same computation
-at `bl open` time produces the **before-tree**.
+at `bl open` time produces the **before-tree**. Any `bl open`, fresh or resumed, is refused on a dirty
+working tree outside `.backlog/`, `TODO.md` and `PROGRESS.md`; commit or stash first.
 
 The tree covers the whole working tree, not only the scope, on purpose: a change outside the scope can change what
 the item's commands do (a new dependency, a changed config), and a verdict must be about the tree the commands ran
@@ -322,7 +323,7 @@ reopen it.
 **R5 — the list is frozen before the claims.** `bl claims A1 --file <path>` reads the producer's report from that
 path. A claim exists only if a `claims` event is in the ledger for that item; a hand-written `claims.md` is not a claim,
 and `bl claims` overwrites whatever is at that path.
-`bl open` on an item whose current attempt already has claims resumes that attempt without rewriting the brief, keeping the same brief and scope and taking the current tree as its before-tree. A resume on a dirty working tree is refused under R5; commit or stash first. A different scope is also refused under R5.
+`bl open` on an item whose current attempt already has claims resumes that attempt without rewriting the brief, keeping the same brief and scope and taking the current tree as its before-tree. Any open, fresh or resumed, on a dirty working tree is refused under R5; commit or stash first. A different scope is also refused under R5.
 `bl claims` is refused if the item has no check list. `bl claims` is refused if the item already has a `claims`
 event — the claims are frozen once. `bl checks` is refused if the item already has a `claims` event, except for an
 amendment that adds a row (R4). This is the ordering rule the whole design rests on, and the one thing not to trade

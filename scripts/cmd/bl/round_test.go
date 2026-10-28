@@ -26,6 +26,9 @@ func gitItemWith(t *testing.T, files map[string]string) string {
 	for name, body := range files {
 		writeFile(t, dir, name, body)
 	}
+	if len(files) > 0 {
+		commitSeed(t, dir)
+	}
 	for _, argv := range [][]string{
 		{"init"},
 		{"file", "--id", "A1", "--text", "add a verb; test it"},
@@ -36,6 +39,16 @@ func gitItemWith(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+// commitSeed commits everything in dir, so a following bl open sees a clean tree (R5).
+func commitSeed(t *testing.T, dir string) {
+	t.Helper()
+	for _, argv := range [][]string{{"add", "-A"}, {"-c", "user.name=bl test", "-c", "user.email=bl@test.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, argv...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", argv, err, out)
+		}
+	}
 }
 
 // A well-formed round over a well-formed run and verdicts file passes, and it writes the
@@ -458,6 +471,7 @@ func scopedItem(t *testing.T, scopeIgnored string) string {
 		t.Fatal(err)
 	}
 	writeFile(t, dir, "build/out.txt", "one\n")
+	commitSeed(t, dir)
 	open := []string{"open", "A1", "--scope", "build/"}
 	if scopeIgnored != "" {
 		open = append(open, "--scope-ignored", scopeIgnored)
@@ -629,6 +643,16 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 			if out, err := hermeticGit(t, "init", "-q", dir).CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v: %s", err, out)
 			}
+			// the item is opened on the clean tree (R5); the nested .git is written after
+			for _, argv := range [][]string{
+				{"init"},
+				{"file", "--id", "A1", "--text", "item"},
+				{"open", "A1"},
+			} {
+				if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+					t.Fatalf("bl %v: exit %d", argv, code)
+				}
+			}
 			sub := filepath.Join(dir, "sub")
 			if err := os.MkdirAll(sub, 0o755); err != nil {
 				t.Fatal(err)
@@ -678,17 +702,7 @@ func TestANestedGitIsSkippedFromTheVerifiedTree(t *testing.T) {
 					t.Errorf("the tree must hold the nested repository's file:\n%s", out)
 				}
 			}
-			// and the run succeeds: the item is opened, the list is frozen, the claims are
-			// recorded, and the rows run.
-			for _, argv := range [][]string{
-				{"init"},
-				{"file", "--id", "A1", "--text", "item"},
-				{"open", "A1"},
-			} {
-				if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
-					t.Fatalf("bl %v: exit %d", argv, code)
-				}
-			}
+			// and the run succeeds: the list is frozen, the claims are recorded, and the rows run.
 			legacyChecks(t, dir, roundList)
 			if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
 				t.Fatalf("claims: %v", err)
