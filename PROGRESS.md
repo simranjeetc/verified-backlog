@@ -839,10 +839,15 @@ Source: human
 
 ## I138 — bl round's R10 refusal names no way forward, so the I124 a1 brain spent a harness FAIL round and a bad-check restart on a gap that bl checks --amend fixes: when R10 refuses and the attempt has no PASS round, the refusal should say that an amendment adding a blocking row that covers the named path (format 2: a test function with that @_covers inserted before the main block), then bl run, records the round; and the item-loop playbook should say the same
 
-Status: open
+Decision: parked — brain timeout 3600s at a2 r3 (verifier in flight, r1+r2 dispute); work in git stash 'I138 a2 brain timeout'; loop halted by user (not verified)
 Source: loop:I135
 
+- r1 FAIL cause=dispute — .backlog/evidence/I138-r1.txt (dec6cd765ece)
+- r2 FAIL cause=dispute — .backlog/evidence/I138-r2.txt (d3341aaff846)
+- code failures: 0 / cap 3
 - note: Candidate: append to both R10 refusal messages in scripts/cmd/bl/rules.go checkCoverage a hint naming bl checks --amend (and --tests for format 2), conditioned on no PASS round in the attempt (R4 refuses an amend after one). Playbook: one paragraph under Step 3 in playbooks/item-loop/index.md. Evidence that the path works: note on I135.
+- note: a2 checks: supervisor rewrote the cmd path .backlog/items/I138/tests.py -> .backlog/items/I138/a2/tests.py in 24 test rows (R37 refusal; the checks prompt named a2/tests.py); no other change; original kept at I138-a2-checks.orig.tsv in the loop dir
+- note: a2 fix round: producer fixed the r2 finding (format-2 list with no frozen test file gets a shell-row hint, gated on TestsSHA); diff I138-a2-fix-producer.diff applied to main. The checks writer, given intent only, appended B9a-B9d.
 
 ## I143 — One I118 round cost three verifier dispatches and five refused bl round calls (about 25 min of the 3600s brain budget; loop job 20261029-193503-brain-46a7): the brain ran bl checks --amend and then bl file inside an open verifier window, R39 voided the window each time, and bl round's refusals named no verdicts-row or disposition format, so the brain read verdicts.go and round.go to learn them. Fix in bl: R39's refusal and the supervisor startup packet state the order (record the round before any other ledger write; amend and file after it); bl round's format refusals print the exact verdicts row and disposition line expected; bl checks --amend and bl file warn or refuse while the item's verifier window is open and no round has been recorded since. Done when a round can be recorded on the first try from the refusal text alone and an amend or file inside an open window is caught before the verifier is dispatched again.
 
