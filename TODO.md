@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (26)
+## Queue (29)
 
 - [ ] I3 — bl round: the derived verdict AND of blocking rows, the refusals, the verdicts file, the tree pin, the evidence file (R6, R9, R10, R12, R13, R14, R16, R18, R20, R23, R25, R28)
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
@@ -30,6 +30,9 @@
 - [ ] I134 — R39 docs drift (I124 RO1, RO3): references/design-check-list-schema.md §6 still counts 13 bl round refusals without R39 (now 14), and R39's known-limit sentence names only a ledger truncated below the packet event, not a byte-exact restore of the whole .backlog/ tree to its packet-time bytes, which no in-band window can detect  _(verifier:I124/r2)_
 - [ ] I137 — a commit outside an in-flight item's scope (here the human's 12bc33c and 5909f53 to scripts/bl-loop.dispatch.conf during I136) leaves the item's before-tree behind HEAD, so R10 refuses every round over a hunk the item never wrote and each re-baseline costs a restart; R10 also refuses a row-bearing FAIL round, so a bad-check found before any PASS can only reach bl restart through a harness round. bl needs a recorded way to re-baseline the before-tree onto a new HEAD (or to exclude hunks already committed by others) without spending an attempt.  _(loop:I136)_
 - [ ] I138 — bl round's R10 refusal names no way forward, so the I124 a1 brain spent a harness FAIL round and a bad-check restart on a gap that bl checks --amend fixes: when R10 refuses and the attempt has no PASS round, the refusal should say that an amendment adding a blocking row that covers the named path (format 2: a test function with that @_covers inserted before the main block), then bl run, records the round; and the item-loop playbook should say the same  _(loop:I135)_
+- [ ] I139 — The loop brain does producer work: I136's brain fixed luna's loop.go and loopcancel.go itself in the worktree (its note: 'Supervisor also fixed the producer's ...'), so Opus wrote code that no producer dispatch made. Guard inside bl: bl produced A1 --job J records a produce dispatch job (dispatch status: role produce, state done, cwd = the item's worktree) and the worktree's tree hash at that moment; bl claims and bl run refuse unless the tree under test equals a recorded produce tree, so any change the brain makes after a produce job is refused until a new produce dispatch makes it. A defect the brain finds goes back to the producer as a re-dispatch with the finding. Also: the loop prompt (loop.go:335) and playbooks/item-loop say the brain never edits files in the item's scope.  _(human)_
+- [ ] I140 — bl loop operator runbook: add playbooks/loop.md (how to watch progress via loop.json, dispatch status and the job log; cancel; recover each exit code; choose --max-context), linked from SKILL.md, harness-agnostic. After I136 lands, since its --cancel changes the recovery steps.
+- [ ] I141 — bl loop brain launch is Claude Code specific (scripts/bl-loop.dispatch.conf claude -p flags, scripts/bl-loop.brain-settings.json). Ship one dispatch conf per harness (claude, opencode) selectable via --dispatch-config, each restricting the brain to the same tools and denylist; the OpenCode equivalent of the tool restrictions is unverified.
 
 ## Blocked (1)
 
