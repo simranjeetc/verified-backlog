@@ -200,7 +200,8 @@ the judge's for a `decider: judge` row.
 - working directory = the repository root;
 - environment = `PATH` inherited from the caller and **recorded in the run file**, plus `HOME` and `TMPDIR` pointing at a
   fresh scratch directory outside the repository, created for the run and removed after it, plus `LANG=C`, `TZ=UTC`,
-  and nothing else — in particular no `GIT_*`, and no `HOME` pointing into the repository, so a tool that caches
+  and, when the repository contains `scripts/cmd/bl/`, `BL_UNDER_TEST` pointing at the binary built once for that run
+  in its scratch directory; otherwise nothing else — in particular no `GIT_*`, and no `HOME` pointing into the repository, so a tool that caches
   under `HOME` cannot write into the tree;
 - stdin = `/dev/null`;
 - rows executed **sequentially**, in the order of the frozen list;
@@ -502,7 +503,9 @@ first that carries one carries none.
 
 **R21 — the execution environment is fixed.** The environment in §2 is the whole environment, with one exception:
 `PATH` is inherited from the caller, and the inherited value is recorded in the run file so that the run can be
-reproduced. No other variable is inherited, in particular not `GIT_*`, and `HOME` and `TMPDIR` point outside the
+reproduced. When `scripts/cmd/bl/` exists, `bl run` builds it once before any row into the run's scratch directory;
+every row receives `BL_UNDER_TEST` pointing at that binary, and the run file records the same value. When the directory
+is absent, `BL_UNDER_TEST` is absent. No other variable is inherited, in particular not `GIT_*`, and `HOME` and `TMPDIR` point outside the
 repository: they are one scratch directory per run, shared by every row of that run in list order and removed after
 the run, so a row may reuse what an earlier row left there. The run file records each row's `ms`. A row that needs an
 environment variable must set it inside its `cmd`.

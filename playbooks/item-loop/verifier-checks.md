@@ -28,7 +28,7 @@ The list is format 2: a `decider: bl` row is either a test row — cmd exactly
 `python3 .backlog/items/<id>/tests.py <name>`, expect exactly `exit 0` — or a
 shell row, one simple command with `exit <code>`, kept only for a whole-suite
 command such as `go -C scripts test ./...`. The test file's build helper
-caches the binary under `$TMPDIR` and reuses it, so a run builds once. Each
+caches the binary under `$TMPDIR` and reuses it, so a run builds once. A test file driving `bl` uses `$BL_UNDER_TEST` when it is set and builds its own binary only when it is not. Each
 whole-suite command (such as `go test ./...` or the project test script)
 appears in at most one row. Write the test file now, before the code exists: python3, one named function per assertion, and the main block
 copied from R37 (ask for it by id if the packet leaves it out). Give it one

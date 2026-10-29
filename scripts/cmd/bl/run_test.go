@@ -43,6 +43,67 @@ func readRunFile(t *testing.T, dir, name string) (runFile, []byte) {
 	return rf, data
 }
 
+func writeBLFixture(t *testing.T, dir, source string) {
+	t.Helper()
+	for name, content := range map[string]string{
+		"scripts/go.mod":         "module fixture\n\ngo 1.23\n",
+		"scripts/cmd/bl/main.go": source,
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRunBuildsBLUnderTestOnceAndPassesItToRowsAndRunFile(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\t\"$BL_UNDER_TEST\"\texit 0\t\t\tfixture binary\n")
+	writeBLFixture(t, dir, "package main\nimport \"fmt\"\nfunc main() { fmt.Print(\"fixture\") }\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	path := rf.Env["BL_UNDER_TEST"]
+	if path == "" || inside(dir, path) {
+		t.Fatalf("BL_UNDER_TEST must name a binary outside the repository: %q", path)
+	}
+	if rf.Rows[0].Stdout != "fixture" || rf.Rows[0].Exit != 0 {
+		t.Fatalf("row = %+v, want fixture from the built binary", rf.Rows[0])
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("run scratch binary should be removed: %s", path)
+	}
+}
+
+func TestRunRefusesBrokenBLBuildBeforeRowsAndRunFile(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo ROW_RAN\texit 0\t\t\trow\n")
+	writeBLFixture(t, dir, "package main\nfunc main( {\n")
+	err := call(t, cmdRun, dir, "A1")
+	if err == nil || !strings.Contains(err.Error(), "syntax") {
+		t.Fatalf("run error = %v, want compiler syntax error", err)
+	}
+	if strings.Contains(err.Error(), "ROW_RAN") {
+		t.Errorf("row ran before failed build: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(statErr) {
+		t.Errorf("failed build wrote run file: %v", statErr)
+	}
+}
+
+func TestRunLeavesBLUnderTestUnsetWithoutScriptsCommand(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\ttest -z \"${BL_UNDER_TEST-}\"\texit 0\t\t\tno binary\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	if _, ok := rf.Env["BL_UNDER_TEST"]; ok {
+		t.Errorf("run environment unexpectedly has BL_UNDER_TEST: %+v", rf.Env)
+	}
+}
+
 // ── the round path ───────────────────────────────────────────────────────────
 
 // roundList is a well-formed list for the round path: a binary row and a judge row, both of

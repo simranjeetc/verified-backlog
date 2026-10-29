@@ -145,6 +145,21 @@ func cmdRun(root string, a args) error {
 		return err
 	}
 	defer cleanup()
+	blUnderTest := ""
+	if info, err := os.Stat(filepath.Join(root, "scripts", "cmd", "bl")); err == nil && info.IsDir() {
+		blUnderTest = filepath.Join(filepath.Dir(envHome(env)), "bin", "bl")
+		if err := os.MkdirAll(filepath.Dir(blUnderTest), 0o755); err != nil {
+			return err
+		}
+		cmd := exec.Command("go", "-C", "scripts", "build", "-o", blUnderTest, "./cmd/bl")
+		cmd.Dir = root
+		cmd.Env = os.Environ()
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return refuse("cannot build bl under test: %s", output)
+		}
+		env = withEnvValue(env, "BL_UNDER_TEST", blUnderTest)
+	}
 	path := os.Getenv("PATH")
 	home := envHome(env)
 	tmpdir := envTmp(env)
@@ -228,6 +243,9 @@ func cmdRun(root string, a args) error {
 			"PATH": path, "HOME": home, "TMPDIR": tmpdir, "LANG": "C", "TZ": "UTC",
 		},
 		Rows: records,
+	}
+	if blUnderTest != "" {
+		rf.Env["BL_UNDER_TEST"] = blUnderTest
 	}
 	data, err := encodeRun(rf)
 	if err != nil {
