@@ -430,9 +430,12 @@ the verifier produces the verdicts file, the orchestrator files the advisory ite
 records a failing advisory row without such an item is refused. Advisory failures never count towards the code-round
 cap (R19).
 
-**R15 — one blocking binary-decided row per item.** To close an item, its last round must contain at least one
-`blocking` row with `decider: bl`, unless a human sign-off (R22) is recorded for the item. A docs-only item is not
-exempt: its mechanical outskirts (links resolve, examples run) are `decider: bl` rows.
+**R15 — one blocking binary-decided row per item.** When `bl checks` freezes a list, it refuses under R15 unless
+the list contains at least one `blocking` row with `decider: bl` or a human sign-off (R22) is already recorded for
+the item. The refusal occurs after the list is parsed and before any write, and suggests a mechanical row (links
+resolve, examples run) or `bl signoff` first. To close an item, its last round's list must contain at least one
+`blocking` row with `decider: bl`, unless a human sign-off is recorded for the item. A docs-only item is not exempt:
+its mechanical outskirts are `decider: bl` rows.
 
 **R16 — a mis-classified row is a round failure, not a producer failure.** The orchestrator may dispatch a second judge
 to write a command that decides a `decider: judge` row, and records it with
@@ -620,7 +623,9 @@ that pins a tree cannot tell which half it pinned. A refusal under R35 writes no
 
 **R36 — an attempt is a new premise, and a restart starts it.** `bl restart A1 --reason <class> --why <text>
 --change <text>` ends the item's current attempt and starts the next one. `<class>` is exactly one of `bad-check`,
-`extra-file`, `damaged-evidence`, `wrong-premise`; `--why` and `--change` are single-line texts. Every item starts in
+`extra-file`, `damaged-evidence`, `wrong-premise`; `--why` and `--change` are single-line texts. When the attempt has
+no FAIL round, its last round is PASS, and `bl close` would refuse under R15 for lacking both a blocking `decider: bl`
+row and a sign-off, `bad-check` is allowed; every other class still refuses under R36. Every item starts in
 attempt 1, each accepted restart adds 1, and the event records the attempt it **ends**, the record it wrote, and no
 actor.
 

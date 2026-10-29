@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func cmdRestart(root string, a args) error {
 		if len(damaged) == 0 {
 			return refuseRule("R36", "%s is closed and its artefacts are intact — there is no damage for a restart to excuse", it.ID)
 		}
-	} else if !hasFailRound(it) && len(damaged) == 0 {
+	} else if !hasFailRound(it) && len(damaged) == 0 && !r15CloseFailure(root, events, it, class) {
 		return refuseRule("R36", "%s attempt %d has no FAIL round and no damaged artefact — fix the item instead of restarting it", it.ID, it.Attempt)
 	}
 	// The failure record is written before the event that names it, so an event never names a
@@ -131,6 +132,15 @@ func cmdRestart(root string, a args) error {
 	}
 	fmt.Printf("bl: %s restarted as attempt %d\n", it.ID, n+1)
 	return nil
+}
+
+func r15CloseFailure(root string, events []Event, it *Item, class string) bool {
+	if class != "bad-check" || it.last() == nil || it.last().Verdict != "PASS" {
+		return false
+	}
+	err := checkR15(root, events, it)
+	var refusal Refusal
+	return errors.As(err, &refusal) && refusal.rule == "R15"
 }
 
 // failureRecordText is the record a restart writes for the attempt it ends (R36): the class, the

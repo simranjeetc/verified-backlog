@@ -100,6 +100,9 @@ func cmdChecks(root string, a args) error {
 	if err != nil {
 		return err
 	}
+	if err := checkR15Rows(events, it, rows); err != nil {
+		return err
+	}
 	rel := attemptFile(it.ID, it.Attempt, checksName)
 	ev := Event{T: "checks", ID: it.ID, Checks: rel, ChecksSHA: shaHex([]byte(text)), Format: format}
 	if amend {

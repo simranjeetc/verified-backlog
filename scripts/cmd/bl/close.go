@@ -48,25 +48,8 @@ func cmdClose(root string, a args) error {
 	if last := it.last(); last == nil || last.Verdict != "PASS" {
 		return refuse("%s has no PASS round — nothing to close", it.ID)
 	}
-	if !hasSignoff(events, it.ID) {
-		rowsText, verifyErr := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
-		if verifyErr != nil {
-			return verifyErr
-		}
-		rows, parseErr := parseChecks(string(rowsText))
-		if parseErr != nil {
-			return parseErr
-		}
-		qualifies := false
-		for _, row := range rows {
-			if row.f["severity"] == "blocking" && row.f["decider"] == "bl" {
-				qualifies = true
-				break
-			}
-		}
-		if !qualifies {
-			return refuseRule("R15", "%s last round has no blocking decider: bl row and no sign-off", it.ID)
-		}
+	if err := checkR15(root, events, it); err != nil {
+		return err
 	}
 	commit, err := cleanText(a.get("commit"), "commit")
 	if err != nil {
@@ -131,4 +114,31 @@ func hasSignoff(events []Event, id string) bool {
 		}
 	}
 	return false
+}
+
+func checkR15(root string, events []Event, it *Item) error {
+	if hasSignoff(events, it.ID) {
+		return nil
+	}
+	rowsText, err := verifyArtefact(root, it.Checks, it.ChecksSHA, "check list")
+	if err != nil {
+		return err
+	}
+	rows, err := parseChecks(string(rowsText))
+	if err != nil {
+		return err
+	}
+	return checkR15Rows(events, it, rows)
+}
+
+func checkR15Rows(events []Event, it *Item, rows []checkRow) error {
+	if hasSignoff(events, it.ID) {
+		return nil
+	}
+	for _, row := range rows {
+		if row.f["severity"] == "blocking" && row.f["decider"] == "bl" {
+			return nil
+		}
+	}
+	return refuseRule("R15", "%s check list has no blocking decider: bl row and no sign-off; add a mechanical row (links resolve, examples run) or run `bl signoff` first", it.ID)
 }

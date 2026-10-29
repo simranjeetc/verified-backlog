@@ -64,6 +64,9 @@ func TestR37BlockingTestMustCoverCode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := openItem(t)
+			if err := call(t, cmdSignoff, dir, "A1", "--by", "fixture", "--note", "fixture permits a list without a blocking bl row"); err != nil {
+				t.Fatalf("fixture signoff: %v", err)
+			}
 			err := checksWithTests(t, dir, tc.row, writeFile(t, t.TempDir(), "tests.py", tc.source))
 			if tc.refuse {
 				r := wantRefusal(t, err)

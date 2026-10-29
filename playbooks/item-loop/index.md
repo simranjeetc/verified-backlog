@@ -88,6 +88,8 @@ then the claims, then the run:
 
 If the producer finishes first, it waits only for this recording, not for a re-dispatch.
 
+Every list, including a docs-only list, needs at least one blocking `decider: bl` row. Use a mechanical
+backstop such as links resolving or examples running; a prior `bl signoff` also permits a judge-only list (R15).
 Put every docs clause in a `decider: judge` row with a specific `fail_if`; the verifier decides it by
 reading the docs against the clause's example. Never put a docs clause in a test that greps markdown.
 A blocking test row must exercise code; an all-`.md` `@_covers` is refused under R37.

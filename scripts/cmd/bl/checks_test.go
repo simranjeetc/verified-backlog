@@ -60,6 +60,21 @@ func wantRule(t *testing.T, err error, rule string) {
 
 func checksOK(t *testing.T, dir, list string) {
 	t.Helper()
+	rows, err := parseChecks(list)
+	if err == nil {
+		qualifies := false
+		for _, row := range rows {
+			if row.f["severity"] == "blocking" && row.f["decider"] == "bl" {
+				qualifies = true
+				break
+			}
+		}
+		if !qualifies {
+			if err := call(t, cmdSignoff, dir, "A1", "--by", "fixture", "--note", "fixture permits this legacy judge-only list"); err != nil {
+				t.Fatalf("fixture signoff: %v", err)
+			}
+		}
+	}
 	if err := call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "checks.tsv", list)); err != nil {
 		t.Fatalf("checks: %v", err)
 	}
@@ -126,6 +141,27 @@ func TestChecksRecordsListAndHash(t *testing.T) {
 	if _, _, err := derive(events); err != nil {
 		t.Fatalf("derive: %v", err)
 	}
+}
+
+func TestChecksR15RequiresBlockingBLOrSignoff(t *testing.T) {
+	dir := openItem(t)
+	list := checksHeader + "J1\tjudge\tblocking\tB1\techo x\t\tit fails\ta reading of the intent\tc\n"
+	before := ledgerBytes(t, dir)
+	err := call(t, cmdChecks, dir, "A1", "--file", writeFile(t, t.TempDir(), "checks.tsv", list))
+	wantRule(t, err, "R15")
+	if !strings.Contains(err.Error(), "links resolve, examples run") || !strings.Contains(err.Error(), "bl signoff") {
+		t.Fatalf("R15 refusal should suggest a mechanical row or sign-off: %v", err)
+	}
+	if after := ledgerBytes(t, dir); after != before {
+		t.Fatal("a refused check list changed the ledger")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "checks.tsv")); err == nil {
+		t.Fatal("a refused check list was stored")
+	}
+	if err := call(t, cmdSignoff, dir, "A1", "--by", "h", "--note", "n"); err != nil {
+		t.Fatalf("signoff: %v", err)
+	}
+	checksOK(t, dir, list)
 }
 
 func TestChecksColumnsReadByName(t *testing.T) {

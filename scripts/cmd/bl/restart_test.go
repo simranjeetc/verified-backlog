@@ -558,6 +558,32 @@ func TestRestartRefusals(t *testing.T) {
 	}
 }
 
+func TestRestartBadCheckForR15BlockedPASS(t *testing.T) {
+	newBlocked := func(t *testing.T) string {
+		dir := roundItem(t, checksHeader+"J1\tjudge\tblocking\tB1\techo two\t\tif output is not two, FAIL\tthe output is judged by reading it\tthe output is two\n")
+		rows := runAndVerdicts(t, dir, "J1\tPASS\t\"two\"")
+		report := writeFile(t, t.TempDir(), "report.md", "Report-only: 0\n")
+		if err := call(t, cmdRound, dir, "A1", "--verdict", "PASS", "--rows", rows, "--report", report); err != nil {
+			t.Fatalf("PASS round: %v", err)
+		}
+		return dir
+	}
+	dir := newBlocked(t)
+	out := capture(t, func() {
+		if err := call(t, cmdRestart, dir, "A1", "--reason", "bad-check", "--why", "R15 blocks close", "--change", "add a mechanical row"); err != nil {
+			t.Fatalf("bad-check restart: %v", err)
+		}
+	})
+	if out != "bl: A1 restarted as attempt 2\n" {
+		t.Fatalf("restart output = %q", out)
+	}
+	dir = newBlocked(t)
+	wantRule(t, call(t, cmdRestart, dir, "A1", "--reason", "wrong-premise", "--why", "x", "--change", "y"), "R36")
+	dir = roundItem(t, roundList)
+	passRound(t, dir)
+	wantRule(t, call(t, cmdRestart, dir, "A1", "--reason", "bad-check", "--why", "x", "--change", "y"), "R36")
+}
+
 // R36: an item may be restarted twice. A restart in the last attempt is refused and parks the
 // item — the one refusal that writes — and a closed item in the last attempt is refused with no
 // write at all.

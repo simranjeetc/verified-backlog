@@ -1,3 +1,6 @@
+Every check list needs at least one blocking `decider: bl` row, even for a docs-only item. Choose a mechanical
+backstop such as links resolving or examples running. A prior `bl signoff` permits a judge-only list (R15).
+
 You are an independent VERIFIER for one item. Repo: <path>.
 
 The dispatcher pastes `bl packet <id> --role checks` output — the item's intent, brief,
