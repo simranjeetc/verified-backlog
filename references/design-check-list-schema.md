@@ -282,10 +282,15 @@ being named. The triage pass that produces a ranking is out of scope.
 
 `bl loop` selects with `bl next`, starts a new `brain` dispatch per item, and advances only after
 `bl check` passes, the item is closed, parked or declined, there is no in-flight item, and dispatch
-lists no running job. `--max-items N` bounds launches (default 3); `--max-tokens N` bounds per-item
-input, cache creation and output tokens (cache reads printed, not counted) once per distinct assistant message id
-(default 300000). When the running total exceeds the limit, the loop cancels that dispatch job
-and exits 5. The brain role timeout is 3600 seconds. `--poll-ms N` defaults to 5000;
+lists no running job. `--max-items N` bounds item launches (default 3); `--max-context N` bounds
+the peak request context of each session (default 300000), where one request's context is input,
+cache creation and cache read tokens on one top-level assistant message, counting each distinct
+message id once. `--max-sessions N` bounds sessions per item (default 5). When a session's peak
+exceeds the context limit, the loop cancels that job once and waits until it is terminal. If the item
+is still open, the loop starts a fresh session for the same item; continuations do not consume the
+item launch budget. At the session limit it exits 5 and retains `.backlog/loop.json`. Each ended
+session prints its peak context and summed input, cache creation and output usage (cache reads are
+printed but excluded from that sum). The brain role timeout is 3600 seconds. `--poll-ms N` defaults to 5000;
 `--timeout SECONDS` defaults to 14400; `--dispatch-config FILE` defaults to
 `scripts/bl-loop.dispatch.conf`. `.backlog/loop.lock` is an exclusive process-lifetime lock.
 `.backlog/loop.json` atomically associates the current item, launch token, consumed launch count

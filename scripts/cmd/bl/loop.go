@@ -22,6 +22,7 @@ type loopAssociation struct {
 	Launches int    `json:"launches"`
 	Job      string `json:"job,omitempty"`
 	Tokens   int    `json:"tokens,omitempty"`
+	Sessions int    `json:"sessions,omitempty"`
 }
 
 type loopExitError struct {
@@ -47,8 +48,11 @@ func loopExit(code int, format string, values ...any) error {
 }
 
 func cmdLoop(root string, a args) error {
-	maxItems, pollMS, timeoutSec, maxTokens := 3, 5000, 14400, 300000
+	maxItems, pollMS, timeoutSec, maxContext, maxSessions := 3, 5000, 14400, 300000, 5
 	var err error
+	if _, ok := a.flags["max-tokens"]; ok {
+		return refuse("unknown flag --max-tokens")
+	}
 	if a.get("max-items") != "" {
 		maxItems, err = strconv.Atoi(a.get("max-items"))
 		if err != nil || maxItems < 1 {
@@ -67,10 +71,16 @@ func cmdLoop(root string, a args) error {
 			return refuse("--timeout must be at least 1")
 		}
 	}
-	if a.get("max-tokens") != "" {
-		maxTokens, err = strconv.Atoi(a.get("max-tokens"))
-		if err != nil || maxTokens < 1 {
-			return refuse("--max-tokens must be at least 1")
+	if _, ok := a.flags["max-context"]; ok {
+		maxContext, err = strconv.Atoi(a.get("max-context"))
+		if err != nil || maxContext < 1 {
+			return refuse("--max-context must be at least 1")
+		}
+	}
+	if _, ok := a.flags["max-sessions"]; ok {
+		maxSessions, err = strconv.Atoi(a.get("max-sessions"))
+		if err != nil || maxSessions < 1 {
+			return refuse("--max-sessions must be at least 1")
 		}
 	}
 	p := filepath.Join(root, backlogDir)
@@ -98,6 +108,9 @@ func cmdLoop(root string, a args) error {
 			return loopExit(5, "association for %s has no job id; attended reconciliation required", saved.Item)
 		}
 		assoc = &saved
+		if assoc.Sessions < 1 {
+			assoc.Sessions = 1
+		}
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
 	}
@@ -113,7 +126,7 @@ func cmdLoop(root string, a args) error {
 	launches := 0
 	if assoc != nil {
 		launches = assoc.Launches
-		if err := waitLoopJob(root, assoc, assocPath, loopStarted, timeoutSec, pollMS, maxTokens); err != nil {
+		if err := waitLoopJob(root, assoc, assocPath, loopStarted, timeoutSec, pollMS, maxContext, maxSessions, a.get("dispatch-config")); err != nil {
 			return err
 		}
 		if err := completeLoopItem(root, assoc); err != nil {
@@ -143,12 +156,12 @@ func cmdLoop(root string, a args) error {
 		if _, err := rand.Read(tokenBytes); err != nil {
 			return err
 		}
-		assoc = &loopAssociation{Item: id, Token: hex.EncodeToString(tokenBytes), Launches: launches + 1}
+		assoc = &loopAssociation{Item: id, Token: hex.EncodeToString(tokenBytes), Launches: launches + 1, Sessions: 1}
 		if err := writeAssociation(assocPath, assoc); err != nil {
 			return err
 		}
 		launches++
-		job, err := startLoopJob(root, id, assoc.Token, a.get("dispatch-config"))
+		job, err := startLoopJob(root, id, assoc.Token, a.get("dispatch-config"), false)
 		if err != nil {
 			return loopExit(5, "dispatch start for %s failed: %v", id, err)
 		}
@@ -156,7 +169,7 @@ func cmdLoop(root string, a args) error {
 		if err := writeAssociation(assocPath, assoc); err != nil {
 			return err
 		}
-		if err := waitLoopJob(root, assoc, assocPath, loopStarted, timeoutSec, pollMS, maxTokens); err != nil {
+		if err := waitLoopJob(root, assoc, assocPath, loopStarted, timeoutSec, pollMS, maxContext, maxSessions, a.get("dispatch-config")); err != nil {
 			return err
 		}
 		if err := completeLoopItem(root, assoc); err != nil {
@@ -303,14 +316,18 @@ func writeAssociation(path string, assoc *loopAssociation) error {
 	return os.Rename(name, path)
 }
 
-func startLoopJob(root, id, token, config string) (string, error) {
+func startLoopJob(root, id, token, config string, continuation bool) (string, error) {
 	tmp, err := os.MkdirTemp("", "bl-loop-")
 	if err != nil {
 		return "", err
 	}
 	prompt := filepath.Join(tmp, "prompt.md")
 	out := filepath.Join(tmp, "out.log")
-	content := fmt.Sprintf("Write your final report to %s; a report printed only to stdout is lost. Work on backlog item %s in this fresh session. Follow playbooks/item-loop.md. First read `bl show %s` and `.backlog/HANDOFF.md`. Decide routine and cross-item technical choices yourself as architect. If only the human can answer, park the item and record the question. Commit locally and never push. Exit after the item is closed or parked.\n", out, id, id)
+	content := fmt.Sprintf("Write your final report to %s; a report printed only to stdout is lost. Work on backlog item %s in this fresh session.\n", out, id)
+	if continuation {
+		content += fmt.Sprintf("A previous session for this item stopped at its context limit. Read `bl show %s`, `.backlog/HANDOFF.md` and `git status` first. Resume from the item's current step without redoing recorded steps.\n", id)
+	}
+	content += fmt.Sprintf("Follow playbooks/item-loop.md. First read `bl show %s` and `.backlog/HANDOFF.md`. Decide routine and cross-item technical choices yourself as architect. If only the human can answer, park the item and record the question. Commit locally and never push. Exit after the item is closed or parked.\n", id)
 	if err := os.WriteFile(prompt, []byte(content), 0o600); err != nil {
 		return "", err
 	}
@@ -351,18 +368,18 @@ type loopTokenUsage struct {
 
 func (u loopTokenUsage) total() int { return u.Input + u.CacheWrite + u.Output }
 
-func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started time.Time, timeoutSec, pollMS, maxTokens int) error {
+func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started time.Time, timeoutSec, pollMS, maxContext, maxSessions int, config string) error {
 	bin := os.Getenv("BL_DISPATCH")
 	if bin == "" {
 		bin = "dispatch"
 	}
 	for {
-		usage, usageErr := loopJobTokenUsage(assoc.Job)
-		if usageErr != nil {
-			return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, usageErr)
+		usage, peak, err := loopJobTokenUsage(assoc.Job)
+		if err != nil {
+			return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
 		}
 		total := usage.total()
-		if total > maxTokens {
+		if peak > maxContext {
 			assoc.Tokens = total
 			if err := writeAssociation(assocPath, assoc); err != nil {
 				return loopExit(5, "cannot save token usage for %s: %v", assoc.Item, err)
@@ -370,30 +387,55 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 			cancel := exec.Command(bin, "cancel", assoc.Job)
 			cancel.Dir = root
 			_ = cancel.Run()
-			fmt.Printf("%s tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
-			return loopExit(5, "token budget exceeded for %s: %d > %d", assoc.Item, total, maxTokens)
+			for {
+				usage, peak, err = loopJobTokenUsage(assoc.Job)
+				if err != nil {
+					return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
+				}
+				total = usage.total()
+				state, err := loopDispatchStatus(root, bin, assoc.Job)
+				if err != nil {
+					return loopExit(5, "dispatch status for %s failed: %v", assoc.Item, err)
+				}
+				if dispatchTerminal(state) {
+					break
+				}
+				time.Sleep(time.Duration(pollMS) * time.Millisecond)
+			}
+			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			if itemIsFinished(root, assoc.Item) {
+				return nil
+			}
+			if assoc.Sessions >= maxSessions {
+				return loopExit(5, "%s used %d sessions", assoc.Item, assoc.Sessions)
+			}
+			assoc.Sessions++
+			job, err := startLoopJob(root, assoc.Item, assoc.Token, config, true)
+			if err != nil {
+				return loopExit(5, "dispatch continuation for %s failed: %v", assoc.Item, err)
+			}
+			assoc.Job = job
+			assoc.Tokens = 0
+			if err := writeAssociation(assocPath, assoc); err != nil {
+				return loopExit(5, "cannot save continuation for %s: %v", assoc.Item, err)
+			}
+			continue
 		}
-		cmd := exec.Command(bin, "status", assoc.Job)
-		cmd.Dir = root
-		data, err := cmd.Output()
+		state, err := loopDispatchStatus(root, bin, assoc.Job)
 		if err != nil {
-			fmt.Printf("%s tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
 			return loopExit(5, "dispatch status for %s failed: %v", assoc.Item, err)
 		}
-		fields := strings.Fields(string(data))
-		if len(fields) >= 2 {
-			switch fields[1] {
-			case "done":
-				fmt.Printf("%s tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
-				return nil
-			case "failed", "lost", "cancelled":
-				fmt.Printf("%s tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
-				return loopExit(5, "job for %s ended %s; association retained at %s", assoc.Item, fields[1], assocPath)
-			}
+		switch state {
+		case "done":
+			assoc.Tokens = total
+			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			return nil
+		case "failed", "lost", "cancelled":
+			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			return loopExit(5, "job for %s ended %s; association retained at %s", assoc.Item, state, assocPath)
 		}
 		remaining := time.Duration(timeoutSec)*time.Second - time.Since(started)
 		if remaining <= 0 {
-			fmt.Printf("%s tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
 			return loopExit(5, "timed out waiting for %s; association retained at %s", assoc.Item, assocPath)
 		}
 		pause := time.Duration(pollMS) * time.Millisecond
@@ -404,42 +446,79 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 	}
 }
 
-func loopJobTokenUsage(job string) (loopTokenUsage, error) {
+func loopJobTokenUsage(job string) (loopTokenUsage, int, error) {
 	var total loopTokenUsage
+	peak := 0
 	home := os.Getenv("DISPATCH_HOME")
 	if home == "" {
 		user, err := os.UserHomeDir()
 		if err != nil {
-			return total, err
+			return total, peak, err
 		}
 		home = filepath.Join(user, ".local", "state", "dispatch")
 	}
 	data, err := os.ReadFile(filepath.Join(home, "jobs", job, "log"))
 	if errors.Is(err, os.ErrNotExist) {
-		return total, nil
+		return total, peak, nil
 	}
 	if err != nil {
-		return total, err
+		return total, peak, err
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		var event struct {
 			Type    string `json:"type"`
 			Message struct {
-				ID    string         `json:"id"`
-				Usage loopTokenUsage `json:"usage"`
+				ID    string          `json:"id"`
+				Usage *loopTokenUsage `json:"usage"`
 			} `json:"message"`
 		}
-		if json.Unmarshal([]byte(line), &event) != nil || event.Type != "assistant" || event.Message.ID == "" || seen[event.Message.ID] {
+		if json.Unmarshal([]byte(line), &event) != nil || event.Type != "assistant" || event.Message.ID == "" || event.Message.Usage == nil || seen[event.Message.ID] {
 			continue
 		}
 		seen[event.Message.ID] = true
-		total.Input += event.Message.Usage.Input
-		total.CacheWrite += event.Message.Usage.CacheWrite
-		total.CacheRead += event.Message.Usage.CacheRead
-		total.Output += event.Message.Usage.Output
+		u := *event.Message.Usage
+		total.Input += u.Input
+		total.CacheWrite += u.CacheWrite
+		total.CacheRead += u.CacheRead
+		total.Output += u.Output
+		context := u.Input + u.CacheWrite + u.CacheRead
+		if context > peak {
+			peak = context
+		}
 	}
-	return total, nil
+	return total, peak, nil
+}
+
+func loopDispatchStatus(root, bin, job string) (string, error) {
+	cmd := exec.Command(bin, "status", job)
+	cmd.Dir = root
+	data, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return "", nil
+	}
+	return fields[1], nil
+}
+
+func dispatchTerminal(state string) bool {
+	return state == "done" || state == "failed" || state == "lost" || state == "cancelled"
+}
+
+func itemIsFinished(root, id string) bool {
+	events, err := readLedger(root)
+	if err != nil {
+		return false
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		return false
+	}
+	it, ok := byID[strings.ToLower(id)]
+	return ok && (it.Status == "closed" || it.Status == "parked" || it.Status == "declined")
 }
 
 func completeLoopItem(root string, assoc *loopAssociation) error {
