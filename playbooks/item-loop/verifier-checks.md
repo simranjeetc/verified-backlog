@@ -2,6 +2,7 @@ Every check list needs at least one blocking `decider: bl` row, even for a docs-
 backstop such as links resolving or examples running. A prior `bl signoff` permits a judge-only list (R15).
 Include the repository's full test suites as blocking `decider: bl` shell rows (gate rows), such as
 `go -C scripts test ./...`; `bl run` must execute them as part of the frozen run.
+Every row must be self-contained: no row reads something another row writes, because rows run concurrently.
 
 You are an independent VERIFIER for one item. Repo: <path>.
 

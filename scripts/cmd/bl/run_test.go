@@ -245,6 +245,93 @@ func TestRunRecordsNonnegativeRowDuration(t *testing.T) {
 	}
 }
 
+func TestRunKeepsFrozenRowOrder(t *testing.T) {
+	list := checksHeader +
+		"S1\tbl\tblocking\tB1\tsleep 0.2; echo first\texit 0\t\t\tfirst\n" +
+		"S2\tbl\tblocking\tB1\tsleep 0.1; echo second\texit 0\t\t\tsecond\n" +
+		"S3\tbl\tblocking\tB1\techo third\texit 0\t\t\tthird\n"
+	dir := runItem(t, list)
+	if err := call(t, cmdRun, dir, "A1", "--jobs", "3"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	for i, want := range []string{"S1", "S2", "S3"} {
+		if rf.Rows[i].ID != want {
+			t.Errorf("row %d id = %q, want %q", i, rf.Rows[i].ID, want)
+		}
+	}
+}
+
+func TestRunJobsControlsSleepRows(t *testing.T) {
+	list := checksHeader
+	for i := 1; i <= 4; i++ {
+		list += fmt.Sprintf("S%d\tbl\tblocking\tB1\tsleep 1\texit 0\t\t\tsleeps\n", i)
+	}
+	serial := runItem(t, list)
+	started := time.Now()
+	if err := call(t, cmdRun, serial, "A1", "--jobs", "1"); err != nil {
+		t.Fatalf("serial run: %v", err)
+	}
+	serialDuration := time.Since(started)
+	if serialDuration < 4*time.Second {
+		t.Errorf("--jobs 1 took %s, want at least 4 seconds", serialDuration)
+	}
+	parallel := runItem(t, list)
+	started = time.Now()
+	if err := call(t, cmdRun, parallel, "A1", "--jobs", "4"); err != nil {
+		t.Fatalf("parallel run: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 3*time.Second {
+		t.Errorf("--jobs 4 took %s, want under 3 seconds", elapsed)
+	}
+}
+
+func TestRunGivesEachRowItsOwnTMPDIR(t *testing.T) {
+	list := checksHeader +
+		"S1\tbl\tblocking\tB1\tmkdir \"$TMPDIR/x\" && printf '%s|%s' \"$TMPDIR\" \"$HOME\"\texit 0\t\t\tfirst\n" +
+		"S2\tbl\tblocking\tB1\tmkdir \"$TMPDIR/x\" && printf '%s|%s' \"$TMPDIR\" \"$HOME\"\texit 0\t\t\tsecond\n"
+	dir := runItem(t, list)
+	if err := call(t, cmdRun, dir, "A1", "--jobs", "2"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rf, _ := readRunFile(t, dir, "A1-run1.json")
+	first := strings.Split(rf.Rows[0].Stdout, "|")
+	second := strings.Split(rf.Rows[1].Stdout, "|")
+	if len(first) != 2 || len(second) != 2 {
+		t.Fatalf("row environments = %q and %q", rf.Rows[0].Stdout, rf.Rows[1].Stdout)
+	}
+	if first[0] == second[0] || first[1] != second[1] {
+		t.Errorf("row environments = %q and %q, want distinct TMPDIR and shared HOME", first, second)
+	}
+}
+
+func TestRunRejectsInvalidJobsBeforeWritingRun(t *testing.T) {
+	for _, jobs := range []string{"0", "-1", "no", ""} {
+		t.Run(fmt.Sprintf("jobs_%q", jobs), func(t *testing.T) {
+			dir := runItem(t, oneRowList)
+			code := run([]string{"--root", dir, "run", "A1", "--jobs=" + jobs})
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2", code)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+				t.Error("invalid --jobs must write no run file")
+			}
+		})
+	}
+}
+
+func TestRunJobsStillRefusesTreeChange(t *testing.T) {
+	list := checksHeader +
+		"S1\tbl\tblocking\tB1\ttrue\texit 0\t\t\tfirst\n" +
+		"S2\tbl\tblocking\tB1\techo changed >> changed.txt\texit 0\t\t\tchanges tree\n" +
+		"S3\tbl\tblocking\tB1\ttrue\texit 0\t\t\tlast\n"
+	dir := runItem(t, list)
+	wantRule(t, call(t, cmdRun, dir, "A1", "--jobs", "4"), "R26")
+	if _, err := os.Stat(filepath.Join(dir, ".backlog", "evidence", "A1-run1.json")); !os.IsNotExist(err) {
+		t.Error("R26 refusal must write no run file")
+	}
+}
+
 func TestRunWithoutMSStillRoundsShowsChecksAndCloses(t *testing.T) {
 	dir := gitItemWith(t, map[string]string{".gitignore": backlogDir + "/\n"})
 	legacyChecks(t, dir, roundList)
@@ -530,28 +617,20 @@ func TestRunRecordsATimeoutAsATimeout(t *testing.T) {
 
 // Every row runs, in the order of the frozen list, whatever the decider.
 func TestRunRunsEveryRowInFileOrder(t *testing.T) {
-	order := filepath.Join(t.TempDir(), "order")
 	dir := runItem(t, checksHeader+
-		"S1\tbl\tblocking\tB1\techo a >> "+order+"\texit 0\t\t\tfirst\n"+
-		"J1\tjudge\tadvisory\t\techo b >> "+order+"\t\tfail if b is wrong\treading needed not a match\tjudge row\n"+
-		"S2\tbl\tblocking\tB1\techo c >> "+order+"\texit 0\t\t\tthird\n")
+		"S1\tbl\tblocking\tB1\techo a\texit 0\t\t\tfirst\n"+
+		"J1\tjudge\tadvisory\t\techo b\t\tfail if b is wrong\treading needed not a match\tjudge row\n"+
+		"S2\tbl\tblocking\tB1\techo c\texit 0\t\t\tthird\n")
 	if err := call(t, cmdRun, dir, "A1"); err != nil {
 		t.Fatalf("run: %v", err)
-	}
-	got, err := os.ReadFile(order)
-	if err != nil {
-		t.Fatalf("order: %v", err)
-	}
-	if strings.Join(strings.Fields(string(got)), "") != "abc" {
-		t.Fatalf("the rows ran in the wrong order: %q", got)
 	}
 	rf, _ := readRunFile(t, dir, "A1-run1.json")
 	if len(rf.Rows) != 3 {
 		t.Fatalf("want three rows, got %d", len(rf.Rows))
 	}
 	for i, want := range []string{"S1", "J1", "S2"} {
-		if rf.Rows[i].ID != want {
-			t.Errorf("row %d = %s, want %s", i, rf.Rows[i].ID, want)
+		if rf.Rows[i].ID != want || strings.TrimSpace(rf.Rows[i].Stdout) != string(rune('a'+i)) {
+			t.Errorf("row %d = %+v, want %s and its output", i, rf.Rows[i], want)
 		}
 	}
 }

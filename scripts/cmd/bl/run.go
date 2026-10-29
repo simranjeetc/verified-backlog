@@ -12,8 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -70,6 +73,15 @@ type runFile struct {
 // before them, because the rows come out of the list and a list that does not parse cannot be
 // run at all.
 func cmdRun(root string, a args) error {
+	jobs := runtime.NumCPU()
+	if values := a.list("jobs"); len(values) > 0 {
+		value := a.get("jobs")
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 {
+			return refuse("--jobs must be an integer of at least 1")
+		}
+		jobs = parsed
+	}
 	if err := requireLedger(root); err != nil {
 		return err
 	}
@@ -136,14 +148,41 @@ func cmdRun(root string, a args) error {
 	path := os.Getenv("PATH")
 	home := envHome(env)
 	tmpdir := envTmp(env)
-	// R7: every row runs, in the order of the frozen list, whatever the decider. A
+	// R7: every row runs, with records in frozen-list order, whatever the decider. A
 	// `decider: bl` row's row-verdict is computed HERE, from the row's expectation and the
 	// values the run observed: the exit code is not the verdict, and a row whose command
 	// refused is a PASS row when its expectation matches what the refusal printed. A
 	// `decider: judge` row's row-verdict is the judge's, and the judge reads this file.
-	records := make([]runRow, 0, len(rows))
-	for _, row := range rows {
-		rec := execRow(root, row, env, runTimeout)
+	records := make([]runRow, len(rows))
+	rowEnvs := make([][]string, len(rows))
+	for i := range rows {
+		rowTmp := filepath.Join(tmpdir, fmt.Sprintf("row-%d", i+1))
+		if err := os.Mkdir(rowTmp, 0o755); err != nil {
+			return err
+		}
+		rowEnvs[i] = withEnvValue(env, "TMPDIR", rowTmp)
+	}
+	if jobs > len(rows) {
+		jobs = len(rows)
+	}
+	indices := make(chan int)
+	var workers sync.WaitGroup
+	for w := 0; w < jobs; w++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for i := range indices {
+				records[i] = execRow(root, rows[i], rowEnvs[i], runTimeout)
+			}
+		}()
+	}
+	for i := range rows {
+		indices <- i
+	}
+	close(indices)
+	workers.Wait()
+	for i, row := range rows {
+		rec := records[i]
 		if row.f["decider"] == "bl" {
 			v, err := expectVerdict(root, row.f["id"], row.f["expect"], rec, treeStart)
 			if err != nil {
@@ -156,7 +195,7 @@ func cmdRun(root string, a args) error {
 			}
 			rec.Verdict = v
 		}
-		records = append(records, rec)
+		records[i] = rec
 	}
 	// The state after the run.
 	treeEnd, err := verifiedTreeWriting(root)
@@ -274,6 +313,18 @@ func envValue(env []string, name string) string {
 		}
 	}
 	return ""
+}
+
+func withEnvValue(env []string, name, value string) []string {
+	updated := make([]string, len(env))
+	copy(updated, env)
+	for i, entry := range updated {
+		if strings.HasPrefix(entry, name+"=") {
+			updated[i] = name + "=" + value
+			return updated
+		}
+	}
+	return append(updated, name+"="+value)
 }
 
 // execRow runs one row's command and records what it saw: the exit code, whether it timed out,

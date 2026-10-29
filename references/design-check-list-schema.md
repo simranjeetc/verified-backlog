@@ -343,7 +343,9 @@ Comment lines are skipped. A `decider: bl` row's line must have an empty `anchor
 `decider: judge` row's line must have a non-empty `anchor` (R9). The verdicts file need not be in the frozen order.
 
 **R7 — the run executes every row, and the round records that run.** `bl run A1` executes the `cmd` of every row in the
-frozen list, under the environment in §2, whatever the decider, and writes the run file with the exit code, the
+frozen list concurrently, under the environment in §2, whatever the decider, and writes the run file with rows in frozen
+list order. `--jobs N` sets the worker count (N must be at least 1); by default it is `runtime.NumCPU()`. A row may not
+depend on another row's effects. The run file records the exit code, the
 timeout flag, the full output and the output hashes of each row, and the row-verdict of every `decider: bl` row. A
 `decider: bl` row's row-verdict is computed by the binary from `expect` and the run's observed values, and is recorded
 with them. A `decider: judge` row's row-verdict is the judge's; the judge read the run file and wrote that verdict into the
@@ -919,7 +921,7 @@ AND of the binary's computed row-verdicts for the `decider: bl` rows and of the 
 `decider: judge` rows, so it does not rest on the judge's word for a binary row.
 
 **P3 — `bl run` order.** R35 (the item is the one in flight) → R20 (the frozen artefacts are what they were) → R1 (the list still parses) → R7 (every row
-ran and its row-verdict was computed) → R8 (the expectation's form, which is refused inside R7) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
+ran concurrently and its row-verdict was computed) → R8 (the expectation's form, which is refused inside R7) → R26 (the tree did not move) → R27 (the ledger did not move) → the run file and the `run` event. A run is refused
 on the first of these that fails, and no run file is written. R26 and R27 are comparisons ACROSS the run — the tree and
 the ledger are hashed before it and again after it — so they can only be made once the rows have run. The list
 therefore has to parse, and the rows have to run, before they are checked. This order was written before anything ran;
