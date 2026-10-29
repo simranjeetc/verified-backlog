@@ -771,3 +771,10 @@ Verdict: PASS — closed at 2fcee1e3a75223259dca9ec6022056da9a74b438
 - r1 PASS — .backlog/evidence/I128-r1.txt (bd6a295df38b)
 - code failures: 0 / cap 3
 
+## I129 — bl loop: bound the over-limit cancel wait by --timeout and exit 5 with the association kept (today loop.go:394-404 polls forever if dispatch ignores cancel; cancel rc discarded at loop.go:387-391); before a continuation, stop on a ledger read error instead of treating it as unfinished (loop.go:511-519) and refuse when .git/index.lock exists (I127 RO1, RO3)
+
+Verdict: PASS — closed at c28a3fc0b323a82b424ff4e2487612b944a42580
+
+- r1 PASS — .backlog/evidence/I129-r1.txt (a47d26ab474d)
+- code failures: 0 / cap 3
+
