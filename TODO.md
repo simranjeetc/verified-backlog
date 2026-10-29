@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (21)
+## Queue (22)
 
 - [ ] I3 — bl round: the derived verdict AND of blocking rows, the refusals, the verdicts file, the tree pin, the evidence file (R6, R9, R10, R12, R13, R14, R16, R18, R20, R23, R25, R28)
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
@@ -25,6 +25,7 @@
 - [ ] I118 — bl open accepts a --scope value that names no path: I117 attempt 1 was opened with one comma-joined value 'SKILL.md,scripts/cmd/bl/packet.go,scripts/cmd/bl/packet_test.go', bl recorded it as a single scope entry (open event seq 779), and the mistake surfaced only at bl round, where R9 refused the judge anchor, costing a harness round and a restart. bl open should refuse a scope entry containing a comma, and one that matches neither an existing path nor a path the item will create, naming the entry and saying --scope is repeated once per path.  _(I117 a1, 2026-10-28)_
 - [ ] I119 — code written by the pipeline may carry comments: nothing stops a producer (or the checks writer's tests.py) from adding them, and the human wants new comments banned in code. bl refuses, at bl claims and bl round, any comment on a line the item's diff adds to a .go, .py or .sh file in its scope (Go by go/scanner, Python by tokenize, shell by its # outside quotes), except //go: directives and a first-line #!; bl checks refuses the same in a frozen tests.py. Existing comments are untouched: only added lines count. producer.md and verifier-checks.md state the rule so agents meet it before bl refuses  _(human)_
 - [ ] I121 — R15 gaps left by I120: bl close's R15 refusal (checkR15Rows, close.go) suggests bl signoff, which R22 refuses once a round exists, and does not name bl restart --reason bad-check; bl rebaseline never calls checkR15Rows, so it may install a list with no blocking decider: bl row  _(verifier:I120/r1)_
+- [ ] I122 — scripts/dispatch.sh still runs its own chains while the installed dispatch binary (~/.agents/bin/dispatch, be6e510, D7b/D8a blind-verified) is ready; the human approved switching (2026-10-29, relayed by the dispatch session): scripts/dispatch.sh becomes a thin wrapper exec'ing `dispatch run role prompt out secs`, mapping CHAIN="m1 m2" to --chain adapter:m1,adapter:m2 (gpt-6-luna=codex, claude:haiku=claude, deepseek-v4.1-flash=opencode), copying the job log to $out.log if read; prints MODEL adapter:model; every dispatch prompt names the out path on line 1 and says to write the report there, because dispatch treats stdout-only as no-output (I106 regression) and never fills out from stdout (I107 changes meaning)  _(human)_
 
 ## Blocked (1)
 
