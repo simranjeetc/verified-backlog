@@ -21,10 +21,16 @@ func TestVerifierPacketLeadsWithPurposeB0(t *testing.T) {
 
 func TestPacketIncludesOnlyCitedRulesAndScope(t *testing.T) {
 	dir := t.TempDir()
-	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "cite R20 and R10"}, {"open", "A1", "--scope", "scripts/cmd/bl"}} {
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "cite R20 and R10"}} {
 		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
 			t.Fatalf("bl %v: exit %d", argv, code)
 		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "scripts", "cmd", "bl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdOpen, dir, "A1", "--scope", "scripts/cmd/bl"); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
 		t.Fatal(err)

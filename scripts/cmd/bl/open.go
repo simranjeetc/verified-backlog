@@ -168,6 +168,10 @@ func cmdOpen(root string, a args) error {
 		fmt.Printf("bl: %s in flight\n", it.ID)
 		return nil
 	}
+	scope := a.list("scope")
+	if err := validateOpenScope(root, scope); err != nil {
+		return err
+	}
 	// R5: every open records a before-tree. Refuse external changes before writing the fresh
 	// attempt brief or its open event, so the snapshot cannot absorb uncommitted producer work.
 	if err := refuseDirtyTree(root, it.ID); err != nil {
@@ -190,7 +194,6 @@ func cmdOpen(root string, a args) error {
 	// write, recorded here — once. The before-tree is the tree the item was opened against:
 	// the round's diff is taken against it, and the ignored files under the scope are
 	// recorded with the hash each had then.
-	scope := a.list("scope")
 	scopeIgnored := a.list("scope-ignored")
 	carried := it.Attempt > 1 && len(a.lists["scope"]) == 0 && len(a.lists["scope-ignored"]) == 0 && it.CarriedScopeAttempt > 0
 	if carried {
@@ -216,6 +219,29 @@ func cmdOpen(root string, a args) error {
 		fmt.Printf("bl: %s scope carried from attempt %d: %s\n", it.ID, it.CarriedScopeAttempt, strings.Join(scope, ", "))
 	}
 	fmt.Printf("bl: %s in flight\n", it.ID)
+	return nil
+}
+
+func validateOpenScope(root string, scope []string) error {
+	for _, entry := range scope {
+		if strings.TrimSpace(entry) == "" {
+			return refuse("--scope entry %q is empty; --scope is repeated once per path", entry)
+		}
+		if strings.Contains(entry, ",") {
+			return refuse("--scope entry %q contains a comma; --scope is repeated once per path", entry)
+		}
+		path := filepath.Join(root, entry)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return refuse("--scope entry %q cannot be checked; --scope is repeated once per path", entry)
+		}
+		parent := filepath.Dir(path)
+		info, err := os.Stat(parent)
+		if err != nil || !info.IsDir() {
+			return refuse("--scope entry %q has no existing parent directory; --scope is repeated once per path", entry)
+		}
+	}
 	return nil
 }
 

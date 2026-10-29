@@ -166,6 +166,64 @@ func TestOpenDirtyCheckReadsRealNames(t *testing.T) {
 	}
 }
 
+func TestOpenRefusesInvalidScopeBeforeWriting(t *testing.T) {
+	for _, scope := range []string{"a.go,b.go", "nosuch/x.go", "", " "} {
+		t.Run(scope, func(t *testing.T) {
+			dir := unopenedItem(t)
+			before, err := readLedger(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := wantRefusal(t, call(t, cmdOpen, dir, "A1", "--scope", scope))
+			if !strings.Contains(r.msg, `"`+scope+`"`) || !strings.Contains(r.msg, "--scope is repeated once per path") {
+				t.Fatalf("refusal did not explain invalid scope %q: %s", scope, r.msg)
+			}
+			after, err := readLedger(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(after) != len(before) {
+				t.Fatal("refused open wrote an event")
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".backlog", "items", "A1", "brief.md")); !os.IsNotExist(err) {
+				t.Fatalf("refused open wrote brief: %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenAcceptsExistingAndNewScopePaths(t *testing.T) {
+	dir := unopenedItem(t)
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "src/main.go", "package main\n")
+	args := []string{"A1", "--scope", "src/", "--scope", "src/main.go", "--scope", "src/new.go", "--scope", "NEW.md"}
+	if err := call(t, cmdOpen, dir, args...); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := events[len(events)-1].Scope
+	want := []string{"src/", "src/main.go", "src/new.go", "NEW.md"}
+	if !sameStrings(got, want) {
+		t.Fatalf("scope = %#v; want %#v", got, want)
+	}
+}
+
+func unopenedItem(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "brief"}} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	return dir
+}
+
 func TestOpenResumeRefusesDifferentScope(t *testing.T) {
 	dir := openResumeItem(t)
 	events, _ := readLedger(dir)
