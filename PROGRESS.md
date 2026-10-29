@@ -446,9 +446,12 @@ Source: supervisor:I58-timing
 
 ## I73 — bl run executes the rows one after another: I58's 113 self-contained rows took 80398 ms (run.log), about 0.7 s each, on a 15-core machine
 
-Status: open
+Verdict: PASS — closed at b60dae9e08ac3d2f87086fa9ab736bb2cc692b0e
 Source: supervisor:I58-timing
 
+- r1 FAIL cause=code — .backlog/evidence/I73-r1.txt (920799b95b5b)
+- r2 PASS — .backlog/evidence/I73-r2.txt (bba714423806)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified): bl run runs rows in parallel with a bounded worker pool, keeping the evidence file in frozen order; R26 and R27 still check the tree and .backlog before and after the whole run. Rows that are not self-contained would race, so the design must state that a row may not depend on another
 
 ## I74 — the repository's test suites run once in every dispatch: bl.test.py (11 s) and go test (39 s) ran in verifier dispatch 1, in the producer and again in verifier dispatch 2 of I58, and the 113 rows ran three times (two dry runs by the verifier and bl run)
