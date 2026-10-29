@@ -654,7 +654,7 @@ Source: human
 
 ## I103 — bl.test.py with BL unset and no go on PATH dies with a FileNotFoundError traceback instead of a one-line 'failed to build bl' message
 
-Status: open — PASS recorded, close pending
+Verdict: PASS — closed at 1ea9c6a051f954d54a78322d70d7dc8632a87be3
 Source: verifier:I99/r1
 
 - r1 FAIL cause=dispute — .backlog/evidence/I103-r1.txt (cf049c3334e4)
