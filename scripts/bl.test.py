@@ -27,12 +27,19 @@ else:
     _BL_TEMP = tempfile.TemporaryDirectory(prefix="bl-test-bin-")
     atexit.register(_BL_TEMP.cleanup)
     BL = str(Path(_BL_TEMP.name) / "bl")
-    build = subprocess.run(
-        ["go", "-C", str(HERE), "build", "-o", BL, "./cmd/bl"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        build = subprocess.run(
+            ["go", "-C", str(HERE), "build", "-o", BL, "./cmd/bl"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        if isinstance(exc, FileNotFoundError) and exc.filename == "go":
+            message = "go not found on PATH"
+        else:
+            message = f"could not start go: {exc}"
+        raise SystemExit(f"failed to build bl from the working tree: {message}") from None
     if build.returncode != 0:
         detail = build.stderr or build.stdout
         raise SystemExit(f"failed to build bl from the working tree:\n{detail}")

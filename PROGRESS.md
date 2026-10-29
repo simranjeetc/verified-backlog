@@ -652,6 +652,15 @@ Source: human
 - code failures: 0 / cap 3
 - note: brief.md line 1 lost text when written (zsh applied a :s history modifier to $B:scripts...). Intended: 'those lines of git show 7862c32:scripts/cmd/bl/main.go (or main_test.go for test files). Layout, non-test (file <- BASE main.go lines): main.go <- 1-62 and 6417-6622 (package doc, imports, the cli section); ...'. Producer, checks and verifier all used this layout (verify-report P1).
 
+## I103 — bl.test.py with BL unset and no go on PATH dies with a FileNotFoundError traceback instead of a one-line 'failed to build bl' message
+
+Status: open — PASS recorded, close pending
+Source: verifier:I99/r1
+
+- r1 FAIL cause=dispute — .backlog/evidence/I103-r1.txt (cf049c3334e4)
+- r2 PASS — .backlog/evidence/I103-r2.txt (5fb0a8653621)
+- code failures: 0 / cap 3
+
 ## I105 — R27 hashes .backlog/run.log, which P10 says is not state: any check row that runs bl in the real repo makes bl run refuse (R27) whatever the code does, and the item cannot restart because R36 needs a FAIL round and there is no run to round on. Exclude run.log from the R27 hash and reword R27 to say so
 
 Verdict: PASS — closed at 3ad775489d66021d842a0ee40d31d696018ef499
