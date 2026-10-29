@@ -439,9 +439,11 @@ Source: supervisor:I58-timing
 
 ## I72 — every row that drives bl builds its own binary: all 113 rows of I58's list run go build (0.13 to 0.53 s each), so bl run builds bl 113 times per run
 
-Status: open
+Verdict: PASS — closed at c49a9e5731a0779a579f2778abbff36e0b5884c7
 Source: supervisor:I58-timing
 
+- r1 PASS — .backlog/evidence/I72-r1.txt (7d354d4311b8)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified): bl run builds the binary once from the tree under test into its run directory and exports its path (e.g. BL_UNDER_TEST) to every row under the fixed environment, so rows exercise the tree being verified without rebuilding
 
 ## I73 — bl run executes the rows one after another: I58's 113 self-contained rows took 80398 ms (run.log), about 0.7 s each, on a 15-core machine
