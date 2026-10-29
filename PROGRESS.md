@@ -724,3 +724,11 @@ Source: I115 r4, 2026-10-28
 - r2 PASS — .backlog/evidence/I117-r2.txt (9a0fb1618db2)
 - code failures: 0 / cap 3
 
+## I120 — a check list with no blocking decider: bl row is frozen, run and PASSed, and only then refused at close (R15), where no sign-off (R22, before round 1) or restart (R36, needs a FAIL) can rescue it: I71 r1 PASSed 8 judge rows and is stuck. bl checks refuses such a list unless a sign-off is already recorded, naming R15 and suggesting a mechanical row (links resolve, examples run); and bl restart --reason bad-check is accepted when the last round PASSed but R15 refuses the close. The human's position: an independent LLM verdict should not need a person to sign it; a command-decided row replaces the sign-off
+
+Verdict: PASS — closed at d47f3fc6d27f33b2b3e541e19ea3a6fe089f5487
+Source: human
+
+- r1 PASS — .backlog/evidence/I120-r1.txt (bd10c561a642)
+- code failures: 0 / cap 3
+
