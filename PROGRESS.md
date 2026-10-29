@@ -794,6 +794,13 @@ Verdict: PASS — closed at 515e4e913625f2b9da2daf424e50801c24d8c1a8
 - r1 PASS — .backlog/evidence/I130-r1.txt (479a9fb6deea)
 - code failures: 0 / cap 3
 
+## I135 — A check list frozen with an R10 coverage gap has no honest recovery: R10 refuses every rows round (PASS or dispute) when a hunk is uncovered, R5 refuses bl rebaseline once claims exist, and R36 refuses bl restart without a FAIL round, so I124 a1 needed a harness FAIL round that misnames the cause; let a dispute round (or bl restart --reason bad-check) record when the refusal is R10, or check R10 coverage at bl claims time so the gap is caught before the list freezes
+
+Decision: declined — wrong premise: an R10 gap after claims is recoverable honestly by bl checks --amend adding a covering blocking row (R4), then bl run and bl round; verified by probe, see note. The real gap, that nothing points at that path, is filed as I138 (not verified)
+Source: loop:I124
+
+- note: Premise checked 2026-10-29 with a throwaway Go test (removed): format-2 list, claims recorded, an uncovered hunk in main.go, bl round refused under R10; then bl checks --amend adding a blocking row T2 plus a test function inserted before the main block with @_covers("main.go") was accepted (R4 allows adding a row after claims, before any PASS round), bl run wrote run2 and bl round recorded r1 PASS. So the recovery exists; I124 a1 missed it because the R10 refusal and the playbook never name it.
+
 ## I136 — bl loop cancel does its own cleanup and moves on: today a human cancel of a loop brain (I119, 2026-10-29) left the brain's child dispatch jobs running, .backlog/loop.json retained (next bl loop exits 5), the item in flight, and the producer's partial edits in the main tree, so a person had to clean up by hand. Add bl loop --cancel [--reason R]: it cancels the associated brain job and every running child job in the repo and its worktrees, sets the item's partial diff aside as a patch under .backlog/ (never discarding it), parks the item with the reason, clears loop.json and returns the tree to the item's start, so the next bl loop moves on to the next item. Anything the cancel cannot clean up (a job that will not end, a worktree it cannot remove) is filed as a new item naming what was left, and the loop still moves on. Subsumes I133. Also: the I119 producer wrote into the main tree, not a worktree; the loop brain must run produce in a worktree.
 
 Decision: parked — attempts exhausted by concurrency, not by the code: attempt 1 bad-check (R10 @_covers), attempts 2 and 3 lost their before-tree to the human's concurrent commits 12bc33c and 5909f53 on scripts/bl-loop.dispatch.conf (see I137). The work is on local branch i136-loop-cancel (8c8e8c3), passing the 31-row attempt-2 list outside a recorded run with verifier v1's F1/RO3/RO4 fixed. Question for the human: reopen I136 for a fresh attempt on that branch once the loop files stop moving, or land it another way? (not verified)
@@ -806,4 +813,11 @@ Source: human
 - note: attempt 1: verifier v1 (deepseek-v4.1-flash) returned FAIL (F1 B7 multi-line leftover not filed; RO3, RO4 to fix; RO1, RO2 waived) but bl round refuses every row-bearing round under R10 because the frozen tests.py covers only loop.go. As in I124, a harness round records that the round could not be written, so the bad-check restart can carry F1 into attempt 2. bl gap filed separately.
 - note: attempt 2: supervisor dropped checks-writer row B7f before freeze: its fake mutates a.go during cancel, before the patch is written, so a correct cancel restores cleanly and files nothing; the writer flagged it and a run against the fixed worktree confirmed. Deleted-file naming is left to the verifier's own probe.
 - note: attempt 2: bl run refused under R26 because the human committed 12bc33c (scripts/bl-loop.dispatch.conf, outside I136's scope) at 16:36 while the run executed; the item's before-tree 2478c00 now differs from HEAD in a file no row covers, so R10 would refuse every round. Harness round records the run that could not complete; restart re-baselines on 12bc33c with the same code and checks.
+
+## I138 — bl round's R10 refusal names no way forward, so the I124 a1 brain spent a harness FAIL round and a bad-check restart on a gap that bl checks --amend fixes: when R10 refuses and the attempt has no PASS round, the refusal should say that an amendment adding a blocking row that covers the named path (format 2: a test function with that @_covers inserted before the main block), then bl run, records the round; and the item-loop playbook should say the same
+
+Status: open
+Source: loop:I135
+
+- note: Candidate: append to both R10 refusal messages in scripts/cmd/bl/rules.go checkCoverage a hint naming bl checks --amend (and --tests for format 2), conditioned on no PASS round in the attempt (R4 refuses an amend after one). Playbook: one paragraph under Step 3 in playbooks/item-loop/index.md. Evidence that the path works: note on I135.
 
