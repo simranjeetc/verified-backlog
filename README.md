@@ -113,3 +113,17 @@ counts without being added together. Work after the latest checkpoint, or a log
 without one, is labelled `usage provisional`: output may remain incomplete if a
 job stops before reporting its final usage. Accounting covers the brain job only;
 child jobs and other sessions are not included.
+
+Each fresh loop brain launch, including a context-limit continuation, receives a
+supervisor packet derived from the current ledger: intent, attempt and stage,
+recorded and pending artifacts, local CLI commands, routing authority, and the
+next action to assess. The packet points to `playbooks/item-loop/index.md` and
+does not depend on handoff prose. Producer workspaces are explicitly unknown
+until reconciled with worktrees and existing jobs. Generating the packet does
+not change the ledger or issue a verifier packet; role packets and gates remain
+responsible for blindness and evidence recording.
+
+The default Claude brain adapter sets `--autocompact 120000`, a native compaction
+window (Claude reserves a margin, so this is not an exact input-token trigger).
+The independent BL peak-context safety cap remains 300000 by default, with fresh
+session continuation after cancellation and terminal-job confirmation.

@@ -42,7 +42,7 @@ func TestLoopBudgetAndFreshJobs(t *testing.T) {
 		t.Fatalf("association remains after successful completion: %v", err)
 	}
 	log := readFile(t, filepath.Join(root, "dispatch.log"))
-	if strings.Count(log, "start brain") != 2 || !strings.Contains(log, "playbooks/item-loop.md") || !strings.Contains(log, "never push") {
+	if strings.Count(log, "start brain") != 2 || !strings.Contains(log, "playbooks/item-loop/index.md") || !strings.Contains(log, "never push") {
 		t.Fatalf("bad launch record/prompt: %s", log)
 	}
 	if !strings.Contains(log, "bl-loop-A1-") || !strings.Contains(log, "--config") {

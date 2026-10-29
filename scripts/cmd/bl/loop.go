@@ -323,22 +323,21 @@ func startLoopJob(root, id, token, config string, continuation bool) (string, er
 	}
 	prompt := filepath.Join(tmp, "prompt.md")
 	out := filepath.Join(tmp, "out.log")
-	content := fmt.Sprintf("Write your final report to %s; a report printed only to stdout is lost. Work on backlog item %s in this fresh session.\n", out, id)
-	if continuation {
-		content += fmt.Sprintf("A previous session for this item stopped at its context limit. Read `bl show %s`, `.backlog/HANDOFF.md` and `git status` first. Resume from the item's current step without redoing recorded steps.\n", id)
-	}
-	content += fmt.Sprintf("Follow playbooks/item-loop.md. First read `bl show %s` and `.backlog/HANDOFF.md`. Decide routine and cross-item technical choices yourself as architect. If only the human can answer, park the item and record the question. Commit locally and never push. Exit after the item is closed or parked.\n", id)
-	if err := os.WriteFile(prompt, []byte(content), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(out, nil, 0o600); err != nil {
-		return "", err
-	}
 	if config == "" {
 		config = filepath.Join("scripts", "bl-loop.dispatch.conf")
 	}
 	if !filepath.IsAbs(config) {
 		config = filepath.Join(root, config)
+	}
+	content, err := loopSupervisorPacket(root, id, config, out, continuation)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(prompt, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(out, nil, 0o600); err != nil {
+		return "", err
 	}
 	bin := os.Getenv("BL_DISPATCH")
 	if bin == "" {
