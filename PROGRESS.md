@@ -429,10 +429,11 @@ Source: supervisor:I58-timing
 
 ## I71 — the playbook runs the producer after the verifier's first dispatch, although the producer never needs the frozen list - only bl claims must come after bl checks (R5): in I58 the producer's 9.3 minutes ran after the verifier's 20.5 instead of beside them
 
-Decision: parked — r1 PASS but its frozen list has no blocking decider: bl row, so R15 refuses the close and R36 refuses a restart; waits for I120 (not verified)
+Status: open — PASS recorded, close pending
 Source: supervisor:I58-timing
 
 - r1 PASS — .backlog/evidence/I71-r1.txt (d5d33eddfe09)
+- r2 PASS — .backlog/evidence/I71-r2.txt (fa7d6485e287)
 - code failures: 0 / cap 3
 - note: candidate fix (unverified): playbooks/item-loop.md dispatches the producer and verifier dispatch 1 together, producer told not to read checks.tsv; the supervisor records bl checks then bl claims in that order when both return
 
