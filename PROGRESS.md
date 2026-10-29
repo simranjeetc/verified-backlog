@@ -745,11 +745,16 @@ Source: I115 r4, 2026-10-28
 
 ## I118 — bl open accepts a --scope value that names no path: I117 attempt 1 was opened with one comma-joined value 'SKILL.md,scripts/cmd/bl/packet.go,scripts/cmd/bl/packet_test.go', bl recorded it as a single scope entry (open event seq 779), and the mistake surfaced only at bl round, where R9 refused the judge anchor, costing a harness round and a restart. bl open should refuse a scope entry containing a comma, and one that matches neither an existing path nor a path the item will create, naming the entry and saying --scope is repeated once per path.
 
-Decision: parked — brain timeout 3600s mid-attempt 1: r1 code FAIL recorded, fix run3 36/36 PASS unverified; work in git stash 'I118 a1 run3'; reopen and pop after the verifier-window fix (not verified)
+Verdict: PASS — closed at 61a68a396bfe173c9ac906991a0fb1ac397ce43c
 Source: I117 a1, 2026-10-28
 
 - r1 FAIL cause=code — .backlog/evidence/I118-r1.txt (7abc5296d4a3)
-- code failures: 1 / cap 3
+- r2 FAIL cause=code — .backlog/evidence/I118-r2.txt (25fb09775acd)
+- r3 PASS — .backlog/evidence/I118-r3.txt (8f167e933058)
+- code failures: 0 / cap 3
+- note: Attended recovery: resumed on I143 implementation49e311a before applying pinned stash7e23fba8b0477adafb63bb0c9e6182e2fad9139e; applied cleanly, original stash retained. Only original three scoped Go files changed. Recovery report /tmp/bl-reconcile.IpTm2y/I118-recovery-claims.md supplements frozen claims; fresh checks/run/verifier will decide current-tree outcome. No Claude runs or automatic loop started.
+- note: run4: original 36 checks plus six new probes PASS; C43-C45 failed in the supplemental test fixture before invoking open because its raw git-status assertion included generated TODO/PROGRESS edits. Independent verifier corrected only setup by committing generated views, preserving all existing lines/assertions; all three probes then passed. Record insertion-only test amendment and rerun; no production fix inferred from this fixture failure.
+- note: Recovered item closed at 61a68a3 after attempt2 run5 and fresh independent same-family Codex verification: all46 rows PASS, independent compatibility probes PASS, removing validation and reverting the required packet fixture each killed the targeted Go test. Report .backlog/evidence/I118-a2-independent-report.md. Original stash7e23fba8b0477adafb63bb0c9e6182e2fad9139e and verified source backup retained; production code unchanged during bad-check recovery. No Claude runs or push.
 
 ## I120 — a check list with no blocking decider: bl row is frozen, run and PASSed, and only then refused at close (R15), where no sign-off (R22, before round 1) or restart (R36, needs a FAIL) can rescue it: I71 r1 PASSed 8 judge rows and is stuck. bl checks refuses such a list unless a sign-off is already recorded, naming R15 and suggesting a mechanical row (links resolve, examples run); and bl restart --reason bad-check is accepted when the last round PASSed but R15 refuses the close. The human's position: an independent LLM verdict should not need a person to sign it; a command-decided row replaces the sign-off
 
@@ -838,4 +843,20 @@ Status: open
 Source: loop:I135
 
 - note: Candidate: append to both R10 refusal messages in scripts/cmd/bl/rules.go checkCoverage a hint naming bl checks --amend (and --tests for format 2), conditioned on no PASS round in the attempt (R4 refuses an amend after one). Playbook: one paragraph under Step 3 in playbooks/item-loop/index.md. Evidence that the path works: note on I135.
+
+## I143 — One I118 round cost three verifier dispatches and five refused bl round calls (about 25 min of the 3600s brain budget; loop job 20261029-193503-brain-46a7): the brain ran bl checks --amend and then bl file inside an open verifier window, R39 voided the window each time, and bl round's refusals named no verdicts-row or disposition format, so the brain read verdicts.go and round.go to learn them. Fix in bl: R39's refusal and the supervisor startup packet state the order (record the round before any other ledger write; amend and file after it); bl round's format refusals print the exact verdicts row and disposition line expected; bl checks --amend and bl file warn or refuse while the item's verifier window is open and no round has been recorded since. Done when a round can be recorded on the first try from the refusal text alone and an amend or file inside an open window is caught before the verifier is dispatched again.
+
+Verdict: PASS — closed at 49e311aaef5c5f3d26c88c3cf2b52e6fecf749c7
+
+- r1 FAIL cause=code — .backlog/evidence/I143-r1.txt (e0c8ae83b6b6)
+- r2 PASS — .backlog/evidence/I143-r2.txt (34a43ff8fad3)
+- code failures: 0 / cap 3
+- note: verifier r1 (packet seq 1064, run1): FAIL code on C45-C53 (B6 forms print literal RO<n>, not the note number) and C8 (R39 text lacks 'verifier dispatch'); bl round refused R10: checks_test.go and window_test.go hunks covered by no blocking row. Adding C62 (gofmt over both test files) to cover them; window void, re-run and fresh verifier after the fix.
+- note: Attended recovery completed without Claude runs: original-contract FAIL preserved, wrong-premise restart clarified usable versus void windows, fresh independent same-family Codex verifier passed all 66 rows and mutation check; report .backlog/evidence/I143-a2-independent-report.md. Closed at 49e311a. Failed brain association archived outside repository with byte-identical backup after terminal-job and loop-lock checks; no automatic loop restarted.
+
+## I147 — Test-architect lens for the checks writer, as rules in scripts/cmd/bl/prompts/v1/checks.md.tmpl (no persona, harness-agnostic): every blocking row binds its clause's own words or behaviour (I32), makes one assertion and fails when the change is reverted (mutation check, as the I103 r2 verifier did by hand), names the file it reads instead of the newest one (I40), does not pass on unrelated failures such as a broken wrapper (I41), and covers the error classes around the named case (I103: a non-executable go, not only a missing one, was found by the verifier and not by any row). Done when the rendered checks prompt carries these rules and a test asserts each is present. After I143, I144, I138.
+
+Status: open
+
+- note: Observed during I118 recovery: new compatibility probes C43-C45 failed before the intended command because a raw scratch git-status assertion counted BL-generated TODO/PROGRESS edits. Record a pre-freeze check that compatibility fixtures actually reach their assertion on expected-working behavior and treat generated views explicitly; this false failure required a documented bad-check restart. Existing old36 checks and recovered production code were already passing.
 
