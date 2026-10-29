@@ -750,6 +750,15 @@ Source: human
 - r1 PASS — .backlog/evidence/I122-r1.txt (3ad878a52d8e)
 - code failures: 0 / cap 3
 
+## I124 — A blind verifier can write to the real ledger: the I57 verifier (deepseek, 2026-10-29) ran its first probe batch in the repo by mistake, appended file events seq 899-905, created .backlog/loop.json and loop.lock, then truncated the ledger back to 898 and edited run.log by hand. bl check passed afterwards, so nothing in bl detected either the write or the hand repair. Guard inside bl (no hooks): record the ledger length and tail hash when bl packet --role verifier is issued, and have bl round refuse when the ledger or .backlog/ changed between packet and round other than by bl's own verifier-window events; also the verifier packet should tell probes to cd into the mktemp dir before bl init.
+
+Verdict: PASS — closed at 62680fa4c7599238f0d0486e93430596eba4c226
+
+- r1 FAIL cause=harness — no rows
+- r2 PASS — .backlog/evidence/I124-r2.txt (b84575f765ee)
+- code failures: 0 / cap 3
+- note: r-next harness round stands in for a dispute: every row of run1 passed and the deepseek verifier returned PASS, but R10 refuses any rows round because the frozen list covers no hunk in ledger.go, main_test.go, packet_test.go, window_test.go; R5 refuses rebaseline after claims and R36 needs a FAIL round, so a harness FAIL is the only recordable path to the bad-check restart (filed as a bl gap)
+
 ## I126 — bl loop has no token budget and the brain role allows 4 h: the human wants each item capped by tokens (2026-10-29) and the timeout at 1 h. The claude CLI has no max-tokens flag (only --max-budget-usd), but claude -p --output-format stream-json --verbose prints one assistant event per request carrying usage (input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens), so the loop can sum usage from the dispatch job log while it polls and cancel the job past the budget.
 
 Verdict: PASS — closed at 47e0f78b032827f30fedec34d907af14ffbee0a7
