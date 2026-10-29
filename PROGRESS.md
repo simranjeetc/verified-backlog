@@ -685,6 +685,18 @@ Verdict: PASS — closed at 1e554cfd654943b0dccd13c76e1a51adfcd8a3af
 - r2 PASS — .backlog/evidence/I113-r2.txt (915a3d94873d)
 - code failures: 1 / cap 3
 
+## I114 — intake hardening, from I87's verifier: bl schema intake marks every item field required (incl. source) while --check requires only t/id/title; a wrong JSON type (after as a string) is reported as invalid JSON and cascades into spurious errors instead of naming the field; a non-JSON line prints an empty field slot (path:3: : ...); an item's source id is not checked; --render does not escape titles, so a newline plus ## forges a heading in what the human approves; the Intake section sits above the design doc's front matter (references/design-check-list-schema.md:5) instead of in a numbered section
+
+Verdict: PASS — closed at a759ac99d0fc6f07d7090fe5f5d6b1d259285626
+
+- r1 FAIL cause=dispute — .backlog/evidence/I114-r1.txt (3131b466ce73)
+- r2 FAIL cause=dispute — .backlog/evidence/I114-r2.txt (86f720abbdfa)
+- r3 FAIL cause=dispute — .backlog/evidence/I114-r3.txt (70d4cd5ce309)
+- r4 FAIL cause=dispute — .backlog/evidence/I114-r4.txt (cb57f5993227)
+- r5 FAIL cause=dispute — .backlog/evidence/I114-r5.txt (7251659d5601)
+- r6 PASS — .backlog/evidence/I114-r6.txt (d0816d74995b)
+- code failures: 0 / cap 3
+
 ## I115 — a verifier's report-only findings are dispositioned by the orchestrator at will and leave no record (I87, 2026-10-28: a render heading forgery and a schema/validator mismatch that broke I87's purpose were filed as I114 instead of fixed in I87). Two guards inside bl: (A) bl round --report <verify-report> reads every report-only bullet, and a PASS round is refused until each bullet carries a disposition fix | filed <id> | waived <reason>; any fix makes the round a FAIL like an R13 finding; dispositions are recorded in the round event. (B) every brief opens with a purpose clause B0 (one line plus a worked example), bl brief refuses a brief without it, and the verifier judges defects against B0 so a purpose-breaking defect is a failure, not report-only. Human decision 2026-10-28: options A+B, queued right after I113
 
 Verdict: PASS — closed at a645a714095991c148f2ec13c1894b13ca0844be
