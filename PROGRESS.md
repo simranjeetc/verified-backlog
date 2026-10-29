@@ -30,11 +30,11 @@ Verdict: PASS — closed at 9e8f95a942dff47bd8a238456ab3327d64c1113e
 
 ## I3 — bl round: the derived verdict AND of blocking rows, the refusals, the verdicts file, the tree pin, the evidence file (R6, R9, R10, R12, R13, R14, R16, R18, R20, R23, R25, R28)
 
-Verdict: PASS — closed at 42c756374f3abdc7d94a3a13a325cf4664ad5c52
+Status: open
 
 - r1 FAIL cause=code — .backlog/evidence/I3-r1.txt (030605d3648f)
 - r2 PASS — .backlog/evidence/I3-r2.txt (e1bd850ed608)
-- code failures: 1 / cap 3
+- code failures: 0 / cap 3
 - note: the list was written from the design alone, by a verifier that had not seen the code: 17 rows, 9 clauses. The design's verdicts file arrives through the existing --rows flag, so the interface does not move; the new verb in R16 (bl second-check) is the only new word on the command line. The check list is long because the item names twelve rules; expect more than one round.
 - note: round 1: the implementation is in and the list's premise was broken. git 2.54's 'git add' has no -q, so every row that staged its changes died before it could assert anything. The producer said so plainly and ran the rows with a shim that dropped only the -q, rather than claiming them green. Two findings filed: R7's 'the binary computes a decider: bl row's row-verdict' is not implemented, so R12's derivation rests on the judge's word for those rows (I18); and the verified tree includes the loop's own rendered views, which move with every ledger event, so R6's tree pin refuses a round after R14's own filing step (I19). The producer also disclosed that R28's before-state is not recorded with the run, and that the harness rule keeps item I11's stricter reading.
 - note: round 1 failed on code, and the round could not be recorded until the list was fixed twice over. The verdict file is no longer a free-text file: it is the design's verdicts file, with a header, a run line, a tree line and one line per frozen id - so a round can only be recorded against a run, with the tree it verified. And R10 means the check list must cover the diff: a row covers a hunk only if its command names the file, so a list whose rows never name a source file cannot be recorded at all. Both were found the hard way, and both are filed: the format must say a row must name the file it covers (I20), and the tree's treatment of the loop's own rendered views is still open (I19).
