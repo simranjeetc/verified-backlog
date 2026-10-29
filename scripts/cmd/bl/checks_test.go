@@ -305,6 +305,29 @@ func TestChecksAmendWithoutListRefused(t *testing.T) {
 	checksRefused(t, openItem(t), goodList, "R4", "--amend")
 }
 
+func TestChecksAmendRefusesOpenVerifierWindowBeforeReadingList(t *testing.T) {
+	dir := roundItem(t, roundList)
+	_ = runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := wantRefusal(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", filepath.Join(t.TempDir(), "does-not-exist.tsv")))
+	if r.rule != "R39" || !strings.Contains(r.msg, "packet seq") || !strings.Contains(r.msg, "record the round first") || !strings.Contains(r.msg, "amend checks") {
+		t.Fatalf("amend refusal = %+v", r)
+	}
+	after, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("refused amendment wrote an event: %d -> %d", len(before), len(after))
+	}
+}
+
 func TestR5Ordering(t *testing.T) {
 	dir := openItem(t)
 	claims := writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")
@@ -360,5 +383,47 @@ func TestDeriveRejectsClaimsBeforeChecks(t *testing.T) {
 	}
 	if _, _, err := derive(events); err == nil {
 		t.Fatal("expected corruption for claims with no check list")
+	}
+}
+
+func TestChecksAmendAllowsRecoveryFromVoidVerifierWindow(t *testing.T) {
+	for _, invalidate := range []string{"run", "backlog"} {
+		t.Run(invalidate, func(t *testing.T) {
+			dir := roundItem(t, roundList)
+			_ = runAndVerdicts(t, dir, roundPass...)
+			if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+				t.Fatal(err)
+			}
+			if invalidate == "run" {
+				if err := call(t, cmdRun, dir, "A1"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeFile(t, filepath.Join(dir, backlogDir), "changed.txt", "invalidates the window")
+			}
+			next := roundList + "X1\tbl\tblocking\tB1\ttrue\texit 0\t\t\tadditional check\n"
+			path := writeFile(t, t.TempDir(), "amended.tsv", next)
+			if err := call(t, cmdChecks, dir, "A1", "--amend", "--file", path); err != nil {
+				t.Fatalf("void window blocked recovery: %v", err)
+			}
+			// An amendment does not make the old verifier's evidence usable again.
+			wantRule(t, call(t, cmdRound, dir, "A1", "--cause", "harness", "--verdict", "FAIL"), "R39")
+		})
+	}
+}
+
+func TestChecksAmendAfterRecordedRound(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatal(err)
+	}
+	next := writeFile(t, t.TempDir(), "amended.tsv", roundList)
+	err := call(t, cmdChecks, dir, "A1", "--amend", "--file", next)
+	if r, ok := err.(Refusal); ok && r.rule == "R39" {
+		t.Fatalf("recorded round still has an open window: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -49,6 +50,13 @@ func cmdFile(root string, a args) error {
 	if err != nil {
 		return err
 	}
+	var openPackets []string
+	for _, item := range byID {
+		if seq := openVerifierPacket(events, item); seq != 0 {
+			openPackets = append(openPackets, fmt.Sprintf("%s packet seq %d", item.ID, seq))
+		}
+	}
+	sort.Strings(openPackets)
 	id, err := checkID(a.get("id"))
 	if err != nil {
 		return err
@@ -87,6 +95,9 @@ func cmdFile(root string, a args) error {
 	}
 	if _, err := appendEvent(root, ev); err != nil {
 		return err
+	}
+	if len(openPackets) > 0 {
+		fmt.Fprintf(os.Stderr, "bl: warning: file event does not void the verifier window for %s\n", strings.Join(openPackets, ", "))
 	}
 	if ev.After != "" {
 		fmt.Printf("bl: filed %s (after %s)\n", id, ev.After)

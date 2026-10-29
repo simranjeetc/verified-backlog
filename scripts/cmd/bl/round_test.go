@@ -142,6 +142,23 @@ func TestR38RejectsMissingMalformedAndExtraDispositions(t *testing.T) {
 	}
 }
 
+func TestR38DispositionHelpUsesTheAffectedNoteNumber(t *testing.T) {
+	err := withDispositionHelp(refuseRule("R38", "report note RO2 has no disposition"))
+	message := err.(Refusal).msg
+	for _, line := range []string{
+		"# report RO2: fix",
+		"# report RO2: filed <ID>",
+		"# report RO2: waived <reason>",
+	} {
+		if !strings.Contains(message, line) {
+			t.Errorf("disposition help missing %q: %s", line, message)
+		}
+	}
+	if strings.Contains(message, "# report RO<n>") {
+		t.Errorf("disposition help retained the placeholder note: %s", message)
+	}
+}
+
 // R6: the verdicts file must match the frozen list, the latest run and the current verified
 // tree. Each of these is a refusal, and nothing is written.
 func TestR6TheVerdictsFileMustMatchTheListTheRunAndTheTree(t *testing.T) {
@@ -1080,5 +1097,40 @@ func TestR38AWaivedReasonEndingInFixIsNotAFix(t *testing.T) {
 	}
 	if !hasFixDisposition([]string{"1 waived cosmetic", "2 fix"}) {
 		t.Fatal("a fix disposition must count")
+	}
+}
+
+func TestR38MalformedDispositionHelpPreservesNoteNumber(t *testing.T) {
+	err := withDispositionHelp(refuseRule("R38", "disposition line \"# report ro2: fix\" is malformed"))
+	if !strings.Contains(err.Error(), "# report RO2: fix") || !strings.Contains(err.Error(), "existing open item") {
+		t.Fatal(err)
+	}
+}
+
+func TestR6VerdictsHelpCanBeUsedWithoutGuessing(t *testing.T) {
+	dir := roundItem(t, roundList)
+	_ = runAndVerdicts(t, dir, roundPass...)
+	bad := writeFile(t, t.TempDir(), "bad.tsv", "bad header")
+	err := call(t, cmdRound, dir, "A1", "--rows", bad)
+	r := wantRefusal(t, err)
+	if r.rule != "R6" {
+		t.Fatal(err)
+	}
+	_, example, ok := strings.Cut(r.msg, "expected verdicts file:\n")
+	if !ok {
+		t.Fatal(err)
+	}
+	events, _ := readLedger(dir)
+	_, items, _ := derive(events)
+	frozen, e := frozenRows(dir, items["a1"])
+	if e != nil {
+		t.Fatal(e)
+	}
+	vf, e := parseVerdicts(example, frozen)
+	if e != nil {
+		t.Fatalf("suggested format is invalid: %v\n%s", e, example)
+	}
+	if vf.run != "run1" || !treeHashRe.MatchString(vf.tree) {
+		t.Fatalf("missing run metadata: %s", example)
 	}
 }

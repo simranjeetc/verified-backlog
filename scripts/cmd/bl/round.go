@@ -162,7 +162,7 @@ func cmdRound(root string, a args) error {
 	if cause == "harness" {
 		// R38: a harness round reads no report, so a report given to one would go unread.
 		if a.get("report") != "" {
-			return refuseRule("R38", "a harness round reads no report — drop --report or record a code round")
+			return withDispositionHelp(refuseRule("R38", "a harness round reads no report — drop --report or record a code round"))
 		}
 		if verdict != "FAIL" {
 			return refuseRule("R23", "a harness round is a failure — it needs --verdict FAIL")
@@ -177,31 +177,31 @@ func cmdRound(root string, a args) error {
 			return e
 		}
 		if briefClauses(string(brief))["B0"] && a.get("report") == "" {
-			return refuseRule("R38", "a brief with B0 requires --report <path>")
+			return withDispositionHelp(refuseRule("R38", "a brief with B0 requires --report <path>"))
 		}
 	}
 	if a.get("report") != "" {
 		raw, e := os.ReadFile(a.get("report"))
 		if e != nil {
-			return refuseRule("R38", "cannot read --report: %v", e)
+			return withDispositionHelp(refuseRule("R38", "cannot read --report: %v", e))
 		}
 		reportSHA = shaHex(raw)
 		notes, e := reportOnlyTags(string(raw))
 		if e != nil {
-			return e
+			return withDispositionHelp(e)
 		}
 		dispositions, e = parseReportDispositions(a.get("rows"), notes, byID)
 		if e != nil {
-			return e
+			return withDispositionHelp(e)
 		}
 		if hasFixDisposition(dispositions) && verdict == "PASS" {
-			return refuseRule("R38", "a fix disposition requires FAIL; explicit --verdict PASS is refused")
+			return withDispositionHelp(refuseRule("R38", "a fix disposition requires FAIL; explicit --verdict PASS is refused"))
 		}
 	}
 	// R6: the verdicts file. It must match the frozen list, name the item's latest run, and
 	// name the tree the round verifies.
 	if a.get("rows") == "" {
-		return refuseRule("R6", "a round needs the verdicts file: --rows <file>")
+		return withVerdictsHelp(refuseRule("R6", "a round needs the verdicts file: --rows <file>"), root, it)
 	}
 	text, err := a.rows()
 	if err != nil {
@@ -213,7 +213,7 @@ func cmdRound(root string, a args) error {
 	}
 	vf, err := parseVerdicts(text, frozen)
 	if err != nil {
-		return err
+		return withVerdictsHelp(err, root, it)
 	}
 	runEv, ok := theRun(it)
 	if !ok {
@@ -405,6 +405,50 @@ func cmdRound(root string, a args) error {
 		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, derived)
 	}
 	return nil
+}
+
+func withVerdictsHelp(err error, root string, it *Item) error {
+	r, ok := err.(Refusal)
+	if !ok || r.rule != "R6" {
+		return err
+	}
+	run, tree := "<run-id>", "<40-hex>"
+	if ev, ok := theRun(it); ok {
+		run = ev.Run
+		if rel, found := runFileRel(it.ID, ev.Run); found {
+			if data, readErr := verifyArtefact(root, rel, ev.RunSHA, "run"); readErr == nil {
+				var rf runFile
+				if json.Unmarshal(data, &rf) == nil && treeHashRe.MatchString(rf.TreeStart) {
+					tree = rf.TreeStart
+				}
+			}
+		}
+	}
+	frozen, _ := frozenRows(root, it)
+	var example strings.Builder
+	example.WriteString("expected verdicts file:\nid\trow_verdict\tanchor\nrun " + run + "\ntree " + tree)
+	for _, row := range frozen {
+		anchor := `"quoted anchor"`
+		if row.f["decider"] == "bl" {
+			anchor = ""
+		}
+		example.WriteString("\n" + row.f["id"] + "\tPASS\t" + anchor)
+	}
+	r.msg += "\n" + example.String()
+	return r
+}
+
+func withDispositionHelp(err error) error {
+	r, ok := err.(Refusal)
+	if !ok || r.rule != "R38" {
+		return err
+	}
+	note := "1"
+	if match := regexp.MustCompile(`(?i)\bro[\s-]*([1-9][0-9]*)`).FindStringSubmatch(r.msg); len(match) == 2 {
+		note = match[1]
+	}
+	r.msg += fmt.Sprintf("\naccepted disposition lines:\n# report RO%s: fix\n# report RO%s: filed <ID>\n# report RO%s: waived <reason>\n<ID> must name an existing open item", note, note, note)
+	return r
 }
 
 func hasFixDisposition(ds []string) bool {

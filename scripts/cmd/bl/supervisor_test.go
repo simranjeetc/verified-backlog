@@ -18,7 +18,7 @@ func TestSupervisorPacketReadOnlyAndRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"current intent", "attempt: 1; stage: unopened", "--root", root, "/selected/brain.conf", "scripts/dispatch.sh", "CHAIN", "bl open S1", "unknown (not recorded in ledger)", "playbooks/item-loop/index.md", "Prefix EVERY Bash/tool shell call", "same call", "Use this packet for startup", "Consult only the relevant section", "without a specific missing fact", "bl show S1 --json on resume, external changes or a CLI refusal", "never dump the ledger or full history"} {
+		for _, want := range []string{"current intent", "attempt: 1; stage: unopened", "--root", root, "/selected/brain.conf", "scripts/dispatch.sh", "CHAIN", "bl open S1", "unknown (not recorded in ledger)", "playbooks/item-loop/index.md", "Prefix EVERY Bash/tool shell call", "same call", "Use this packet for startup", "Consult only the relevant section", "without a specific missing fact", "bl show S1 --json on resume, external changes or a CLI refusal", "never dump the ledger or full history", "record the round before any other ledger write", "filing a follow-up", "already void window permits checks --amend"} {
 			if !strings.Contains(packet, want) {
 				t.Errorf("packet missing %q", want)
 			}

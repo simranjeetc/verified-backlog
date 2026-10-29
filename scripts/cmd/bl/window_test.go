@@ -84,9 +84,32 @@ func TestPacketWindowNamesUnexpectedEvent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, ledgerName), []byte("prefix\nnext\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = verifyPacketWindow(dir, []Event{{Seq: 1, T: "file", ID: "A1"}, packet, {Seq: 3, T: "file", ID: "Z9"}}, &Item{ID: "A1"})
-	if err == nil || !strings.Contains(err.Error(), "seq 3 type file") {
+	err = verifyPacketWindow(dir, []Event{{Seq: 1, T: "file", ID: "A1"}, packet, {Seq: 3, T: "run", ID: "Z9"}}, &Item{ID: "A1"})
+	if err == nil || !strings.Contains(err.Error(), "seq 3 type run") || !strings.Contains(err.Error(), "record the round before any other ledger write") || !strings.Contains(err.Error(), "fresh verifier packet") {
 		t.Fatalf("window error = %v, want seq and type", err)
+	}
+}
+
+func TestPacketWindowAllowsFileEvents(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, backlogDir)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ledger := []byte("prefix\n")
+	if err := os.WriteFile(filepath.Join(base, ledgerName), ledger, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := backlogDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := Event{T: "packet", ID: "A1", Seq: 2, LedgerLen: intRef(len(ledger)), LedgerSHA: shaHex(ledger), RunlogSHA: shaHex(nil), BacklogSHA: digest}
+	if err := os.WriteFile(filepath.Join(base, ledgerName), []byte("prefix\nfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPacketWindow(dir, []Event{{Seq: 1, T: "file", ID: "A1"}, packet, {Seq: 3, T: "file", ID: "B9"}}, &Item{ID: "A1"}); err != nil {
+		t.Fatalf("file event voided verifier window: %v", err)
 	}
 }
 
@@ -132,6 +155,27 @@ func TestRoundAllowsWindowNotesAndReadOnlyCommands(t *testing.T) {
 	}
 	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
 		t.Fatalf("legitimate packet window refused: %v", err)
+	}
+}
+
+func TestFileInsideVerifierWindowWarnsAndAllowsFiledDisposition(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	warning := captureStderr(t, func() {
+		if err := call(t, cmdFile, dir, "--id", "B9", "--text", "follow-up"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(warning, "A1") || !strings.Contains(warning, "packet seq") || !strings.Contains(warning, "does not void the verifier window") {
+		t.Fatalf("file warning = %q", warning)
+	}
+	rows = appendComment(t, rows, "# report RO1: filed B9")
+	report := writeFile(t, t.TempDir(), "report.md", "Report-only: 1\n[RO1] filed a follow-up\n")
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows, "--report", report); err != nil {
+		t.Fatalf("file event voided window or disposition was rejected: %v", err)
 	}
 }
 

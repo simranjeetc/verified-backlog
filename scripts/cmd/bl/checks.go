@@ -25,6 +25,17 @@ func cmdChecks(root string, a args) error {
 	if err := requireInFlight(order, it, ""); err != nil {
 		return err
 	}
+	if a.flag("amend") {
+		if packet := openVerifierPacket(events, it); packet != 0 {
+			// Preserve a usable verifier's evidence, but do not trap recovery when
+			// the window is already void and no round can be recorded against it.
+			if err := verifyPacketWindow(root, events, it); err == nil {
+				return refuseRule("R39", "%s has an open verifier window (packet seq %d); record the round first, then amend checks", it.ID, packet)
+			} else if r, ok := err.(Refusal); !ok || r.rule != "R39" {
+				return err
+			}
+		}
+	}
 	// The state guards come FIRST, before the list is read: the claims freeze the list (R5) and
 	// the list is written once (R4). A frozen item is therefore refused without waiting on
 	// stdin, and a list that was never allowed to be written is not read at all.

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -120,11 +121,11 @@ func verifyPacketWindow(root string, events []Event, it *Item) error {
 		return err
 	}
 	if len(ledger) < derefInt(baseline.LedgerLen) || shaHex(ledger[:minInt(len(ledger), derefInt(baseline.LedgerLen))]) != baseline.LedgerSHA {
-		return refuseRule("R39", "ledger prefix changed or is shorter than verifier packet seq %d", baseline.Seq)
+		return verifierWindowRefusal(it, "ledger prefix changed or is shorter than verifier packet seq %d", baseline.Seq)
 	}
 	for _, ev := range events {
-		if ev.Seq > baseline.Seq && ev.T != "packet" && ev.T != "note" && ev.T != "second-check" {
-			return refuseRule("R39", "ledger event seq %d type %s is outside the verifier window", ev.Seq, ev.T)
+		if ev.Seq > baseline.Seq && ev.T != "packet" && ev.T != "note" && ev.T != "second-check" && ev.T != "file" {
+			return verifierWindowRefusal(it, "ledger event seq %d type %s is outside the verifier window", ev.Seq, ev.T)
 		}
 	}
 	runlog, err := os.ReadFile(p.runlog)
@@ -135,16 +136,36 @@ func verifyPacketWindow(root string, events []Event, it *Item) error {
 		runlog = nil
 	}
 	if len(runlog) < derefInt(baseline.RunlogLen) || shaHex(runlog[:minInt(len(runlog), derefInt(baseline.RunlogLen))]) != baseline.RunlogSHA {
-		return refuseRule("R39", "run.log prefix changed or is shorter than verifier packet seq %d", baseline.Seq)
+		return verifierWindowRefusal(it, "run.log prefix changed or is shorter than verifier packet seq %d", baseline.Seq)
 	}
 	digest, err := backlogDigest(root)
 	if err != nil {
 		return err
 	}
 	if digest != baseline.BacklogSHA {
-		return refuseRule("R39", ".backlog/ changed since verifier packet seq %d", baseline.Seq)
+		return verifierWindowRefusal(it, ".backlog/ changed since verifier packet seq %d", baseline.Seq)
 	}
 	return nil
+}
+
+func verifierWindowRefusal(it *Item, format string, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	return refuseRule("R39", "%s; record the round before any other ledger write. bl checks --amend, bl run and bl file come after it. This verifier window is void: issue a fresh verifier packet with bl packet %s --role verifier; a new verifier dispatch is needed", message, it.ID)
+}
+
+func openVerifierPacket(events []Event, it *Item) int {
+	var packet int
+	for _, ev := range events {
+		if strings.EqualFold(ev.ID, it.ID) && ev.Seq > it.restartSeq {
+			switch ev.T {
+			case "packet":
+				packet = ev.Seq
+			case "round":
+				packet = 0
+			}
+		}
+	}
+	return packet
 }
 
 func minInt(a, b int) int {

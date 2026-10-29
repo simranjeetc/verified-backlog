@@ -116,6 +116,13 @@ records as the record of why the attempt exists.
 
 ### Record the round — you set the cause, not the verifier
 
+After the verifier reports, record the round before any other ledger write. Amend checks, run and file
+after it by default. If an R39 refusal says the verifier window is void, correct the invalidating state first,
+then issue a fresh verifier packet
+and dispatch a new verifier. Exception: filing a follow-up for a filed disposition is allowed inside the window and does not void it.
+An amendment is blocked while a usable verifier window is open. An already void window does not
+block amendment, but the amended checks need a new run, packet and independent verifier.
+
 ```sh
 "$BL" round A1 --verdict PASS --rows <evidence dir>/A1-verify-r1.md
 "$BL" round A1 --verdict FAIL --cause code --rows -      # table on stdin
