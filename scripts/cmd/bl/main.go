@@ -154,6 +154,7 @@ var handlers = map[string]func(string, args) error{
 	"defer":        cmdDefer,
 	"reopen":       cmdReopen,
 	"restart":      cmdRestart,
+	"loop":         cmdLoop,
 	"note":         cmdNote,
 	"signoff":      cmdSignoff,
 	"bump":         cmdBump,
@@ -177,12 +178,13 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
   drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | packet | status | check
-  render | schema | intake | audit | import | lint
+  render | schema | intake | audit | import | lint | loop
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`
 
 func run(argv []string) int {
+	defer releaseLoopLock()
 	started := time.Now()
 	root, _ := os.Getwd()
 	rest := argv
@@ -236,7 +238,11 @@ func report(err error) int {
 	}
 	var refusal Refusal
 	var corruption Corruption
+	var loopExit loopExitError
 	switch {
+	case errors.As(err, &loopExit):
+		fmt.Fprintf(os.Stderr, "bl loop: %s\n", loopExit.msg)
+		return loopExit.code
 	case errors.As(err, &refusal):
 		if refusal.rule == "intake" {
 			fmt.Fprintln(os.Stderr, refusal.msg)

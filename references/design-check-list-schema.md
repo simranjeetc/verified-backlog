@@ -278,6 +278,20 @@ being named. The triage pass that produces a ranking is out of scope.
 
 ## 3. Rules
 
+### Unattended item loop
+
+`bl loop` selects with `bl next`, starts a new `brain` dispatch per item, and advances only after
+`bl check` passes, the item is closed, parked or declined, there is no in-flight item, and dispatch
+lists no running job. `--max-items N` bounds launches (default 3); `--poll-ms N` defaults to 5000;
+`--timeout SECONDS` defaults to 14400; `--dispatch-config FILE` defaults to
+`scripts/bl-loop.dispatch.conf`. `.backlog/loop.lock` is an exclusive process-lifetime lock.
+`.backlog/loop.json` atomically associates the current item, launch token, consumed launch count
+and job id; a no-job association requires attended reconciliation.
+
+Exit codes: 0 means complete or the launch budget was reached; 2 means lock contention or invalid
+arguments; 3 means open or blocked items remain but none is workable; 4 means `bl check` failed;
+5 means a job, timeout, completion gate or association reconciliation stopped the loop.
+
 Each rule is decidable: given the artifacts, the rule has one outcome. "R_n" is the unit an implementation is judged
 against.
 
