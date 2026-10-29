@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (25)
+## Queue (26)
 
 - [ ] I3 — bl round: the derived verdict AND of blocking rows, the refusals, the verdicts file, the tree pin, the evidence file (R6, R9, R10, R12, R13, R14, R16, R18, R20, R23, R25, R28)
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
@@ -29,6 +29,7 @@
 - [ ] I125 — bl run spends about 54 s outside its rows (I73 runs: about 148 s wall against a slowest row of about 94 s) and the run file records no phase timing, so the overhead cannot be attributed. Add per-phase ms (snapshot, build bl under test, row pool, post-run R26/R27 checks, write) to the run file and remove what dominates.
 - [ ] I131 — Ship bl for Linux: scripts/release.sh (local, no CI) cross-compiles static bl for linux and darwin, amd64 and arm64, with sha256 sums, and publishes a GitHub Release on simranjeetc/verified-backlog via gh only when run by the user; install.sh picks the asset for uname -s/-m, verifies the sha256, installs to ${BL_INSTALL_DIR:-~/.local/bin} and prints the version; bl gains --version stamped at build; SKILL.md documents the one-line install for a Claude Code Linux env. dispatch is out of scope (D1).
 - [ ] I132 — bl loop (I130 RO1): a stray non-repository .git entry (e.g. an empty .git dir in a parent of a non-repo bl root) makes the writer scan exit 5 'cannot inspect git' forever; treat a readable .git entry whose rev-parse says 'not a git repository' as no repository, keep exit 5 for an unreadable entry or any other git error, and add a Go test for the subdir, symlinked and unreadable-.git roots (I130 RO2)
+- [ ] I133 — bl loop --release: when a brain job ends failed, lost or cancelled, bl loop exits 5 and keeps .backlog/loop.json, and no bl command clears it, so recovery needs a hand rm under .backlog/ (done once on 2026-10-29). Add bl loop --release, which removes the association only when its job has ended (or it has no job) and the loop lock is free, and prints the item it released.  _(loop2)_
 
 ## Blocked (1)
 
