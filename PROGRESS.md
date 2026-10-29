@@ -373,7 +373,7 @@ Source: supervisor:ideology-audit
 
 ## I57 — the orchestrating session runs the whole backlog in one conversation, so its context grows with every item until the human compacts it by hand; the loop's state already lives in the repository (the ledger, .backlog/HANDOFF.md, git), so no session needs to outlive one item. Ship the smallest workable outer loop: a utility with no conversation context of its own that asks bl next for an item, starts a fresh harness session to work that one item through playbooks/item-loop.md, and starts the next fresh session when that one exits - stopping when bl next names no item, and refusing to start another session when the previous one left its item in flight without a recorded round. Later refinements are filed as their own items
 
-Status: open
+Decision: parked — paused before checks freeze so I122 (dispatch binary switch, human-ordered 2026-10-29) lands first; checks, tests and the producer's worktree diff are kept in the supervisor's scratch (not verified)
 Source: human
 
 - note: candidate fix (unverified, from the 2026-10-26 research - Anthropic's long-running harness, the Ralph loop, gnhf): a POSIX sh script, scripts/bl-loop, of the shape: while id=$(bl next) and id is non-empty; do <harness> -p "work $id per playbooks/item-loop.md; read bl show $id and .backlog/HANDOFF.md first; write HANDOFF.md and exit after bl close"; check bl status shows nothing in flight or stop; done. The harness command is one variable (claude -p, opencode run), so the loop is harness-agnostic. Out of scope for the first cut, to file later: per-item token budget (gnhf --max-tokens), worktree isolation (I46 partitioning), graceful Ctrl+C, resuming mid-item (cheaper after I55). Do not reuse gnhf as the loop: per its README it commits on the agent's success and runs git reset --hard on a no-op iteration, which clashes with R18's verified-tree close and would see a FAIL round (writes only .backlog/) as a no-op
@@ -738,5 +738,13 @@ Verdict: PASS — closed at d47f3fc6d27f33b2b3e541e19ea3a6fe089f5487
 Source: human
 
 - r1 PASS — .backlog/evidence/I120-r1.txt (bd10c561a642)
+- code failures: 0 / cap 3
+
+## I122 — scripts/dispatch.sh still runs its own chains while the installed dispatch binary (~/.agents/bin/dispatch, be6e510, D7b/D8a blind-verified) is ready; the human approved switching (2026-10-29, relayed by the dispatch session): scripts/dispatch.sh becomes a thin wrapper exec'ing `dispatch run role prompt out secs`, mapping CHAIN="m1 m2" to --chain adapter:m1,adapter:m2 (gpt-6-luna=codex, claude:haiku=claude, deepseek-v4.1-flash=opencode), copying the job log to $out.log if read; prints MODEL adapter:model; every dispatch prompt names the out path on line 1 and says to write the report there, because dispatch treats stdout-only as no-output (I106 regression) and never fills out from stdout (I107 changes meaning)
+
+Verdict: PASS — closed at f9d04328338443bfc9cff2d9a080bf516c512c61
+Source: human
+
+- r1 PASS — .backlog/evidence/I122-r1.txt (3ad878a52d8e)
 - code failures: 0 / cap 3
 
