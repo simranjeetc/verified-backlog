@@ -1,9 +1,5 @@
 # Design — the check list schema, and who decides a row
 
-## Intake
-
-An intake JSONL file contains `source` records (`t`, `id`, `path`, `lines`, `sha`), `decision` records (`t`, `id`, `text`, `by`), `item` records (`t`, `id`, `title`, `after`, `scope`, `source`, `decisions`), and `clause` records (`t`, `item`, `id`, `observe`, `expect`, `example`). `bl schema intake` prints their JSON Schemas. Validation errors use `<path>:<line>: <field>: <reason>`. `bl intake --check` and `bl intake --render` write nothing; filing is I111.
-
 **Status:** proposal, and **not yet verified**. Nothing here is implemented; `bl` does not yet have `checks`, `claims`,
 `run`, or a derived verdict. Seven verification rounds are recorded in §8; the last one still found blocking defects,
 which are fixed in this revision but have not been through an eighth round. One finding from round 7 is
@@ -1324,3 +1320,9 @@ case under the scope, and nothing closes the rest. Both are in §7 with the opti
 round of wording.
 
 **R38 — report-only findings need one recorded disposition each.** `bl round <id> --rows <verdicts> --report <report>` reads the report as plain lines, with no Markdown parsing. After trimming trailing carriage returns, spaces and tabs, it requires exactly one line of the form `Report-only: N` where N is a decimal with no leading zero (and may be 0). Every `[RO<n>]` tag anywhere in the report names a note; the tag set must be exactly `[RO1]` through `[RON]`. Repeated tags are allowed. A missing or duplicate count line, a missing or extra tag, or a malformed tag spelling is refused under R38 before writing a round. The verdicts file carries exactly one line per note, exactly `# report RO<n>: fix`, `# report RO<n>: filed <ID>`, or `# report RO<n>: waived <reason>` with a non-empty reason. Any other line starting with `# report` (case-insensitive) is refused. A missing, duplicate or extra disposition, or a filed ID absent from the ledger, closed or dropped, refuses under R38 with exit 2 before writing a round. A `fix` derives FAIL, cause `code` (cause `dispute` when the round also carries a `# finding:` line, R13); an explicit PASS is refused. When the current brief has B0, `--report` is required except on a harness round, and a harness round refuses `--report` because it reads none. The event records the report's sha256 and dispositions in note order. `bl brief` also refuses under R2 when a submitted brief lacks B0; `bl open` may still write filed text without B0.
+
+## 9. Intake
+
+An intake JSONL file contains `source` records (`t`, `id`, `path`, `lines`, `sha`), `decision` records (`t`, `id`, `text`, `by`), `item` records (`t`, `id`, `title` required; `after`, `scope`, `source`, `decisions` optional), and `clause` records (`t`, `item`, `id`, `observe`, `expect`, `example`). `bl schema intake` prints their JSON Schemas. `bl intake --check` and `bl intake --render` use the same contract. A field a record type does not list is refused as `unknown field for a <type> record`. A wrong field type, including `null` or a `null` array element, is reported once as `must be a string` or `must be an array of strings`; a non-object line is `json: not a JSON object`. Every string, including array elements, must be one line. Every id, item, after and decisions value must match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. A non-empty item source must name a source record. A reference is not checked while a record it could name is itself bad, so one mistake is reported once, at its own field. Errors use `<path>:<line>: <field>: <reason>`.
+
+`--render` escapes `&`, `<` and `>` in every printed value; U+0085, U+2028 and U+2029 count as line breaks.

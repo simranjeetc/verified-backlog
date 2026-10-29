@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ type intakeRecord struct {
 	Expect    string   `json:"expect"`
 	Example   string   `json:"example"`
 	line      int
+	keys      []string
+	invalid   map[string]bool
 }
 
 type intakeError struct {
@@ -36,11 +39,25 @@ type intakeError struct {
 	field, reason string
 }
 
+var intakeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+// intakeLineBreaks are the characters a viewer may render as a line break.
+const intakeLineBreaks = "\r\n\u0085\u2028\u2029"
+
+var intakeSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+// intakeFields lists every field each record type may carry.
+var intakeFields = map[string][]string{"source": {"t", "id", "path", "lines", "sha"}, "decision": {"t", "id", "text", "by"}, "item": {"t", "id", "title", "after", "scope", "source", "decisions"}, "clause": {"t", "item", "id", "observe", "expect", "example"}}
+
 func intakeSchema() map[string]any {
-	fields := map[string][]string{"source": {"t", "id", "path", "lines", "sha"}, "decision": {"t", "id", "text", "by"}, "item": {"t", "id", "title", "after", "scope", "source", "decisions"}, "clause": {"t", "item", "id", "observe", "expect", "example"}}
+	fields := intakeFields
 	arrays := map[string]bool{"after": true, "scope": true, "decisions": true}
 	result := map[string]any{}
 	for kind, names := range fields {
+		required := names
+		if kind == "item" {
+			required = []string{"t", "id", "title"}
+		}
 		props := map[string]any{}
 		for _, name := range names {
 			typ := "string"
@@ -53,7 +70,7 @@ func intakeSchema() map[string]any {
 			}
 			props[name] = p
 		}
-		result[kind] = map[string]any{"type": "object", "required": names, "properties": props}
+		result[kind] = map[string]any{"type": "object", "required": required, "properties": props, "additionalProperties": false}
 	}
 	return result
 }
@@ -110,38 +127,125 @@ func parseIntake(path, data string) ([]intakeRecord, []intakeError) {
 	var errs []intakeError
 	s := bufio.NewScanner(strings.NewReader(data))
 	s.Buffer(make([]byte, 4096), 4*1024*1024)
-	for line := 1; s.Scan(); line++ {
+	line := 1
+	for ; s.Scan(); line++ {
 		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(s.Bytes(), &raw); err != nil {
-			errs = append(errs, intakeError{line, "", "invalid JSON"})
+		if err := json.Unmarshal(s.Bytes(), &raw); err != nil || raw == nil {
+			// The bad line still counts as a record, so validation knows the file is not clean.
+			records = append(records, intakeRecord{line: line, invalid: map[string]bool{"json": true}})
+			errs = append(errs, intakeError{line, "json", "not a JSON object"})
 			continue
 		}
-		var r intakeRecord
-		if err := json.Unmarshal(s.Bytes(), &r); err != nil {
-			errs = append(errs, intakeError{line, "", "invalid JSON"})
-			continue
+		r := intakeRecord{invalid: map[string]bool{}}
+		for key := range raw {
+			r.keys = append(r.keys, key)
+		}
+		for key, dest := range map[string]any{"t": &r.T, "id": &r.ID, "path": &r.Path, "lines": &r.Lines, "sha": &r.SHA, "text": &r.Text, "by": &r.By, "title": &r.Title, "after": &r.After, "scope": &r.Scope, "source": &r.Source, "decisions": &r.Decisions, "item": &r.Item, "observe": &r.Observe, "expect": &r.Expect, "example": &r.Example} {
+			if value, ok := raw[key]; ok {
+				if !decodeIntakeValue(value, dest) {
+					r.invalid[key] = true
+					reason := "must be a string"
+					if key == "after" || key == "scope" || key == "decisions" {
+						reason = "must be an array of strings"
+					}
+					errs = append(errs, intakeError{line, key, reason})
+				}
+			}
 		}
 		r.line = line
 		records = append(records, r)
 	}
 	if s.Err() != nil {
-		errs = append(errs, intakeError{1, "", "cannot read input"})
+		errs = append(errs, intakeError{line, "json", "line too long to read"})
 	}
 	return records, errs
 }
 
+// decodeIntakeValue fills dest with a string or an array of strings; null, and a
+// null or non-string element, is a wrong type rather than an absent value.
+func decodeIntakeValue(value json.RawMessage, dest any) bool {
+	var v any
+	if json.Unmarshal(value, &v) != nil {
+		return false
+	}
+	switch d := dest.(type) {
+	case *string:
+		s, ok := v.(string)
+		*d = s
+		return ok
+	case *[]string:
+		list, ok := v.([]any)
+		if !ok {
+			return false
+		}
+		out := make([]string, 0, len(list))
+		for _, e := range list {
+			s, ok := e.(string)
+			if !ok {
+				return false
+			}
+			out = append(out, s)
+		}
+		*d = out
+		return true
+	}
+	return false
+}
+
 func validateIntake(path string, rs []intakeRecord, filed map[string]bool) []intakeError {
 	var es []intakeError
+	for i := range rs {
+		r := &rs[i]
+		for field, value := range map[string]string{"t": r.T, "id": r.ID, "path": r.Path, "lines": r.Lines, "sha": r.SHA, "text": r.Text, "by": r.By, "title": r.Title, "source": r.Source, "item": r.Item, "observe": r.Observe, "expect": r.Expect, "example": r.Example} {
+			if !r.invalid[field] && strings.ContainsAny(value, intakeLineBreaks) {
+				r.invalid[field] = true
+				es = append(es, intakeError{r.line, field, "must be one line"})
+			}
+		}
+		for field, values := range map[string][]string{"after": r.After, "scope": r.Scope, "decisions": r.Decisions} {
+			for _, value := range values {
+				if strings.ContainsAny(value, intakeLineBreaks) {
+					if !r.invalid[field] {
+						es = append(es, intakeError{r.line, field, "must be one line"})
+					}
+					r.invalid[field] = true
+				}
+			}
+		}
+		for field, value := range map[string]string{"id": r.ID, "item": r.Item} {
+			if !r.invalid[field] && value != "" && !intakeIDPattern.MatchString(value) {
+				r.invalid[field] = true
+				es = append(es, intakeError{r.line, field, "must be letters, digits, '.', '_' or '-'"})
+			}
+		}
+		for field, values := range map[string][]string{"after": r.After, "decisions": r.Decisions} {
+			for _, value := range values {
+				if !r.invalid[field] && !intakeIDPattern.MatchString(value) {
+					r.invalid[field] = true
+					es = append(es, intakeError{r.line, field, "must be letters, digits, '.', '_' or '-'"})
+				}
+			}
+		}
+	}
 	seen := map[string]map[string]int{}
 	items := map[string]int{}
+	sourceIDs := map[string]int{}
 	decisions := map[string]int{}
 	clauses := map[string]int{}
 	add := func(r intakeRecord, field, reason string) { es = append(es, intakeError{r.line, field, reason}) }
 	for _, r := range rs {
+		if r.invalid["t"] || r.invalid["json"] {
+			continue
+		}
 		fields := map[string][]string{"source": {"t", "id", "path", "lines", "sha"}, "decision": {"t", "id", "text", "by"}, "item": {"t", "id", "title"}, "clause": {"t", "item", "id", "observe", "expect", "example"}}[r.T]
 		if fields == nil {
 			add(r, "t", "unknown record type")
 			continue
+		}
+		for _, key := range r.keys {
+			if !slices.Contains(intakeFields[r.T], key) {
+				add(r, key, "unknown field for a "+r.T+" record")
+			}
 		}
 		for _, f := range fields {
 			var v string
@@ -171,7 +275,8 @@ func validateIntake(path string, rs []intakeRecord, filed map[string]bool) []int
 			case "example":
 				v = r.Example
 			}
-			if v == "" {
+			if v == "" && !r.invalid[f] {
+				r.invalid[f] = true
 				add(r, f, "is required")
 			}
 		}
@@ -182,31 +287,42 @@ func validateIntake(path string, rs []intakeRecord, filed map[string]bool) []int
 		if r.T == "clause" {
 			dupKey = r.Item + "/" + r.ID
 		}
-		if dupKey != "" {
+		if dupKey != "" && !r.invalid["id"] && !r.invalid["item"] {
 			if seen[r.T][dupKey] != 0 {
 				add(r, "id", "duplicate id")
 			}
 			seen[r.T][dupKey] = r.line
 		}
 		switch r.T {
+		case "source":
+			if !r.invalid["id"] {
+				sourceIDs[r.ID] = r.line
+			}
 		case "item":
-			items[r.ID] = r.line
-			if filed[r.ID] && r.ID != "" {
+			if !r.invalid["id"] {
+				items[r.ID] = r.line
+			}
+			if !r.invalid["id"] && filed[r.ID] && r.ID != "" {
 				add(r, "id", "already filed in ledger")
 			}
 		case "decision":
-			decisions[r.ID] = r.line
+			if !r.invalid["id"] {
+				decisions[r.ID] = r.line
+			}
 		case "clause":
 			clauses[r.Item]++
 		}
-		if r.T == "clause" && r.Example == "" {
+		if r.T == "clause" && r.Example == "" && !r.invalid["example"] {
 			add(r, "example", "must not be empty")
 		}
 		if r.T == "source" {
-			if !regexp.MustCompile(`^[0-9a-fA-F]{40}$`).MatchString(r.SHA) {
+			if !r.invalid["sha"] && !intakeSHAPattern.MatchString(r.SHA) {
 				add(r, "sha", "must be 40 hexadecimal characters")
 			}
 			parts := strings.Split(r.Lines, "-")
+			if r.invalid["lines"] {
+				continue
+			}
 			if len(parts) != 2 {
 				add(r, "lines", "must be <start>-<end>")
 			} else {
@@ -218,22 +334,42 @@ func validateIntake(path string, rs []intakeRecord, filed map[string]bool) []int
 			}
 		}
 	}
+	// A reference is not checked while a record it could name is itself bad,
+	// so one bad record is never reported again as a broken reference in another.
+	kinds := map[string]bool{"source": true, "decision": true, "item": true, "clause": true}
+	tainted := map[string]bool{}
 	for _, r := range rs {
-		if r.T == "clause" && items[r.Item] == 0 {
+		switch {
+		case r.invalid["t"] || r.invalid["json"] || !kinds[r.T]:
+			for k := range kinds {
+				tainted[k] = true
+			}
+		case r.invalid["id"]:
+			tainted[r.T] = true
+		}
+		if r.T == "clause" && r.invalid["item"] {
+			tainted["clause"] = true
+		}
+	}
+	for _, r := range rs {
+		if r.T == "clause" && !tainted["item"] && !r.invalid["item"] && items[r.Item] == 0 {
 			add(r, "item", "does not name an item in this intake")
 		}
 		if r.T == "item" {
+			if !tainted["source"] && !r.invalid["source"] && r.Source != "" && sourceIDs[r.Source] == 0 {
+				add(r, "source", "unknown source "+r.Source)
+			}
 			for _, d := range r.Decisions {
-				if decisions[d] == 0 {
+				if !tainted["decision"] && !r.invalid["decisions"] && decisions[d] == 0 {
 					add(r, "decisions", "unknown decision "+d)
 				}
 			}
 			for _, dep := range r.After {
-				if items[dep] == 0 && !filed[dep] {
+				if !tainted["item"] && !r.invalid["after"] && items[dep] == 0 && !filed[dep] {
 					add(r, "after", "unknown item "+dep)
 				}
 			}
-			if clauses[r.ID] == 0 {
+			if !tainted["clause"] && !r.invalid["id"] && clauses[r.ID] == 0 {
 				add(r, "id", "item has no clause")
 			}
 		}
@@ -267,6 +403,7 @@ func validateIntake(path string, rs []intakeRecord, filed map[string]bool) []int
 }
 
 func renderIntake(rs []intakeRecord) {
+	escape := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace
 	decisions := map[string]string{}
 	for _, r := range rs {
 		if r.T == "decision" {
@@ -277,16 +414,20 @@ func renderIntake(rs []intakeRecord) {
 		if r.T != "item" {
 			continue
 		}
-		fmt.Printf("## %s — %s\n\n", r.ID, r.Title)
+		fmt.Printf("## %s — %s\n\n", escape(r.ID), escape(r.Title))
 		if len(r.After) > 0 {
-			fmt.Printf("after: %s\n\n", strings.Join(r.After, ", "))
+			after := make([]string, len(r.After))
+			for i, id := range r.After {
+				after[i] = escape(id)
+			}
+			fmt.Printf("after: %s\n\n", strings.Join(after, ", "))
 		}
 		for _, d := range r.Decisions {
-			fmt.Printf("Decision: %s\n\n", decisions[d])
+			fmt.Printf("Decision: %s\n\n", escape(decisions[d]))
 		}
 		for _, c := range rs {
 			if c.T == "clause" && c.Item == r.ID {
-				fmt.Printf("%s: %s — %s. Example: %s\n", c.ID, c.Observe, c.Expect, c.Example)
+				fmt.Printf("%s: %s — %s. Example: %s\n", escape(c.ID), escape(c.Observe), escape(c.Expect), escape(c.Example))
 			}
 		}
 		fmt.Println()
