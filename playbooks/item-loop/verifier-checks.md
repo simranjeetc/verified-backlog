@@ -1,41 +1,20 @@
-Every check list needs at least one blocking `decider: bl` row, even for a docs-only item. Choose a mechanical
-backstop such as links resolving or examples running. A prior `bl signoff` permits a judge-only list (R15).
-Include the repository's full test suites as blocking `decider: bl` shell rows (gate rows), such as
-`go -C scripts test ./...`; `bl run` must execute them as part of the frozen run.
-Every row must be self-contained: no row reads something another row writes, because rows run concurrently.
+# Prepare the independent check writer prompt
 
-You are an independent VERIFIER for one item. Repo: <path>.
+Use the CLI to combine the current role packet with the versioned instructions:
 
-The dispatcher pastes `bl packet <id> --role checks` output — the item's intent, brief,
-notes, the rules it cites verbatim and an index of the rules it leaves out — in place of
-`references/design-check-list-schema.md`. Read the cited rules; a rule you need and the
-packet only indexes is one you ask for by id, and the dispatcher pastes it.
+```sh
+"$BL" packet A1 --role checks --render --workspace "$WORKSPACE" --output-dir "$OUTPUT_DIR" > /dev/null
+```
 
-INTENT — <id>: "<item text, verbatim>"
+Both directories must exist. Use the producer worktree for producer work and the
+repository being verified for checks/verifier reading. Keep the output directory
+outside `.backlog/`, preferably outside the repository. The command writes the
+complete prompt to stdout and to `A1-aN-checks-prompt.md` in that directory.
+Dispatch that file; do not retype the instructions or paste additional role packets.
+Stdout is suppressed above to keep the generated worker prompt out of supervisor context.
 
-Write the checks this item needs, before you see anyone's account of the work.
-Each check is a command with an expected result. A check that covers a change
-puts the covered file's path in the command, next to the thing it exercises:
-the command names the file it covers, because R10's coverage comparison is
-literal. Include the case that must still hold after the change, and the
-number you would re-derive. One assertion per row: a row's command asserts
-exactly one thing, and its expect must be reachable only through that
-assertion. A row whose expect an earlier statement in its own command can
-satisfy binds nothing, so do not write one; a second statement goes in a
-separate row.
+Canonical instructions: [checks template](../../scripts/cmd/bl/prompts/v1/checks.md.tmpl),
+embedded in the binary. Plain `bl packet A1 --role checks` remains available.
 
-The list is format 2: a `decider: bl` row is either a test row — cmd exactly
-`python3 .backlog/items/<id>/tests.py <name>`, expect exactly `exit 0` — or a
-shell row, one simple command with `exit <code>`, kept only for a whole-suite
-command such as `go -C scripts test ./...`. The test file's build helper
-caches the binary under `$TMPDIR` and reuses it, so a run builds once. A test file driving `bl` uses `$BL_UNDER_TEST` when it is set and builds its own binary only when it is not. Each
-whole-suite command (such as `go test ./...` or the project test script)
-appears in at most one row. Write the test file now, before the code exists: python3, one named function per assertion, and the main block
-copied from R37 (ask for it by id if the packet leaves it out). Give it one
-shared `_` helper that builds the binary once into a temp dir and a `_` helper
-that sets up a scratch repository, and have every function drive the binary
-rather than grep the source. Every helper's name starts with `_`; every public
-def is a function a row names; `@_covers("<path>", ...)` names each file the
-change touches. Pass the file with `--tests`.
-
-OUTPUT: the numbered check list, the test file, and nothing else.
+Prepare this prompt before reading producer claims. Record the generated check list
+and test file before recording claims; keep the producer blind to those checks.

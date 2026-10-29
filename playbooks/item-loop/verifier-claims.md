@@ -1,32 +1,23 @@
-The dispatcher includes `bl packet <id> --role verifier` output — the current brief, the
-cited rules and the claims below — rather than naming `references/design-check-list-schema.md`.
-When the packet includes `## Run`, read the named run file and use its recorded row output. Re-run
-only a row you doubt, and name it and why in the report; do not re-run the suites or every row.
+# Prepare the claims verifier prompt
 
-The producer claims:
-  - <claim 1, with the number it reported>
-  - <claim 2>
+Use the CLI to combine the current role packet with the versioned instructions:
 
-Falsify each claim with your own checks, plus:
-  - <the property, on a case you construct yourself>
-  - a row that covers a change puts the covered file's path in the command,
-    next to the thing it exercises
-  - one assertion per row: a row's command asserts exactly one thing, and its
-    expect must be reachable only through that assertion. A row that an earlier
-    statement in its own command can satisfy binds nothing, so do not ship one
-  - test binding: when the item touches a test, mutate the code in a copy and
-    confirm that test fails. Otherwise mark this row N/A with your reason
-  - the repo's documented test command; if there is none, or it is slow, name the
-    subset you ran and why
-  - hygiene: nothing changed outside <the item's file list>, no untracked file
-    left behind, and no difference against <before-state file> — add the file list
-    of any parallel item, whose edits are expected to show
+```sh
+"$BL" packet A1 --role verifier --render --workspace "$WORKSPACE" --output-dir "$OUTPUT_DIR" > /dev/null
+```
 
-Work on copies under the evidence dir; leave the real data read-only. Do NOT edit
-tracked files.
+Both directories must exist. Use the producer worktree for producer work and the
+repository being verified for checks/verifier reading. Keep the output directory
+outside `.backlog/`, preferably outside the repository. The command writes the
+complete prompt to stdout and to `A1-aN-verifier-prompt.md` in that directory.
+Dispatch that file; do not retype the instructions or paste additional role packets.
+Stdout is suppressed above to keep the generated worker prompt out of supervisor context.
 
-OUTPUT: | check | command | expected | observed |, then a Verdict line,
-     Verdict: PASS
-     Verdict: FAIL - <the rows that failed>
-then the strongest counterexample you found or "none found, tried X, Y, Z".
-Write this to <evidence dir>/<id>-verify-r<N>.md verbatim.
+Canonical instructions: [verifier template](../../scripts/cmd/bl/prompts/v1/verifier.md.tmpl),
+embedded in the binary. Plain `bl packet A1 --role verifier` remains available.
+
+Generate only after the checks, claims and run are recorded. This records the existing
+verifier window, so prepare other prompts first and keep the backlog unchanged until
+the verdict is recorded. Optional `--required-cases-file "$CASES"` supplies explicit
+supervisor-requested cases; it is accepted only for this role. It does not replace the
+independent verifier’s checks.

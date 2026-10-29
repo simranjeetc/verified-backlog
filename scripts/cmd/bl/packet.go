@@ -94,6 +94,17 @@ func cmdPacket(root string, a args) error {
 	if p.cited, p.omitted, p.rulesOK, err = packetRules(root, it, p.brief); err != nil {
 		return err
 	}
+	var rendered, promptPath string
+	if a.flag("render") {
+		rendered, promptPath, err = renderRolePrompt(root, a, p)
+		if err != nil {
+			return err
+		}
+		// Complete output I/O before recording a verifier window; failed paths record no event.
+		if err := writeRolePrompt(promptPath, rendered); err != nil {
+			return err
+		}
+	}
 	if role == "verifier" {
 		ev, snapshotErr := packetSnapshot(root, it.ID)
 		if snapshotErr != nil {
@@ -103,13 +114,34 @@ func cmdPacket(root string, a args) error {
 			return err
 		}
 	}
-	p.printTo(os.Stdout)
+	if a.flag("render") {
+		fmt.Fprint(os.Stdout, rendered)
+	} else {
+		p.printTo(os.Stdout)
+	}
 	return nil
 }
 
 // packetArgs checks the verb's arguments: one id and one of the three roles.
 func packetArgs(a args) (string, string, error) {
 	id, role := a.pos(0), a.get("role")
+	if a.get("required-cases-file") != "" && role != "verifier" {
+		return "", "", refuse("--required-cases-file is restricted to the verifier role")
+	}
+	for name := range a.flags {
+		if name != "role" && name != "workspace" && name != "output-dir" && name != "required-cases-file" {
+			return "", "", refuse("unknown packet option --%s", name)
+		}
+	}
+	for name := range a.boolFlags {
+		if name != "render" {
+			return "", "", refuse("unknown packet option --%s", name)
+		}
+	}
+	if !a.flag("render") && (a.get("workspace") != "" || a.get("output-dir") != "" || a.get("required-cases-file") != "") {
+		return "", "", refuse("prompt options require --render")
+	}
+
 	if len(a.positional) != 1 || id == "" {
 		return "", "", refuse("usage: bl packet <id> --role checks|producer|verifier")
 	}

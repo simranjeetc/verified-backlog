@@ -128,3 +128,24 @@ window (Claude reserves a margin, so this is not an exact input-token trigger).
 The independent BL peak-context safety cap is 130000 by default and cannot be raised above 130000; lower
 `--max-context` values are allowed. It uses fresh
 session continuation after cancellation and terminal-job confirmation.
+
+
+Role prompts can be assembled without a model call:
+
+```sh
+mkdir -p /tmp/bl-prompts
+"$BL" packet A1 --role producer --render --workspace "$PRODUCER_WORKTREE" --output-dir /tmp/bl-prompts > /dev/null
+"$BL" packet A1 --role checks --render --workspace "$REPO" --output-dir /tmp/bl-prompts > /dev/null
+# After recording checks, claims and the run:
+"$BL" packet A1 --role verifier --render --workspace "$REPO" --output-dir /tmp/bl-prompts > /dev/null
+```
+
+Rendering can print the complete prompt and writes an attempt-specific prompt file
+in the output directory. Suppress stdout as above when dispatching the saved file
+to avoid loading worker instructions into supervisor context. Both directories must exist. Templates are versioned and
+embedded in the binary, so target repositories need no template installation.
+Producer/checks prompts exclude claims and frozen checks; verifier rendering
+retains the existing verifier-window recording. Prepare other prompts first and
+keep the backlog unchanged through verification. Optional verifier-only
+`--required-cases-file FILE` adds explicitly requested cases. Rendering never
+launches workers. Existing plain `packet` output is unchanged.

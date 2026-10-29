@@ -63,7 +63,7 @@ before-state is recorded.
 
 One item, one producer.
 
-Read [producer.md](producer.md), fill its placeholders from the item brief, and send it to the producer
+Use [producer.md](producer.md) to render a complete prompt from the item brief, and send its prompt file to the producer
 at the same time as verifier dispatch 1 in Step 3. Do not wait for either prompt to return before
 sending the other. The producer does not get `checks.tsv` or any frozen check list; it can work while
 the verifier writes the checks.
@@ -76,7 +76,7 @@ Two dispatches to the same verifier, in this order. One prompt carrying both def
 model reads its whole prompt at once, so the producer's claims would reach it before it writes a
 single check. Dispatch 1 sends the intent and nothing else.
 
-Read [verifier-checks.md](verifier-checks.md), fill its placeholders with the intent, and send it as
+Use [verifier-checks.md](verifier-checks.md) to render the intent-only prompt, and send its prompt file as
 dispatch 1, at the same time as the producer dispatch in Step 2. After both dispatches return, record the checks,
 then the claims, then the run:
 
@@ -101,8 +101,8 @@ Then send the verifier dispatch 2 with the claims and any required cases, labell
 than as its rubric. Where the harness cannot continue a subagent, run both as fresh verifiers: the
 first returns a check list, the second re-derives with the claims and adds your cases.
 
-Read [verifier-claims.md](verifier-claims.md), fill its placeholders with the claims and required
-cases, and send it as dispatch 2.
+Use [verifier-claims.md](verifier-claims.md) to render the claims prompt, passing an explicit required-cases file
+when needed, and send its prompt file as dispatch 2.
 
 Completion: the checks are frozen, the producer claims are recorded, and `bl run` has completed; the
 verifier has returned a verdict with a command behind every row.
