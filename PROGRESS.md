@@ -757,3 +757,10 @@ Verdict: PASS — closed at 47e0f78b032827f30fedec34d907af14ffbee0a7
 - r1 PASS — .backlog/evidence/I126-r1.txt (2e6e4cce63fe)
 - code failures: 0 / cap 3
 
+## I127 — The human clarified I126 (2026-10-29): the 300k limit is the brain's context window, not a cumulative token total, and a session that passes it must be stopped and the same item resumed in a fresh session, not left for the human. bl loop therefore tracks the peak per-request context (input + cache write + cache read of one assistant request) of the brain job, cancels the job past --max-context, and relaunches the same item with a continuation prompt, bounded by --max-sessions per item; the cumulative --max-tokens budget from I126 is replaced.
+
+Verdict: PASS — closed at cffe478a7f32139247369237124eef8d83c61f20
+
+- r1 PASS — .backlog/evidence/I127-r1.txt (d614535ea32d)
+- code failures: 0 / cap 3
+
