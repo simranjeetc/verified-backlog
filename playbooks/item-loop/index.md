@@ -86,6 +86,9 @@ then the claims, then the run:
 "$BL" run A1
 ```
 
+`bl run` is the gate: it runs the frozen rows, including the repository's full test suites. Do not
+run the suites separately as supervisor; the verifier reads the recorded run.
+
 If the producer finishes first, it waits only for this recording, not for a re-dispatch.
 
 Every list, including a docs-only list, needs at least one blocking `decider: bl` row. Use a mechanical

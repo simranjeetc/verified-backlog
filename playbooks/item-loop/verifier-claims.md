@@ -1,5 +1,7 @@
 The dispatcher includes `bl packet <id> --role verifier` output — the current brief, the
 cited rules and the claims below — rather than naming `references/design-check-list-schema.md`.
+When the packet includes `## Run`, read the named run file and use its recorded row output. Re-run
+only a row you doubt, and name it and why in the report; do not re-run the suites or every row.
 
 The producer claims:
   - <claim 1, with the number it reported>

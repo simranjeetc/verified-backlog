@@ -35,6 +35,7 @@ RULES
   - Do NOT declare the item passed. A separate verifier decides.
   - Do NOT weaken an existing test to make it pass. If a guard blocks you, report it.
   - Leave no untracked file behind in the repo.
+  - Iterate with targeted tests while working; run the full suites once, at the end, before reporting.
   - Write your evidence (commands and output) to <evidence dir>/<id>-evidence.md.
 
 REPORT BACK: files changed, the property you implemented and how it holds, the

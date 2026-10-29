@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,8 @@ type packet struct {
 	cited   []packetRule
 	omitted []packetRule
 	rulesOK bool
+	run     *runFile
+	runPath string
 }
 
 // packetRule is one rule paragraph of the rules doc: its number, its title, and its text.
@@ -64,6 +67,22 @@ func cmdPacket(root string, a args) error {
 		return refuse("%s has no recorded claims", it.ID)
 	}
 	p := packet{item: it, role: role}
+	if role == "verifier" {
+		runs := it.attemptRuns()
+		if len(runs) > 0 {
+			latest := runs[len(runs)-1]
+			p.runPath = filepath.ToSlash(filepath.Join(".backlog", "evidence", it.ID+"-"+latest.Run+".json"))
+			data, readErr := verifyArtefact(root, p.runPath, latest.RunSHA, "run")
+			if readErr != nil {
+				return readErr
+			}
+			var run runFile
+			if err := json.Unmarshal(data, &run); err != nil {
+				return fmt.Errorf("decode run file %s: %w", p.runPath, err)
+			}
+			p.run = &run
+		}
+	}
 	if p.brief, err = packetArtefact(root, it.Brief, it.BriefSHA, "(no brief)"); err != nil {
 		return err
 	}
@@ -139,6 +158,14 @@ func (p packet) printTo(w io.Writer) {
 	}
 	fmt.Fprint(w, "\n## Intent\n")
 	writePacketText(w, p.item.Text)
+	if p.role == "verifier" && p.run != nil {
+		fmt.Fprint(w, "\n## Run\n")
+		fmt.Fprintln(w, p.runPath)
+		for _, row := range p.run.Rows {
+			fmt.Fprintf(w, "%s exit %d\n", row.ID, row.Exit)
+		}
+		fmt.Fprintln(w, "These rows already ran under bl run, including the test suites: do not re-run the suites or every row. Re-run only a row you doubt, and name it and why in the report.")
+	}
 	fmt.Fprint(w, "\n## Brief\n")
 	writePacketText(w, p.brief)
 	fmt.Fprint(w, "\n## Notes\n")

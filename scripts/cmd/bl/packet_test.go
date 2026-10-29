@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,41 @@ func TestPacketVerifierRequiresAndPrintsClaims(t *testing.T) {
 		if strings.Contains(out, "CLAIM-MARKER-42") {
 			t.Fatalf("%s packet exposed claims", role)
 		}
+	}
+}
+
+func TestVerifierPacketIncludesLatestAttemptRunAndGuidance(t *testing.T) {
+	dir := runItem(t, checksHeader+"S1\tbl\tblocking\tB1\techo hi\texit 0\t\t\tfirst row\n"+"S2\tbl\tblocking\tB1\tsh -c 'exit 7'\texit 7\t\t\tsecond row\n")
+	if err := call(t, cmdRun, dir, "A1"); err != nil && !errors.Is(err, errFailed) {
+		t.Fatal(err)
+	}
+	out := capture(t, func() { _ = call(t, cmdPacket, dir, "A1", "--role", "verifier") })
+	section := "## Intent\n"
+	intentAt := strings.Index(out, section)
+	runAt := strings.Index(out, "## Run\n")
+	if intentAt < 0 || runAt < intentAt {
+		t.Fatalf("run section missing or before intent:\n%s", out)
+	}
+	want := "## Run\n.backlog/evidence/A1-run1.json\nS1 exit 0\nS2 exit 7\nThese rows already ran under bl run, including the test suites: do not re-run the suites or every row. Re-run only a row you doubt, and name it and why in the report.\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("run section does not match:\n%s", out)
+	}
+	if !(strings.Index(out, "## Intent\n") < runAt && runAt < strings.Index(out, "## Brief\n")) {
+		t.Fatalf("run section is not immediately after intent:\n%s", out)
+	}
+	for _, role := range []string{"producer", "checks"} {
+		packet := capture(t, func() { _ = call(t, cmdPacket, dir, "A1", "--role", role) })
+		if strings.Contains(packet, "## Run") || strings.Contains(packet, "already ran under bl run") {
+			t.Errorf("%s packet includes run evidence:\n%s", role, packet)
+		}
+	}
+}
+
+func TestVerifierPacketOmitsRunWithoutCurrentAttemptRun(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	out := capture(t, func() { _ = call(t, cmdPacket, dir, "A1", "--role", "verifier") })
+	if strings.Contains(out, "## Run") {
+		t.Fatalf("packet without a run includes run section:\n%s", out)
 	}
 }
 

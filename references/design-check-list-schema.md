@@ -108,6 +108,10 @@ a human to read.
 
 The run file is named by a run id of the form `run<N>` for the item.
 
+**Verifier packet run section.** When the current attempt has a run, `bl packet <id> --role verifier`
+prints a `## Run` section immediately after `## Intent`: the latest run file path, one `<row id> exit
+<code>` line per row in list order, then exactly: "These rows already ran under bl run, including the test suites: do not re-run the suites or every row. Re-run only a row you doubt, and name it and why in the report." With no run in the current attempt, the section is absent. Checks and producer packets never include it.
+
 **Check list format.** One row per line, tab-separated, with a header line naming the columns:
 
 ```
