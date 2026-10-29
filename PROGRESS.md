@@ -453,9 +453,11 @@ Source: supervisor:I58-timing
 
 ## I74 — the repository's test suites run once in every dispatch: bl.test.py (11 s) and go test (39 s) ran in verifier dispatch 1, in the producer and again in verifier dispatch 2 of I58, and the 113 rows ran three times (two dry runs by the verifier and bl run)
 
-Status: open
+Verdict: PASS — closed at 5d2cc8b038142b0338040ee2b23aee3c2f6ebeac
 Source: supervisor:I58-timing
 
+- r1 PASS — .backlog/evidence/I74-r1.txt (7c0ffdcacbbe)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified): the suites and the rows run once per round under bl run (a gate row in the frozen list), and dispatches read that run's evidence instead of re-running; a dispatch re-runs only the row it doubts
 
 ## I75 — the run file an agent must read to judge a round is mostly the row commands copied back from the frozen list: .backlog/evidence/I58-run1.json is 81.4k tokens (o200k), of which .rows[].cmd is 55.9k (69%) and the sha256 fields 8.0k, while the rows' actual stdout and stderr are 2.8k; the round-2 verifier brief tells the verifier to read it (scratchpad I58/verify-d2.md:1), so every round pays for the whole check list a second time
