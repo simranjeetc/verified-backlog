@@ -743,6 +743,14 @@ Source: I115 r4, 2026-10-28
 - r2 PASS — .backlog/evidence/I117-r2.txt (9a0fb1618db2)
 - code failures: 0 / cap 3
 
+## I118 — bl open accepts a --scope value that names no path: I117 attempt 1 was opened with one comma-joined value 'SKILL.md,scripts/cmd/bl/packet.go,scripts/cmd/bl/packet_test.go', bl recorded it as a single scope entry (open event seq 779), and the mistake surfaced only at bl round, where R9 refused the judge anchor, costing a harness round and a restart. bl open should refuse a scope entry containing a comma, and one that matches neither an existing path nor a path the item will create, naming the entry and saying --scope is repeated once per path.
+
+Decision: parked — brain timeout 3600s mid-attempt 1: r1 code FAIL recorded, fix run3 36/36 PASS unverified; work in git stash 'I118 a1 run3'; reopen and pop after the verifier-window fix (not verified)
+Source: I117 a1, 2026-10-28
+
+- r1 FAIL cause=code — .backlog/evidence/I118-r1.txt (7abc5296d4a3)
+- code failures: 1 / cap 3
+
 ## I120 — a check list with no blocking decider: bl row is frozen, run and PASSed, and only then refused at close (R15), where no sign-off (R22, before round 1) or restart (R36, needs a FAIL) can rescue it: I71 r1 PASSed 8 judge rows and is stuck. bl checks refuses such a list unless a sign-off is already recorded, naming R15 and suggesting a mechanical row (links resolve, examples run); and bl restart --reason bad-check is accepted when the last round PASSed but R15 refuses the close. The human's position: an independent LLM verdict should not need a person to sign it; a command-decided row replaces the sign-off
 
 Verdict: PASS — closed at d47f3fc6d27f33b2b3e541e19ea3a6fe089f5487
@@ -822,6 +830,7 @@ Source: human
 - note: attempt 1: verifier v1 (deepseek-v4.1-flash) returned FAIL (F1 B7 multi-line leftover not filed; RO3, RO4 to fix; RO1, RO2 waived) but bl round refuses every row-bearing round under R10 because the frozen tests.py covers only loop.go. As in I124, a harness round records that the round could not be written, so the bad-check restart can carry F1 into attempt 2. bl gap filed separately.
 - note: attempt 2: supervisor dropped checks-writer row B7f before freeze: its fake mutates a.go during cancel, before the patch is written, so a correct cancel restores cleanly and files nothing; the writer flagged it and a run against the fixed worktree confirmed. Deleted-file naming is left to the verifier's own probe.
 - note: attempt 2: bl run refused under R26 because the human committed 12bc33c (scripts/bl-loop.dispatch.conf, outside I136's scope) at 16:36 while the run executed; the item's before-tree 2478c00 now differs from HEAD in a file no row covers, so R10 would refuse every round. Harness round records the run that could not complete; restart re-baselines on 12bc33c with the same code and checks.
+- note: I118 (2026-10-29): the brain hit the 3600s dispatch timeout mid-attempt, bl loop exited 5 with the association retained and I118 in flight; removing loop.json alone would leave the loop refusing 'in flight without a loop association', so recovery needed a hand rm plus bl defer and a git stash of the item's work. --cancel/resume must cover a timed-out brain with an in-flight item and a dirty tree.
 
 ## I138 — bl round's R10 refusal names no way forward, so the I124 a1 brain spent a harness FAIL round and a bad-check restart on a gap that bl checks --amend fixes: when R10 refuses and the attempt has no PASS round, the refusal should say that an amendment adding a blocking row that covers the named path (format 2: a test function with that @_covers inserted before the main block), then bl run, records the round; and the item-loop playbook should say the same
 
