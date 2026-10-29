@@ -1,0 +1,6 @@
+{
+  "sandbox": {"enabled": false},
+  "permissions": {
+    "deny": ["Bash(git push:*)", "Bash(git push)", "Bash(rm -rf:*)", "Bash(sudo:*)"]
+  }
+}
