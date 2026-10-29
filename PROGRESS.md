@@ -750,3 +750,10 @@ Source: human
 - r1 PASS — .backlog/evidence/I122-r1.txt (3ad878a52d8e)
 - code failures: 0 / cap 3
 
+## I126 — bl loop has no token budget and the brain role allows 4 h: the human wants each item capped by tokens (2026-10-29) and the timeout at 1 h. The claude CLI has no max-tokens flag (only --max-budget-usd), but claude -p --output-format stream-json --verbose prints one assistant event per request carrying usage (input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens), so the loop can sum usage from the dispatch job log while it polls and cancel the job past the budget.
+
+Verdict: PASS — closed at 47e0f78b032827f30fedec34d907af14ffbee0a7
+
+- r1 PASS — .backlog/evidence/I126-r1.txt (2e6e4cce63fe)
+- code failures: 0 / cap 3
+
