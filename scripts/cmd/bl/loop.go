@@ -597,9 +597,29 @@ func completeLoopItem(root string, assoc *loopAssociation) error {
 func scanLoopWriters(root, bin string) error {
 	paths := []string{root}
 	var data []byte
-	probe := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	probe.Dir = root
-	if probe.Run() == nil {
+	start := root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		start = resolved
+	}
+	gitEntry := ""
+	for dir := start; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			gitEntry = filepath.Join(dir, ".git")
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return loopExit(5, "cannot inspect git from %s: %v", root, err)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	if gitEntry != "" {
+		probe := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+		probe.Dir = root
+		if output, err := probe.CombinedOutput(); err != nil {
+			return loopExit(5, "cannot inspect git from %s: %s", root, strings.TrimSpace(string(output)))
+		}
 		cmd := exec.Command("git", "worktree", "list", "--porcelain")
 		cmd.Dir = root
 		var err error
