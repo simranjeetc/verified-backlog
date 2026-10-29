@@ -2,7 +2,7 @@
 
 <!-- rendered from .backlog/ledger.jsonl by bl; do not edit — ask instead -->
 
-## Queue (22)
+## Queue (23)
 
 - [ ] I56 — nothing stops a write while the ledger fails its own check: on 2026-10-26 bl file and bl note appended eight events while bl check reported FAIL I3 round .backlog/evidence/I3-r2.txt does not match its hash (I51), and bl close does not run the gate (scripts/bl.test.py, go test) before recording a close. The repository has no CI and no git hook, and must not depend on either, or on any harness's hooks, because the loop must hold in every harness and in a local-only clone  _(supervisor:ideology-audit)_
 - [ ] I57 — the orchestrating session runs the whole backlog in one conversation, so its context grows with every item until the human compacts it by hand; the loop's state already lives in the repository (the ledger, .backlog/HANDOFF.md, git), so no session needs to outlive one item. Ship the smallest workable outer loop: a utility with no conversation context of its own that asks bl next for an item, starts a fresh harness session to work that one item through playbooks/item-loop.md, and starts the next fresh session when that one exits - stopping when bl next names no item, and refusing to start another session when the previous one left its item in flight without a recorded round. Later refinements are filed as their own items  _(human)_
@@ -26,6 +26,7 @@
 - [ ] I107 — dispatch.sh: deepseek's out file is opencode's whole stdout (thinking included, verdict at line ~400 of 434); take only the final message (opencode --format json), and treat a whitespace-only message as empty
 - [ ] I111 — bl intake --file intake.jsonl files the items an intake (I87 format) describes: each item gets its --after list (more than one dependency), its scope, and its clauses; bl open on such an item writes a brief carrying its clauses with worked examples and the full text of every decision it references (not a note). Split from I87 by Winston, 2026-10-28
 - [ ] I118 — bl open accepts a --scope value that names no path: I117 attempt 1 was opened with one comma-joined value 'SKILL.md,scripts/cmd/bl/packet.go,scripts/cmd/bl/packet_test.go', bl recorded it as a single scope entry (open event seq 779), and the mistake surfaced only at bl round, where R9 refused the judge anchor, costing a harness round and a restart. bl open should refuse a scope entry containing a comma, and one that matches neither an existing path nor a path the item will create, naming the entry and saying --scope is repeated once per path.  _(I117 a1, 2026-10-28)_
+- [ ] I119 — code written by the pipeline may carry comments: nothing stops a producer (or the checks writer's tests.py) from adding them, and the human wants new comments banned in code. bl refuses, at bl claims and bl round, any comment on a line the item's diff adds to a .go, .py or .sh file in its scope (Go by go/scanner, Python by tokenize, shell by its # outside quotes), except //go: directives and a first-line #!; bl checks refuses the same in a frozen tests.py. Existing comments are untouched: only added lines count. producer.md and verifier-checks.md state the rule so agents meet it before bl refuses  _(human)_
 
 ## Blocked (1)
 

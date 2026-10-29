@@ -429,9 +429,11 @@ Source: supervisor:I58-timing
 
 ## I71 — the playbook runs the producer after the verifier's first dispatch, although the producer never needs the frozen list - only bl claims must come after bl checks (R5): in I58 the producer's 9.3 minutes ran after the verifier's 20.5 instead of beside them
 
-Status: open
+Status: open — PASS recorded, close pending
 Source: supervisor:I58-timing
 
+- r1 PASS — .backlog/evidence/I71-r1.txt (d5d33eddfe09)
+- code failures: 0 / cap 3
 - note: candidate fix (unverified): playbooks/item-loop.md dispatches the producer and verifier dispatch 1 together, producer told not to read checks.tsv; the supervisor records bl checks then bl claims in that order when both return
 
 ## I72 — every row that drives bl builds its own binary: all 113 rows of I58's list run go build (0.13 to 0.53 s each), so bl run builds bl 113 times per run
