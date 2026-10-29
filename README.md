@@ -125,5 +125,6 @@ responsible for blindness and evidence recording.
 
 The default Claude brain adapter sets `--autocompact 120000`, a native compaction
 window (Claude reserves a margin, so this is not an exact input-token trigger).
-The independent BL peak-context safety cap remains 300000 by default, with fresh
+The independent BL peak-context safety cap is 130000 by default and cannot be raised above 130000; lower
+`--max-context` values are allowed. It uses fresh
 session continuation after cancellation and terminal-job confirmation.

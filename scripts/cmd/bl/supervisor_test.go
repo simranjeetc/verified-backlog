@@ -83,7 +83,7 @@ func TestBrainNativeCompactionConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(loop), "14400, 300000, 5") {
+	if !strings.Contains(string(loop), "14400, 130000, 5") {
 		t.Fatal("independent context fallback changed")
 	}
 }

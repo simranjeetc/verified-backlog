@@ -48,7 +48,7 @@ func loopExit(code int, format string, values ...any) error {
 }
 
 func cmdLoop(root string, a args) error {
-	maxItems, pollMS, timeoutSec, maxContext, maxSessions := 3, 5000, 14400, 300000, 5
+	maxItems, pollMS, timeoutSec, maxContext, maxSessions := 3, 5000, 14400, 130000, 5
 	var err error
 	if _, ok := a.flags["max-tokens"]; ok {
 		return refuse("unknown flag --max-tokens")
@@ -73,8 +73,8 @@ func cmdLoop(root string, a args) error {
 	}
 	if _, ok := a.flags["max-context"]; ok {
 		maxContext, err = strconv.Atoi(a.get("max-context"))
-		if err != nil || maxContext < 1 {
-			return refuse("--max-context must be at least 1")
+		if err != nil || maxContext < 1 || maxContext > 130000 {
+			return refuse("--max-context must be between 1 and 130000")
 		}
 	}
 	if _, ok := a.flags["max-sessions"]; ok {

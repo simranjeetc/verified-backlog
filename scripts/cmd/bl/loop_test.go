@@ -244,3 +244,17 @@ func readFile(t *testing.T, path string) string {
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+
+func TestLoopContextUpperBound(t *testing.T) {
+	root, _ := loopFixture(t)
+	for _, value := range []string{"0", "130001", "300000"} {
+		if err := testLoop(root, argsWith(map[string]string{"max-context": value})); err == nil || !strings.Contains(err.Error(), "between 1 and 130000") {
+			t.Fatalf("limit %s: %v", value, err)
+		}
+	}
+	for _, value := range []string{"120000", "130000"} {
+		if err := testLoop(root, argsWith(map[string]string{"max-context": value})); err != nil {
+			t.Fatalf("valid limit %s: %v", value, err)
+		}
+	}
+}

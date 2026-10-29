@@ -284,7 +284,7 @@ being named. The triage pass that produces a ranking is out of scope.
 `bl check` passes, the item is closed, parked or declined, there is no in-flight item, and dispatch
 lists no live or unknown job. Before advancing or starting a continuation, it checks dispatch jobs
 in the repo and every `git worktree list` worktree. Jobs are matched by exact cwd (the repo root or a worktree root), so a job started in a subdirectory is not seen. If a `.git` entry exists in the bl root or an ancestor but git cannot inspect the repository, the loop exits 5 with `cannot inspect git` and retains `.backlog/loop.json`. `--max-items N` bounds item launches (default 3); `--max-context N` bounds
-the peak request context of each session (default 300000), where one request's context is input,
+the peak request context of each session (default and maximum 130000; lower limits are allowed), where one request's context is input,
 cache creation and cache read tokens on one top-level assistant message, counting each distinct
 message id once. `--max-sessions N` bounds sessions per item (default 5). When a session's peak
 exceeds the context limit, the loop cancels that job once and waits until it is terminal. If the item
