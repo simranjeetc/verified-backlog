@@ -360,13 +360,14 @@ func startLoopJob(root, id, token, config string, continuation bool) (string, er
 }
 
 type loopTokenUsage struct {
-	Input      int `json:"input_tokens"`
-	CacheWrite int `json:"cache_creation_input_tokens"`
-	CacheRead  int `json:"cache_read_input_tokens"`
-	Output     int `json:"output_tokens"`
+	Input       int  `json:"input_tokens"`
+	CacheWrite  int  `json:"cache_creation_input_tokens"`
+	CacheRead   int  `json:"cache_read_input_tokens"`
+	Output      int  `json:"output_tokens"`
+	Provisional bool `json:"-"`
 }
 
-func (u loopTokenUsage) total() int { return u.Input + u.CacheWrite + u.Output }
+func (u loopTokenUsage) total() int { return u.Input + u.CacheWrite + u.CacheRead + u.Output }
 
 func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started time.Time, timeoutSec, pollMS, maxContext, maxSessions int, config string) error {
 	bin := os.Getenv("BL_DISPATCH")
@@ -400,6 +401,11 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 					return loopExit(5, "dispatch status for %s failed: %v", assoc.Item, err)
 				}
 				if dispatchTerminal(state) {
+					usage, peak, err = loopJobTokenUsage(assoc.Job)
+					if err != nil {
+						return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
+					}
+					total = usage.total()
 					break
 				}
 				remaining := time.Duration(timeoutSec)*time.Second - time.Since(started)
@@ -412,7 +418,7 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 				}
 				time.Sleep(pause)
 			}
-			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			fmt.Println(loopUsageSummary(assoc.Item, assoc.Sessions, peak, usage))
 			finished, err := itemIsFinished(root, assoc.Item)
 			if err != nil {
 				return loopExit(5, "cannot determine whether item %s is finished: %v", assoc.Item, err)
@@ -445,13 +451,21 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 		if err != nil {
 			return loopExit(5, "dispatch status for %s failed: %v", assoc.Item, err)
 		}
+		// The job may flush its final result between our usage and status reads.
+		if dispatchTerminal(state) {
+			usage, peak, err = loopJobTokenUsage(assoc.Job)
+			if err != nil {
+				return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
+			}
+			total = usage.total()
+		}
 		switch state {
 		case "done":
 			assoc.Tokens = total
-			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			fmt.Println(loopUsageSummary(assoc.Item, assoc.Sessions, peak, usage))
 			return nil
 		case "failed", "lost", "cancelled":
-			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
+			fmt.Println(loopUsageSummary(assoc.Item, assoc.Sessions, peak, usage))
 			return loopExit(5, "job for %s ended %s; association retained at %s", assoc.Item, state, assocPath)
 		}
 		remaining := time.Duration(timeoutSec)*time.Second - time.Since(started)
@@ -467,7 +481,7 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 }
 
 func loopJobTokenUsage(job string) (loopTokenUsage, int, error) {
-	var total loopTokenUsage
+	total := loopTokenUsage{Provisional: true}
 	peak := 0
 	home := os.Getenv("DISPATCH_HOME")
 	if home == "" {
@@ -484,28 +498,86 @@ func loopJobTokenUsage(job string) (loopTokenUsage, int, error) {
 	if err != nil {
 		return total, peak, err
 	}
-	seen := map[string]bool{}
+	return parseLoopTokenUsage(data)
+}
+
+func loopUsageSummary(item string, session, peak int, usage loopTokenUsage) string {
+	state := "finalized"
+	if usage.Provisional {
+		state = "provisional"
+	}
+	return fmt.Sprintf("%s session %d peak-context %d processed-tokens %d (input %d cache-write %d cache-read %d output %d) usage %s", item, session, peak, usage.total(), usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output, state)
+}
+
+// Assistant usage may be repeated or partial. A result's modelUsage is a
+// cumulative checkpoint, not another request and not a value to add to it.
+func parseLoopTokenUsage(data []byte) (loopTokenUsage, int, error) {
+	total := loopTokenUsage{Provisional: true}
+	peak := 0
+	messages := map[string]loopTokenUsage{}
+	pending := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		var event struct {
-			Type    string `json:"type"`
-			Message struct {
+			Type            string  `json:"type"`
+			ParentToolUseID *string `json:"parent_tool_use_id"`
+			Message         struct {
 				ID    string          `json:"id"`
 				Usage *loopTokenUsage `json:"usage"`
 			} `json:"message"`
+			ModelUsage map[string]struct {
+				Input      *int `json:"inputTokens"`
+				CacheWrite *int `json:"cacheCreationInputTokens"`
+				CacheRead  *int `json:"cacheReadInputTokens"`
+				Output     *int `json:"outputTokens"`
+			} `json:"modelUsage"`
 		}
-		if json.Unmarshal([]byte(line), &event) != nil || event.Type != "assistant" || event.Message.ID == "" || event.Message.Usage == nil || seen[event.Message.ID] {
+		if json.Unmarshal([]byte(line), &event) != nil || event.ParentToolUseID != nil {
 			continue
 		}
-		seen[event.Message.ID] = true
+		if event.Type == "result" && len(event.ModelUsage) > 0 {
+			var checkpoint loopTokenUsage
+			valid := true
+			for _, u := range event.ModelUsage {
+				if u.Input == nil || u.CacheWrite == nil || u.CacheRead == nil || u.Output == nil {
+					valid = false
+					break
+				}
+				checkpoint.Input += *u.Input
+				checkpoint.CacheWrite += *u.CacheWrite
+				checkpoint.CacheRead += *u.CacheRead
+				checkpoint.Output += *u.Output
+			}
+			// Ignore replayed older cumulative snapshots; they cannot finalize new work.
+			if valid && checkpoint.Input >= total.Input && checkpoint.CacheWrite >= total.CacheWrite && checkpoint.CacheRead >= total.CacheRead && checkpoint.Output >= total.Output && (total.Provisional || checkpoint.total() > total.total()) {
+				total = checkpoint
+				pending = map[string]bool{}
+			}
+			continue
+		}
+		if event.Type != "assistant" || event.Message.ID == "" || event.Message.Usage == nil {
+			continue
+		}
+		id := event.Message.ID
 		u := *event.Message.Usage
+		previous, seen := messages[id]
+		// Fields are cumulative within a message; stale blocks cannot erase usage.
+		u.Input = max(u.Input, previous.Input)
+		u.CacheWrite = max(u.CacheWrite, previous.CacheWrite)
+		u.CacheRead = max(u.CacheRead, previous.CacheRead)
+		u.Output = max(u.Output, previous.Output)
+		messages[id] = u
+		peak = max(peak, u.Input+u.CacheWrite+u.CacheRead)
+		if !seen || pending[id] {
+			pending[id] = true
+		}
+	}
+	for id := range pending {
+		u := messages[id]
 		total.Input += u.Input
 		total.CacheWrite += u.CacheWrite
 		total.CacheRead += u.CacheRead
 		total.Output += u.Output
-		context := u.Input + u.CacheWrite + u.CacheRead
-		if context > peak {
-			peak = context
-		}
+		total.Provisional = true
 	}
 	return total, peak, nil
 }

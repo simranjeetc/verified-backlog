@@ -104,3 +104,12 @@ overwrite a `TODO.md` it did not render.
 ## Licence
 
 MIT.
+
+Loop usage reports `peak-context` separately from cumulative `processed-tokens`
+(input + cache writes + cache reads + output). These counts describe processing,
+not subscription allowance or billed cost. Repeated streamed messages are counted
+once with updated usage; cumulative `result.modelUsage` checkpoints supply final
+counts without being added together. Work after the latest checkpoint, or a log
+without one, is labelled `usage provisional`: output may remain incomplete if a
+job stops before reporting its final usage. Accounting covers the brain job only;
+child jobs and other sessions are not included.
