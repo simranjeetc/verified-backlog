@@ -409,6 +409,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 			if assoc.Sessions >= maxSessions {
 				return loopExit(5, "%s used %d sessions", assoc.Item, assoc.Sessions)
 			}
+			if err := scanLoopWriters(root, bin); err != nil {
+				return err
+			}
 			assoc.Sessions++
 			job, err := startLoopJob(root, assoc.Item, assoc.Token, config, true)
 			if err != nil {
@@ -549,15 +552,60 @@ func completeLoopItem(root string, assoc *loopAssociation) error {
 	if bin == "" {
 		bin = "dispatch"
 	}
-	cmd := exec.Command(bin, "status")
-	cmd.Dir = root
-	data, err := cmd.Output()
-	if err != nil {
-		return loopExit(5, "cannot inspect running jobs after %s: %v", assoc.Item, err)
+	return scanLoopWriters(root, bin)
+}
+
+func scanLoopWriters(root, bin string) error {
+	paths := []string{root}
+	var data []byte
+	probe := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	probe.Dir = root
+	if probe.Run() == nil {
+		cmd := exec.Command("git", "worktree", "list", "--porcelain")
+		cmd.Dir = root
+		var err error
+		data, err = cmd.Output()
+		if err != nil {
+			return loopExit(5, "cannot list git worktrees from %s: %v", root, err)
+		}
+	}
+	var path string
+	prunable := false
+	flush := func() {
+		if path != "" && !prunable && path != root {
+			if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+				paths = append(paths, path)
+			}
+		}
+		path = ""
+		prunable = false
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, "running") {
-			return loopExit(5, "job for %s finished while a dispatch job is still running", assoc.Item)
+		if line == "" {
+			flush()
+			continue
+		}
+		if strings.HasPrefix(line, "worktree ") {
+			flush()
+			path = strings.TrimPrefix(line, "worktree ")
+		} else if line == "prunable" || strings.HasPrefix(line, "prunable ") {
+			prunable = true
+		}
+	}
+	flush()
+	for _, cwd := range paths {
+		status := exec.Command(bin, "status")
+		status.Dir = cwd
+		output, err := status.Output()
+		if err != nil {
+			return loopExit(5, "dispatch status failed in %s: %v", cwd, err)
+		}
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[1] == "done" || fields[1] == "failed" || fields[1] == "cancelled" {
+				continue
+			}
+			return loopExit(5, "dispatch job %s is %s in %s", fields[0], fields[1], cwd)
 		}
 	}
 	return nil
