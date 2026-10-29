@@ -386,7 +386,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 			}
 			cancel := exec.Command(bin, "cancel", assoc.Job)
 			cancel.Dir = root
-			_ = cancel.Run()
+			if err := cancel.Run(); err != nil {
+				return loopExit(5, "cancel for job %s failed: %v", assoc.Job, err)
+			}
 			for {
 				usage, peak, err = loopJobTokenUsage(assoc.Job)
 				if err != nil {
@@ -400,10 +402,22 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 				if dispatchTerminal(state) {
 					break
 				}
-				time.Sleep(time.Duration(pollMS) * time.Millisecond)
+				remaining := time.Duration(timeoutSec)*time.Second - time.Since(started)
+				if remaining <= 0 {
+					return loopExit(5, "job %s did not end after cancel; association retained at %s", assoc.Job, assocPath)
+				}
+				pause := time.Duration(pollMS) * time.Millisecond
+				if pause > remaining {
+					pause = remaining
+				}
+				time.Sleep(pause)
 			}
 			fmt.Printf("%s session %d peak-context %d tokens %d (input %d cache-write %d cache-read %d output %d)\n", assoc.Item, assoc.Sessions, peak, total, usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output)
-			if itemIsFinished(root, assoc.Item) {
+			finished, err := itemIsFinished(root, assoc.Item)
+			if err != nil {
+				return loopExit(5, "cannot determine whether item %s is finished: %v", assoc.Item, err)
+			}
+			if finished {
 				return nil
 			}
 			if assoc.Sessions >= maxSessions {
@@ -411,6 +425,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 			}
 			if err := scanLoopWriters(root, bin); err != nil {
 				return err
+			}
+			if err := checkLoopIndexLock(root); err != nil {
+				return loopExit(5, "%v", err)
 			}
 			assoc.Sessions++
 			job, err := startLoopJob(root, assoc.Item, assoc.Token, config, true)
@@ -511,17 +528,39 @@ func dispatchTerminal(state string) bool {
 	return state == "done" || state == "failed" || state == "lost" || state == "cancelled"
 }
 
-func itemIsFinished(root, id string) bool {
+func itemIsFinished(root, id string) (bool, error) {
 	events, err := readLedger(root)
 	if err != nil {
-		return false
+		return false, err
 	}
 	_, byID, err := derive(events)
 	if err != nil {
-		return false
+		return false, err
 	}
 	it, ok := byID[strings.ToLower(id)]
-	return ok && (it.Status == "closed" || it.Status == "parked" || it.Status == "declined")
+	return ok && (it.Status == "closed" || it.Status == "parked" || it.Status == "declined"), nil
+}
+
+func checkLoopIndexLock(root string) error {
+	cmd := exec.Command("git", "rev-parse", "--git-path", "index.lock")
+	cmd.Dir = root
+	data, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	path := strings.TrimSpace(string(data))
+	if path == "" {
+		return nil
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("git index.lock exists at %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("cannot check git index.lock at %s: %w", path, err)
+	}
+	return nil
 }
 
 func completeLoopItem(root string, assoc *loopAssociation) error {

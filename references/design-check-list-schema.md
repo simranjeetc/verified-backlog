@@ -289,7 +289,14 @@ cache creation and cache read tokens on one top-level assistant message, countin
 message id once. `--max-sessions N` bounds sessions per item (default 5). When a session's peak
 exceeds the context limit, the loop cancels that job once and waits until it is terminal. If the item
 is still open, the loop starts a fresh session for the same item; continuations do not consume the
-item launch budget. At the session limit it exits 5 and retains `.backlog/loop.json`. Each ended
+item launch budget. The cancel and terminal-status wait share the loop's `--timeout` deadline; if a
+successful cancel is followed by a job that remains non-terminal until that deadline, it exits 5 with
+the job id and `did not end after cancel`, retaining `.backlog/loop.json`. A non-zero cancel exits 5
+with the job id and cancel error. Before starting a continuation, the loop must read and derive the
+ledger successfully; a ledger error exits 5 instead of treating the item as unfinished. It also checks
+whether `git rev-parse --git-path index.lock` names an existing path in the bl root and exits 5 naming
+`index.lock`; outside a git repository this check is skipped. At the session limit it exits 5 and retains
+`.backlog/loop.json`. Each ended
 session prints its peak context and summed input, cache creation and output usage (cache reads are
 printed but excluded from that sum). The brain role timeout is 3600 seconds. `--poll-ms N` defaults to 5000;
 `--timeout SECONDS` defaults to 14400; `--dispatch-config FILE` defaults to
