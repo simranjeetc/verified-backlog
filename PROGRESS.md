@@ -764,3 +764,10 @@ Verdict: PASS — closed at cffe478a7f32139247369237124eef8d83c61f20
 - r1 PASS — .backlog/evidence/I127-r1.txt (d614535ea32d)
 - code failures: 0 / cap 3
 
+## I128 — bl loop cannot see the brain's child dispatch jobs started outside the repo cwd: completeLoopItem (I57) and the I127 continuation check run `dispatch status` with no ids from the repo root, which lists only jobs whose cwd is the repo, but the item loop starts produce jobs with cwd = a worktree under the scratch dir (e.g. 20261029-122638-produce-d37e). A producer still writing can therefore be missed, and the loop can advance or start a continuation session while it runs. Fix inside bl and the brain prompt: the loop sets a run tag for the brain (e.g. an env var or title prefix bl-loop-<id>-<token>) that every child dispatch carries, and the loop checks every job carrying that tag (or every running job under DISPATCH_HOME whose meta names this repo or one of its worktrees) is terminal before it advances or relaunches; unknown or lost writers stop the loop with exit 5. Confirm which dispatch fields (meta cwd, title) are available before choosing; do not edit D1.
+
+Verdict: PASS — closed at 2fcee1e3a75223259dca9ec6022056da9a74b438
+
+- r1 PASS — .backlog/evidence/I128-r1.txt (bd6a295df38b)
+- code failures: 0 / cap 3
+
