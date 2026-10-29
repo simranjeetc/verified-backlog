@@ -1,55 +1,68 @@
 #!/bin/sh
 # usage: scripts/dispatch.sh <role> <prompt file> <expected output file> [timeout secs]
-# Three cheap models only: gpt-6-luna via codex exec (Codex's workspace-write sandbox, no
-# approval prompts), claude:haiku via claude -p (Claude Code's bash sandbox, edits auto-accepted)
-# and deepseek-v4.1-flash via opencode run (opencode-go). Each chain is a primary and one
-# fallback; moves on when the run fails, times out, or leaves no output file or final message. CHAIN="m1 m2"
-# overrides it (at most two models).
-role=$1; prompt=$2; out=$3; secs=${4:-1800}
-case $role in
-  design)   chain="gpt-6-luna deepseek-v4.1-flash" ;;
-  checks)   chain="claude:haiku deepseek-v4.1-flash" ;;
-  produce)  chain="gpt-6-luna deepseek-v4.1-flash" ;;
-  verify)   chain="deepseek-v4.1-flash gpt-6-luna" ;;
-  light)    chain="gpt-6-luna deepseek-v4.1-flash" ;;
-  *) echo "dispatch.sh: role must be design, checks, produce, verify or light" >&2; exit 64 ;;
+# Starts and waits for one dispatch job, printing the model on success.
+role=$1
+prompt=$2
+out=$3
+secs=${4:-1800}
+dispatch_bin=${DISPATCH_BIN:-$HOME/.agents/bin/dispatch}
+
+case $out in
+  /*) abs_out=$out ;;
+  *) abs_out=$(pwd -P)/$out ;;
 esac
-chain=${CHAIN:-$chain}
-set -- $chain; [ $# -le 2 ] || { echo "dispatch.sh: at most two models per chain (primary, fallback)" >&2; exit 64; }
-log=$out.log; : > "$log"
-outdir=$(cd "$(dirname "$out")" && pwd -P)   # the report may live outside the sandbox's roots
-# go build's default cache is outside the sandbox's writable roots
-export GOCACHE=${GOCACHE_DISPATCH:-${TMPDIR:-/tmp}/dispatch-gocache}
-for m in $chain; do
-  case $m in
-    gpt-6-luna|claude:haiku|deepseek-v4.1-flash) ;;
-    *) echo "dispatch.sh: $m refused; only gpt-6-luna, claude:haiku and deepseek-v4.1-flash" >&2; exit 64 ;;
-  esac
-  rm -f "$out" "$out.last"
-  echo "== $m $(date +%H:%M:%S)" >> "$log"
-  if [ "$m" = claude:haiku ]; then
-    # Claude Code's sandbox cannot write $TMPDIR, so mktemp and go build get a dir it can write
-    work=$outdir/.dispatch-tmp; mkdir -p "$work/gocache"
-    TMPDIR=$work GOCACHE=$work/gocache perl -e 'alarm shift; exec @ARGV' "$secs" \
-      claude -p --model haiku --permission-mode acceptEdits --add-dir "$outdir" \
-        --allowedTools Bash Read Write Edit Grep Glob \
-        --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}' \
-        > "$out.last" 2>> "$log" < "$prompt"
-  elif [ "$m" = deepseek-v4.1-flash ]; then
-    perl -e 'alarm shift; exec @ARGV' "$secs" \
-      opencode run --title "$(basename "$out") $m" --thinking --model "opencode-go/$m" "$(cat "$prompt")" \
-        > "$out.last" 2>> "$log" < /dev/null
-  else
-    perl -e 'alarm shift; exec @ARGV' "$secs" \
-      codex exec -s workspace-write -c approval_policy='"never"' --skip-git-repo-check --ephemeral \
-        -c "sandbox_workspace_write.writable_roots=[\"$outdir\"]" \
-        -m "$m" -o "$out.last" - >> "$log" 2>&1 < "$prompt"
-  fi
-  rc=$?
-  case $m in claude:haiku|deepseek-v4.1-flash) cat "$out.last" >> "$log" ;; esac
-  echo "== exit $rc $(date +%H:%M:%S)" >> "$log"
-  if [ $rc -eq 0 ] && [ ! -s "$out" ] && [ -s "$out.last" ]; then mv "$out.last" "$out"; fi
-  if [ $rc -eq 0 ] && [ -s "$out" ]; then rm -f "$out.last"; echo "MODEL $m"; exit 0; fi
-  rm -f "$out.last"
-done
-echo "dispatch.sh: every model in the $role chain failed; see $log" >&2; exit 1
+outdir=$(dirname "$abs_out")
+title=$(basename "$out")
+prompt_copy=$(mktemp /tmp/dispatch-prompt.XXXXXX) || exit 1
+trap 'rm -f "$prompt_copy"' 0
+{
+  printf 'Write your final report to %s; a report printed only to stdout is lost.\n' "$abs_out"
+  cat "$prompt"
+} > "$prompt_copy" || exit 1
+
+chain_arg=
+if [ "${CHAIN+x}" = x ]; then
+  set -- $CHAIN
+  [ "$#" -le 2 ] || { echo "dispatch.sh: at most two models per chain (primary, fallback)" >&2; exit 64; }
+  mapped=
+  for model do
+    case $model in
+      gpt-6-luna) entry=codex:$model ;;
+      claude:haiku) entry=$model ;;
+      deepseek-v4.1-flash) entry=opencode:$model ;;
+      *) echo "dispatch.sh: $model refused; only gpt-6-luna, claude:haiku and deepseek-v4.1-flash" >&2; exit 64 ;;
+    esac
+    if [ -n "$mapped" ]; then mapped=$mapped,$entry; else mapped=$entry; fi
+  done
+  [ -n "$mapped" ] || { echo "dispatch.sh: empty model chain" >&2; exit 64; }
+  chain_arg=$mapped
+fi
+
+if [ -n "$chain_arg" ]; then
+  job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title" --chain "$chain_arg")
+else
+  job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title")
+fi
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+status=$("$dispatch_bin" wait "$job_id" --timeout 0)
+rc=$?
+set -- $status
+state=${2:-lost}
+model=${4:-}
+if [ "$state" = done ] && [ "$rc" -eq 0 ]; then
+  printf 'MODEL %s\n' "$model"
+else
+  printf 'dispatch.sh: every model in the %s chain failed; see %s.log\n' "$role" "$out" >&2
+  [ "$rc" -ne 0 ] || rc=1
+fi
+
+if [ -n "${DISPATCH_HOME:-}" ]; then
+  job_log=$DISPATCH_HOME/jobs/$job_id/log
+else
+  job_log=$HOME/.local/state/dispatch/jobs/$job_id/log
+fi
+if [ -f "$job_log" ]; then cat "$job_log" > "$out.log"; else : > "$out.log"; fi
+printf '== exit %s %s\n' "$rc" "$(date +%H:%M:%S)" >> "$out.log"
+exit "$rc"
