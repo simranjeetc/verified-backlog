@@ -778,3 +778,10 @@ Verdict: PASS — closed at c28a3fc0b323a82b424ff4e2487612b944a42580
 - r1 PASS — .backlog/evidence/I129-r1.txt (a47d26ab474d)
 - code failures: 0 / cap 3
 
+## I130 — bl loop writer scan gaps (I128 RO1, RO2, v1 finding): (1) when git rev-parse fails in the root for a reason other than not-a-repo (unreadable .git, dubious ownership) the scan silently degrades to the root only and the loop advances past live worktree jobs; distinguish 'not a git repository' from other failures and exit 5 on the latter; (2) jobs started in a subdirectory of the repo or a worktree are invisible because dispatch status matches exact cwd; match the bl-loop-<id>-<token> title tag or a cwd prefix; (3) add a Go test for a bl root in a repo subdirectory with a live worktree job
+
+Verdict: PASS — closed at 515e4e913625f2b9da2daf424e50801c24d8c1a8
+
+- r1 PASS — .backlog/evidence/I130-r1.txt (479a9fb6deea)
+- code failures: 0 / cap 3
+
