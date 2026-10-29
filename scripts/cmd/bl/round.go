@@ -132,6 +132,9 @@ func cmdRound(root string, a args) error {
 	if err := verifyTests(root, it); err != nil {
 		return err
 	}
+	if err := verifyPacketWindow(root, events, it); err != nil {
+		return err
+	}
 	// R23 (P2): a harness round has no rows and stops here. The check sits right after R20 and
 	// before everything else on this path, so a harness round on tampered frozen artefacts is
 	// refused under R20, not R23.

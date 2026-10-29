@@ -40,6 +40,7 @@ func schemaJSON() map[string]any {
 			"bump":          {"required": {"ids", "by"}, "optional": {}},
 			"unbump":        {"required": {"ids", "by"}, "optional": {}},
 			"rank":          {"required": {"ranking", "by"}, "optional": {}},
+			"packet":        {"required": {"id", "ledger_len", "ledger_sha", "runlog_len", "runlog_sha", "backlog_sha"}, "optional": {}},
 		},
 	}
 }
@@ -55,10 +56,9 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "signoff", "bump", "unbump", "rank"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "signoff", "bump", "unbump", "rank", "packet"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
-	// The count is part of the output: a reader (and a grep) must be able to tell 13 kinds
-	// from 12 without counting the lines.
+	// The count is part of the output: a reader (and a grep) can tell 21 kinds from 20 without counting the lines.
 	fmt.Printf("bl schema v1 — %s/%s · %d event kinds\n", backlogDir, ledgerName, len(order))
 	for _, name := range order {
 		s := spec[name]

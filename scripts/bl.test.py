@@ -664,7 +664,7 @@ def show_and_schema_emit_valid_json():
     assert schema["causes"] == ["code", "harness", "dispute"], schema
     assert sorted(schema["events"]) == [
         "brief", "bump", "checks", "claims", "close", "defer", "drop", "file",
-        "misclassified", "note", "open", "rank", "rebaseline", "reopen", "restart", "round",
+        "misclassified", "note", "open", "packet", "rank", "rebaseline", "reopen", "restart", "round",
         "run", "second-check", "signoff", "unbump",
     ], schema
     assert schema["events"]["restart"]["required"] == [

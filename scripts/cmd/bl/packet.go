@@ -94,6 +94,15 @@ func cmdPacket(root string, a args) error {
 	if p.cited, p.omitted, p.rulesOK, err = packetRules(root, it, p.brief); err != nil {
 		return err
 	}
+	if role == "verifier" {
+		ev, snapshotErr := packetSnapshot(root, it.ID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		if _, err := appendEvent(root, ev); err != nil {
+			return err
+		}
+	}
 	p.printTo(os.Stdout)
 	return nil
 }
@@ -148,6 +157,7 @@ func packetRules(root string, it *Item, brief string) (cited, omitted []packetRu
 func (p packet) printTo(w io.Writer) {
 	fmt.Fprintf(w, "# %s packet (role %s)\n", p.item.ID, p.role)
 	if p.role == "verifier" {
+		fmt.Fprintln(w, "Run every bl probe in a scratch directory: cd \"$(mktemp -d)\" before bl init, never in this repository. bl round refuses under R39 when the ledger or .backlog/ changed since this packet.")
 		if clause := packetClause(p.brief, "B0"); clause != "" {
 			fmt.Fprint(w, "\n## Purpose (B0)\n")
 			writePacketText(w, clause)

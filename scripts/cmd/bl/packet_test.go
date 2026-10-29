@@ -14,7 +14,7 @@ func TestVerifierPacketLeadsWithPurposeB0(t *testing.T) {
 	var out bytes.Buffer
 	p.printTo(&out)
 	text := out.String()
-	if !strings.HasPrefix(text, "# A1 packet (role verifier)\n\n## Purpose (B0)\nB0: purpose. Example: x.\nA defect that breaks this purpose is a failure, not report-only.\n") {
+	if !strings.HasPrefix(text, "# A1 packet (role verifier)\nRun every bl probe in a scratch directory: cd \"$(mktemp -d)\" before bl init, never in this repository. bl round refuses under R39 when the ledger or .backlog/ changed since this packet.\n\n## Purpose (B0)\nB0: purpose. Example: x.\nA defect that breaks this purpose is a failure, not report-only.\n") {
 		t.Fatalf("verifier packet does not lead with B0 purpose:\n%s", text)
 	}
 }
@@ -92,6 +92,9 @@ func TestVerifierPacketIncludesLatestAttemptRunAndGuidance(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Fatalf("run section does not match:\n%s", out)
 	}
+	if !strings.Contains(out, `cd "$(mktemp -d)"`) || !strings.Contains(out, "R39") || !strings.Contains(out, "never in this repository") {
+		t.Fatalf("verifier packet is missing the scratch-directory guidance:\n%s", out)
+	}
 	if !(strings.Index(out, "## Intent\n") < runAt && runAt < strings.Index(out, "## Brief\n")) {
 		t.Fatalf("run section is not immediately after intent:\n%s", out)
 	}
@@ -100,6 +103,39 @@ func TestVerifierPacketIncludesLatestAttemptRunAndGuidance(t *testing.T) {
 		if strings.Contains(packet, "## Run") || strings.Contains(packet, "already ran under bl run") {
 			t.Errorf("%s packet includes run evidence:\n%s", role, packet)
 		}
+		if strings.Contains(packet, "R39") {
+			t.Errorf("%s packet includes verifier-only guidance:\n%s", role, packet)
+		}
+	}
+}
+
+func TestVerifierPacketRecordsSnapshot(t *testing.T) {
+	dir := runItem(t, oneRowList)
+	beforeLedger, err := os.ReadFile(filepath.Join(dir, backlogDir, ledgerName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRunlog, err := os.ReadFile(filepath.Join(dir, backlogDir, runlogName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBacklog, err := backlogDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := events[len(events)-1]
+	if ev.T != "packet" || ev.ID != "A1" || derefInt(ev.LedgerLen) != len(beforeLedger) || ev.LedgerSHA != shaHex(beforeLedger) {
+		t.Fatalf("packet ledger snapshot = %+v", ev)
+	}
+	if derefInt(ev.RunlogLen) != len(beforeRunlog) || ev.RunlogSHA != shaHex(beforeRunlog) || ev.BacklogSHA != beforeBacklog {
+		t.Fatalf("packet runlog/backlog snapshot = %+v", ev)
 	}
 }
 

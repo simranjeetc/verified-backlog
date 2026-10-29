@@ -193,10 +193,10 @@ func TestSchemaIsJSON(t *testing.T) {
 		t.Errorf("version = %v", s["version"])
 	}
 	events := s["events"].(map[string]map[string][]string)
-	if len(events) != 20 {
-		t.Errorf("want 20 event kinds, got %d", len(events))
+	if len(events) != 21 {
+		t.Errorf("want 21 event kinds, got %d", len(events))
 	}
-	for _, kind := range []string{"checks", "claims"} {
+	for _, kind := range []string{"checks", "claims", "packet"} {
 		if _, ok := events[kind]; !ok {
 			t.Errorf("schema is missing event kind %q", kind)
 		}
@@ -267,10 +267,10 @@ func TestSchemaListsEveryKind(t *testing.T) {
 			kinds[f[0]] = true
 		}
 	}
-	if len(kinds) != 20 {
-		t.Errorf("want 20 event kinds in the schema output, got %d: %v", len(kinds), kinds)
+	if len(kinds) != 21 {
+		t.Errorf("want 21 event kinds in the schema output, got %d: %v", len(kinds), kinds)
 	}
-	for _, kind := range []string{"brief", "rebaseline", "run", "second-check", "misclassified", "restart", "signoff"} {
+	for _, kind := range []string{"brief", "rebaseline", "run", "second-check", "misclassified", "restart", "signoff", "packet"} {
 		if !kinds[kind] {
 			t.Errorf("the schema output is missing event kind %q", kind)
 		}

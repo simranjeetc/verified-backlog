@@ -121,6 +121,13 @@ type Event struct {
 	Change    string `json:"change,omitempty"`
 	Record    string `json:"record,omitempty"`
 	RecordSHA string `json:"record_sha,omitempty"`
+	// A verifier packet (R39) records the window it opens: the ledger and run log prefixes and
+	// the .backlog/ digest. The lengths are pointers so that a 0 is recorded, as with Attempt.
+	LedgerLen  *int   `json:"ledger_len,omitempty"`
+	LedgerSHA  string `json:"ledger_sha,omitempty"`
+	RunlogLen  *int   `json:"runlog_len,omitempty"`
+	RunlogSHA  string `json:"runlog_sha,omitempty"`
+	BacklogSHA string `json:"backlog_sha,omitempty"`
 }
 
 // Ranked is one line of the loop's ranking: an item and why it ranks where it does.
@@ -436,6 +443,8 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 					return nil, nil, corrupt("%s names unknown item %s", ev.T, id)
 				}
 			}
+			continue
+		case "packet":
 			continue
 		}
 		it, ok := byID[strings.ToLower(ev.ID)]
