@@ -6,13 +6,12 @@ diagram is where to check it when the two disagree.
 ## One item, step by step
 
 ```
- bl file ─► bl open ─► bl brief ─► checks (haiku) ─► bl checks (frozen)
-                                                          │
-   ┌──────────────────────────────────────────────────────┘
-   ▼
- produce (luna, worktree) ─► bl claims ─► bl run (frozen rows)
-                                              │
-   ┌──────────────────────────────────────────┘
+ bl file ─► bl open ─► bl brief ─┬─► produce (luna, worktree) ─┐   in parallel;
+                                 └─► checks (haiku) ───────────┤   neither waits
+                                                               ▼
+               bl checks (frozen) ─► bl claims ─► bl run (frozen rows)
+                                                       │
+   ┌───────────────────────────────────────────────────┘
    ▼
  bl packet --role verifier ─► verify (deepseek) ─► bl round
                                                      │

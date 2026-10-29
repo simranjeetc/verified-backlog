@@ -63,7 +63,10 @@ before-state is recorded.
 
 One item, one producer.
 
-Read [producer.md](producer.md), fill its placeholders from the item brief, and send it to the producer.
+Read [producer.md](producer.md), fill its placeholders from the item brief, and send it to the producer
+at the same time as verifier dispatch 1 in Step 3. Do not wait for either prompt to return before
+sending the other. The producer does not get `checks.tsv` or any frozen check list; it can work while
+the verifier writes the checks.
 
 Completion: the producer has reported, and a command in its report shows the property holding.
 
@@ -71,25 +74,33 @@ Completion: the producer has reported, and a command in its report shows the pro
 
 Two dispatches to the same verifier, in this order. One prompt carrying both defeats the purpose: a
 model reads its whole prompt at once, so the producer's claims would reach it before it writes a
-single check.
+single check. Dispatch 1 sends the intent and nothing else.
 
-Dispatch 1 sends the intent and nothing else:
+Read [verifier-checks.md](verifier-checks.md), fill its placeholders with the intent, and send it as
+dispatch 1, at the same time as the producer dispatch in Step 2. After both dispatches return, record the checks,
+then the claims, then the run:
 
-Read [verifier-checks.md](verifier-checks.md), fill its placeholders with the intent, and send it as dispatch 1.
+```sh
+"$BL" checks A1 --file <evidence dir>/A1-checks.tsv
+"$BL" claims A1 --file <evidence dir>/A1-claims.md
+"$BL" run A1
+```
 
-Put every docs clause in a `decider: judge` row with a specific `fail_if`; the
-verifier decides it by reading the docs against the clause's example. Never put
-a docs clause in a test that greps markdown. A blocking test row must exercise
-code; an all-`.md` `@_covers` is refused under R37.
+If the producer finishes first, it waits only for this recording, not for a re-dispatch.
 
-Dispatch 2 sends the claims, plus any cases you require, labelled as yours rather than as its rubric.
-Where the harness cannot continue a subagent, run both as fresh verifiers: the first returns a check
-list, the second re-derives with the claims and adds your cases.
+Put every docs clause in a `decider: judge` row with a specific `fail_if`; the verifier decides it by
+reading the docs against the clause's example. Never put a docs clause in a test that greps markdown.
+A blocking test row must exercise code; an all-`.md` `@_covers` is refused under R37.
 
-Read [verifier-claims.md](verifier-claims.md), fill its placeholders with the claims and required cases, and send it as dispatch 2.
+Then send the verifier dispatch 2 with the claims and any required cases, labelled as yours rather
+than as its rubric. Where the harness cannot continue a subagent, run both as fresh verifiers: the
+first returns a check list, the second re-derives with the claims and adds your cases.
 
-Completion: the verifier has returned a verdict with a command behind every row, and its own check
-list beside it.
+Read [verifier-claims.md](verifier-claims.md), fill its placeholders with the claims and required
+cases, and send it as dispatch 2.
+
+Completion: the checks are frozen, the producer claims are recorded, and `bl run` has completed; the
+verifier has returned a verdict with a command behind every row.
 
 ### The verifier of a later attempt
 

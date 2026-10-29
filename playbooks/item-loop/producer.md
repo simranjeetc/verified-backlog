@@ -28,6 +28,7 @@ CODE QUALITY (for code changes, within this item's scope)
     with no additional review stage or verification round.
 
 RULES
+  - Do NOT read `.backlog/items/<id>/checks.tsv` or any frozen check list.
   - Do NOT commit or push.
   - Do NOT edit the ledger, TODO.md, PROGRESS.md, BRIEF.md, or any spec the item points at.
   - Do NOT fix anything outside this item, even when you find it broken. Report it.
