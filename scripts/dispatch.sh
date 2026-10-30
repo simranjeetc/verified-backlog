@@ -13,6 +13,9 @@ case $out in
 esac
 outdir=$(dirname "$abs_out")
 title=$(basename "$out")
+if [ -n "${BL_LOOP_TOKEN:-}" ]; then
+  title=bl-worker-$BL_LOOP_TOKEN-$title
+fi
 prompt_copy=$(mktemp /tmp/dispatch-prompt.XXXXXX) || exit 1
 trap 'rm -f "$prompt_copy"' 0
 {
@@ -38,10 +41,15 @@ if [ "${CHAIN+x}" = x ]; then
   chain_arg=$mapped
 fi
 
-if [ -n "$chain_arg" ]; then
-  job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title" --chain "$chain_arg")
+if [ -n "${BL_LOOP_TOKEN:-}" ]; then
+  # The helper holds a session launch lock through start and receipt persistence.
+  job_id=$(python3 "$BL_LOOP_ROOT/scripts/register-loop-worker.py" "$dispatch_bin" "$role" "$prompt_copy" "$out" "$secs" "$title" "$chain_arg")
 else
-  job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title")
+  if [ -n "$chain_arg" ]; then
+    job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title" --chain "$chain_arg")
+  else
+    job_id=$("$dispatch_bin" start "$role" "$prompt_copy" "$out" --timeout "$secs" --title "$title")
+  fi
 fi
 rc=$?
 [ "$rc" -eq 0 ] || exit "$rc"

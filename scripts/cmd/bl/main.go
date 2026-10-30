@@ -105,7 +105,7 @@ func (a args) input(name string) (string, error) {
 	return string(data), nil
 }
 
-var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true, "check": true, "render": true, "init": true}
+var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true, "check": true, "render": true, "init": true, "cancel": true}
 
 // repeatableFlagNames are the flags that may be given more than once: the item's scope is a
 // set of paths, and the scope-ignored list is a set of files.

@@ -200,3 +200,36 @@ records their working files, whereas HEAD records a Git link. This command refus
 entries it cannot match rather than excluding them. As with other ledger commands,
 serialize writers; its final tree, HEAD and ledger checks detect intervening changes
 but do not provide a cross-process transaction.
+
+### Cancel a supervised loop
+
+Run `scripts/bl loop --cancel --reason "why you stopped it"` from the repository.
+It requests a running loop to yield its lock, cancels the brain first, then cancels
+registered workers and dispatch jobs in the repository and its worktrees. It parks
+unfinished work and releases the association. `--timeout SECONDS` bounds the wait
+for jobs to stop (default 120 seconds; dispatch calls have their own short bounds).
+A lost job cannot prove that its processes ended and is reported as a leftover.
+
+Partial work is saved under `.backlog/cancelled/`. Root changes get a binary patch;
+restoration requires unchanged committed entries within scope and no staged work
+there. Committed or staged changes are preserved and filed for attended recovery.
+Detached worktree HEADs are retained under `refs/bl-cancel/ITEM/COMMIT` to preserve
+commit history. Only worktrees under recorded loop session directories are removed, after a binary
+patch and a full archive preserve their tracked, untracked and ignored files.
+Unrelated worktrees remain. When a worker cannot be confirmed stopped, files and
+worktrees remain; a follow-up item records the exact jobs or paths requiring recovery.
+Preservation failures retain the source files and file a follow-up. Failures to
+record the disposition retain the association.
+
+Worker launches must use `scripts/dispatch.sh` from the assigned workspace. A loop
+passes ownership through the environment; the wrapper registers each dispatch job
+under a session launch lock before waiting. Shutdown fences new launches and waits
+for that lock before discovering jobs. Ownership tags in dispatch metadata cover the gap before receipt
+creation if the wrapper is killed. Receipts live in the loop session directory outside the repository,
+so they do not alter verifier evidence. While `bl loop` is monitoring, a brain's
+completion, failure or timeout triggers cancellation of registered leftover workers;
+the context-limit continuation also cleans workers before starting another brain.
+Errors name the worker jobs that could not be confirmed stopped. A timeout of the
+loop wait also cancels its brain. Killing the monitor itself does not install an
+external watchdog: resume it or run `--cancel` to recover. Legacy direct runtime
+processes without dispatch jobs cannot be identified safely by this command.

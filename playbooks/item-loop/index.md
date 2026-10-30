@@ -256,3 +256,9 @@ Completion: `bl check --views` exits 0, `bl next` names an open item or `none`, 
 
 `bl status` for the counts, the one number that proves the item, what was filed, and what is parked.
 Then the next item, or hand back.
+
+For supervised-loop workers, launch through `scripts/dispatch.sh` in the assigned
+workspace so the inherited loop ownership registers a dispatch job. Create the
+producer worktree inside the session directory named by the supervisor packet.
+Use `bl loop --cancel --reason "..."` for operator cancellation; recovery behavior
+and preserved artifacts are described in README.md, “Cancel a supervised loop”.

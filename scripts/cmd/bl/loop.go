@@ -17,12 +17,14 @@ import (
 )
 
 type loopAssociation struct {
-	Item     string `json:"item"`
-	Token    string `json:"token"`
-	Launches int    `json:"launches"`
-	Job      string `json:"job,omitempty"`
-	Tokens   int    `json:"tokens,omitempty"`
-	Sessions int    `json:"sessions,omitempty"`
+	Item      string   `json:"item"`
+	Token     string   `json:"token"`
+	Launches  int      `json:"launches"`
+	Job       string   `json:"job,omitempty"`
+	Tokens    int      `json:"tokens,omitempty"`
+	Sessions  int      `json:"sessions,omitempty"`
+	Dirs      []string `json:"dirs,omitempty"`
+	StartTree string   `json:"start_tree,omitempty"`
 }
 
 type loopExitError struct {
@@ -91,11 +93,21 @@ func cmdLoop(root string, a args) error {
 	if err != nil {
 		return err
 	}
+	if a.flag("cancel") {
+		if err := requestLoopStop(root, lock); err != nil {
+			lock.Close()
+			return err
+		}
+	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = lock.Close()
 		return refuse("could not acquire %s: %v", filepath.Join(p, "loop.lock"), err)
 	}
 	loopLockFile = lock
+	defer releaseLoopLock()
+	if a.flag("cancel") {
+		return cmdLoopCancel(root, a)
+	}
 	loopStarted := time.Now()
 	assocPath := filepath.Join(p, "loop.json")
 	var assoc *loopAssociation
@@ -152,11 +164,20 @@ func cmdLoop(root string, a args) error {
 			}
 			return loopExit(3, "no workable item; remaining: %s", strings.Join(state.remaining, ", "))
 		}
+		if err := scanLoopWriters(root, dispatchBin()); err != nil {
+			return err
+		}
 		tokenBytes := make([]byte, 12)
 		if _, err := rand.Read(tokenBytes); err != nil {
 			return err
 		}
 		assoc = &loopAssociation{Item: id, Token: hex.EncodeToString(tokenBytes), Launches: launches + 1, Sessions: 1}
+		if isGit(root) {
+			assoc.StartTree, err = verifiedTreeWriting(root)
+			if err != nil {
+				return err
+			}
+		}
 		if err := writeAssociation(assocPath, assoc); err != nil {
 			return err
 		}
@@ -166,6 +187,7 @@ func cmdLoop(root string, a args) error {
 			return loopExit(5, "dispatch start for %s failed: %v", id, err)
 		}
 		assoc.Job = job
+		refreshLoopDirs(root, assoc)
 		if err := writeAssociation(assocPath, assoc); err != nil {
 			return err
 		}
@@ -345,6 +367,14 @@ func startLoopJob(root, id, token, config string, continuation bool) (string, er
 	}
 	cmd := exec.Command(bin, "start", "brain", prompt, out, "--config", config, "--title", "bl-loop-"+id+"-"+token)
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "BL_LOOP_ROOT="+root, "BL_LOOP_TOKEN="+token, "BL_LOOP_SESSION="+tmp)
+	if err := recordLoopSession(root, token, tmp); err != nil {
+		return "", err
+	}
+	content += fmt.Sprintf("\nCreate the producer git worktree inside %s. Run all workers through %s/scripts/dispatch.sh so every worker has a registered dispatch job. Use that wrapper from the worker workspace.\n", supervisorQuote(tmp), supervisorQuote(root))
+	if err := os.WriteFile(prompt, []byte(content), 0600); err != nil {
+		return "", err
+	}
 	var stdout strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
@@ -368,12 +398,29 @@ type loopTokenUsage struct {
 
 func (u loopTokenUsage) total() int { return u.Input + u.CacheWrite + u.CacheRead + u.Output }
 
-func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started time.Time, timeoutSec, pollMS, maxContext, maxSessions int, config string) error {
+func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started time.Time, timeoutSec, pollMS, maxContext, maxSessions int, config string) (result error) {
+	defer func() {
+		if assoc.Job != "" {
+			if left := cancelLoopJobs(dispatchBin(), map[string]string{assoc.Job: root}, 10*time.Second); len(left) > 0 {
+				result = loopExit(5, "%v; brain shutdown: %s", result, strings.Join(left, "; "))
+			}
+		}
+		if err := reapLoopWorkers(root, assoc); err != nil {
+			if result == nil {
+				result = err
+			} else {
+				result = loopExit(5, "%v; %v", result, err)
+			}
+		}
+	}()
 	bin := os.Getenv("BL_DISPATCH")
 	if bin == "" {
 		bin = "dispatch"
 	}
 	for {
+		if _, err := os.Stat(filepath.Join(root, backlogDir, "loop.cancel")); err == nil {
+			return loopExit(5, "loop cancellation requested; association retained")
+		}
 		usage, peak, err := loopJobTokenUsage(assoc.Job)
 		if err != nil {
 			return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
@@ -390,6 +437,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 				return loopExit(5, "cancel for job %s failed: %v", assoc.Job, err)
 			}
 			for {
+				if _, err := os.Stat(filepath.Join(root, backlogDir, "loop.cancel")); err == nil {
+					return loopExit(5, "loop cancellation requested during context shutdown; association retained")
+				}
 				usage, peak, err = loopJobTokenUsage(assoc.Job)
 				if err != nil {
 					return loopExit(5, "cannot read token usage for %s: %v", assoc.Item, err)
@@ -428,6 +478,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 			if assoc.Sessions >= maxSessions {
 				return loopExit(5, "%s used %d sessions", assoc.Item, assoc.Sessions)
 			}
+			if err := reapLoopWorkers(root, assoc); err != nil {
+				return err
+			}
 			if err := scanLoopWriters(root, bin); err != nil {
 				return err
 			}
@@ -440,6 +493,7 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 				return loopExit(5, "dispatch continuation for %s failed: %v", assoc.Item, err)
 			}
 			assoc.Job = job
+			refreshLoopDirs(root, assoc)
 			assoc.Tokens = 0
 			if err := writeAssociation(assocPath, assoc); err != nil {
 				return loopExit(5, "cannot save continuation for %s: %v", assoc.Item, err)
@@ -469,6 +523,9 @@ func waitLoopJob(root string, assoc *loopAssociation, assocPath string, started 
 		}
 		remaining := time.Duration(timeoutSec)*time.Second - time.Since(started)
 		if remaining <= 0 {
+			if left := cancelLoopJobs(bin, map[string]string{assoc.Job: root}, 10*time.Second); len(left) > 0 {
+				return loopExit(5, "timed out waiting for %s; %s", assoc.Item, strings.Join(left, "; "))
+			}
 			return loopExit(5, "timed out waiting for %s; association retained at %s", assoc.Item, assocPath)
 		}
 		pause := time.Duration(pollMS) * time.Millisecond
@@ -666,6 +723,29 @@ func completeLoopItem(root string, assoc *loopAssociation) error {
 }
 
 func scanLoopWriters(root, bin string) error {
+	paths, err := loopWorktreePaths(root)
+	if err != nil {
+		return err
+	}
+	for _, cwd := range paths {
+		status := exec.Command(bin, "status")
+		status.Dir = cwd
+		output, err := status.Output()
+		if err != nil {
+			return loopExit(5, "dispatch status failed in %s: %v", cwd, err)
+		}
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[1] == "done" || fields[1] == "failed" || fields[1] == "cancelled" {
+				continue
+			}
+			return loopExit(5, "dispatch job %s is %s in %s", fields[0], fields[1], cwd)
+		}
+	}
+	return nil
+}
+
+func loopWorktreePaths(root string) ([]string, error) {
 	paths := []string{root}
 	var data []byte
 	start := root
@@ -678,7 +758,7 @@ func scanLoopWriters(root, bin string) error {
 			gitEntry = filepath.Join(dir, ".git")
 			break
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return loopExit(5, "cannot inspect git from %s: %v", root, err)
+			return nil, loopExit(5, "cannot inspect git from %s: %v", root, err)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -689,14 +769,14 @@ func scanLoopWriters(root, bin string) error {
 		probe := exec.Command("git", "rev-parse", "--is-inside-work-tree")
 		probe.Dir = root
 		if output, err := probe.CombinedOutput(); err != nil {
-			return loopExit(5, "cannot inspect git from %s: %s", root, strings.TrimSpace(string(output)))
+			return nil, loopExit(5, "cannot inspect git from %s: %s", root, strings.TrimSpace(string(output)))
 		}
 		cmd := exec.Command("git", "worktree", "list", "--porcelain")
 		cmd.Dir = root
 		var err error
 		data, err = cmd.Output()
 		if err != nil {
-			return loopExit(5, "cannot list git worktrees from %s: %v", root, err)
+			return nil, loopExit(5, "cannot list git worktrees from %s: %v", root, err)
 		}
 	}
 	var path string
@@ -723,20 +803,5 @@ func scanLoopWriters(root, bin string) error {
 		}
 	}
 	flush()
-	for _, cwd := range paths {
-		status := exec.Command(bin, "status")
-		status.Dir = cwd
-		output, err := status.Output()
-		if err != nil {
-			return loopExit(5, "dispatch status failed in %s: %v", cwd, err)
-		}
-		for _, line := range strings.Split(string(output), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) < 2 || fields[1] == "done" || fields[1] == "failed" || fields[1] == "cancelled" {
-				continue
-			}
-			return loopExit(5, "dispatch job %s is %s in %s", fields[0], fields[1], cwd)
-		}
-	}
-	return nil
+	return paths, nil
 }
