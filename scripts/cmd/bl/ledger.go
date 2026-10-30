@@ -99,10 +99,12 @@ type Event struct {
 	// The item's scope and the before-state (R28): the scope paths, the ignored files the
 	// item may write, the tree the item was opened against, and the hash of every ignored
 	// file that existed under the scope when it was opened.
-	Scope         []string `json:"scope,omitempty"`
-	ScopeIgnored  []string `json:"scope_ignored,omitempty"`
-	BeforeTree    string   `json:"before_tree,omitempty"`
-	IgnoredBefore []string `json:"ignored_before,omitempty"`
+	Scope          []string `json:"scope,omitempty"`
+	ScopeIgnored   []string `json:"scope_ignored,omitempty"`
+	BeforeTree     string   `json:"before_tree,omitempty"`
+	PrevBeforeTree string   `json:"prev_before_tree,omitempty"`
+	BaselinePaths  []string `json:"baseline_paths,omitempty"`
+	IgnoredBefore  []string `json:"ignored_before,omitempty"`
 	// The tree the round verified (R6) and the finding it raised (R13).
 	Tree    string `json:"tree,omitempty"`
 	Finding string `json:"finding,omitempty"`
@@ -175,6 +177,7 @@ type Item struct {
 	// The seq of the latest re-baseline: a re-baseline is a new premise, so it is recorded
 	// as the premise it is. It resets no count — the round budget belongs to the item.
 	RebaselineSeq int
+	BaselineSeq   int
 	// The attempt (R36). Every item starts in attempt 1; each accepted restart adds 1. The
 	// restarts of the attempts the item has ended are kept in order, and restartSeq is the seq
 	// of the latest of them: a round, a run or a second check at or before it belongs to an
@@ -202,7 +205,7 @@ func (i *Item) attemptRounds() []Event {
 func (i *Item) attemptRuns() []Event {
 	var out []Event
 	for _, r := range i.Runs {
-		if r.Seq > i.restartSeq {
+		if r.Seq > i.restartSeq && r.Seq > i.BaselineSeq {
 			out = append(out, r)
 		}
 	}
@@ -498,6 +501,17 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			}
 			it.Tests, it.TestsSHA = ev.Tests, ev.TestsSHA
 			it.RebaselineSeq = ev.Seq
+		case "baseline":
+			if !it.Opened || len(it.Scope) == 0 || it.passRounds() != 0 || ev.PrevBeforeTree != it.BeforeTree || !treeHashRe.MatchString(ev.BeforeTree) || !treeHashRe.MatchString(ev.Commit) || strings.TrimSpace(ev.Reason) == "" || len(ev.BaselinePaths) == 0 {
+				return nil, nil, corrupt("invalid baseline event for %s", ev.ID)
+			}
+			for _, p := range ev.BaselinePaths {
+				if inScope(it.Scope, p) || isArtifact(p) || p == "" {
+					return nil, nil, corrupt("invalid baseline path for %s", ev.ID)
+				}
+			}
+			it.BeforeTree, it.BaselineSeq = ev.BeforeTree, ev.Seq
+			it.Notes = append(it.Notes, fmt.Sprintf("baseline recovery: %s -> %s; HEAD %s; paths %s; reason: %s; fresh run and verifier required", ev.PrevBeforeTree, ev.BeforeTree, ev.Commit, strings.Join(ev.BaselinePaths, ", "), ev.Reason))
 		case "claims":
 			if it.Checks == "" {
 				return nil, nil, corrupt("claims event for %s before any check list", ev.ID)
@@ -548,6 +562,7 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 			it.Scope, it.ScopeIgnored = nil, nil
 			it.BeforeTree, it.IgnoredBefore = "", nil
 			it.RebaselineSeq = 0
+			it.BaselineSeq = 0
 			// a closed item is reopened by the restart, and the close's commit goes with the
 			// attempt it recorded
 			if it.Status == "closed" {

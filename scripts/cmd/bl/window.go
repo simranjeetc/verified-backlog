@@ -108,7 +108,7 @@ func backlogDigest(root string) (string, error) {
 func verifyPacketWindow(root string, events []Event, it *Item) error {
 	var baseline Event
 	for _, ev := range events {
-		if ev.T == "packet" && strings.EqualFold(ev.ID, it.ID) && ev.Seq > it.restartSeq {
+		if ev.T == "packet" && strings.EqualFold(ev.ID, it.ID) && ev.Seq > it.restartSeq && ev.Seq > it.BaselineSeq {
 			baseline = ev
 		}
 	}
@@ -156,7 +156,7 @@ func verifierWindowRefusal(it *Item, format string, args ...any) error {
 func openVerifierPacket(events []Event, it *Item) int {
 	var packet int
 	for _, ev := range events {
-		if strings.EqualFold(ev.ID, it.ID) && ev.Seq > it.restartSeq {
+		if strings.EqualFold(ev.ID, it.ID) && ev.Seq > it.restartSeq && ev.Seq > it.BaselineSeq {
 			switch ev.T {
 			case "packet":
 				packet = ev.Seq

@@ -25,6 +25,7 @@ func schemaJSON() map[string]any {
 			"brief":         {"required": {"id", "brief", "brief_sha"}, "optional": {}},
 			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "format", "tests", "tests_sha"}},
 			"rebaseline":    {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "reason", "format", "tests", "tests_sha"}},
+			"baseline":      {"required": {"id", "before_tree", "prev_before_tree", "baseline_paths", "commit", "reason"}, "optional": {}},
 			"claims":        {"required": {"id", "claims", "claims_sha"}, "optional": {}},
 			"run":           {"required": {"id", "run", "run_sha"}, "optional": {}},
 			"round":         {"required": {"id", "verdict"}, "optional": {"cause", "rows", "rows_sha", "run", "tree", "finding", "report_sha", "dispositions"}},
@@ -56,7 +57,7 @@ func cmdSchema(root string, a args) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(schemaJSON())
 	}
-	order := []string{"file", "open", "brief", "checks", "rebaseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "signoff", "bump", "unbump", "rank", "packet"}
+	order := []string{"file", "open", "brief", "checks", "rebaseline", "baseline", "claims", "run", "round", "second-check", "misclassified", "close", "drop", "defer", "reopen", "restart", "note", "signoff", "bump", "unbump", "rank", "packet"}
 	spec := schemaJSON()["events"].(map[string]map[string][]string)
 	// The count is part of the output: a reader (and a grep) can tell 21 kinds from 20 without counting the lines.
 	fmt.Printf("bl schema v1 — %s/%s · %d event kinds\n", backlogDir, ledgerName, len(order))

@@ -15,6 +15,7 @@
 //	bl brief A1 --file brief.md                           (amends the brief; a new event)
 //	bl checks A1 [--file checks.tsv] [--tests tests.py] [--amend]  (list from stdin without --file)
 //	bl rebaseline A1 --file checks.tsv [--tests tests.py] --reason "..."  (replaces the frozen list)
+//	bl baseline A1 --reason "external committed changes"   (preserves in-scope baseline; fresh run required)
 //	bl claims A1 --file claims.md
 //	bl run A1                                            (runs the frozen rows; writes the run file)
 //	bl round A1 --verdict FAIL --cause code --rows -      (rows from stdin)
@@ -145,6 +146,7 @@ var handlers = map[string]func(string, args) error{
 	"brief":        cmdBrief,
 	"checks":       cmdChecks,
 	"rebaseline":   cmdRebaseline,
+	"baseline":     cmdBaseline,
 	"claims":       cmdClaims,
 	"run":          cmdRun,
 	"round":        cmdRound,

@@ -176,3 +176,27 @@ round and grants no PASS; existing round gates still apply independently. If an
 output I/O operation fails, do not use a partial pair: rerun conversion successfully.
 Legacy TSV input to `round` remains supported. Rendered verifier prompts include
 exact commands and artifact paths for this workflow.
+
+### Recovering unrelated committed changes
+
+When another commit changes files outside an in-flight item's explicit scope, run
+`bl baseline ID --reason "describe the external commit"`. This records the old and
+new baseline trees, the current HEAD, accepted paths, and reason without spending
+an attempt. Only changed outside-scope entries that exactly match HEAD are accepted;
+the original baseline inside scope stays intact, including producer edits already
+committed. The working tree and real Git index are untouched.
+
+Recovery refuses uncommitted outside-scope changes, ignore/attribute policy changes,
+a missing explicit scope, damaged frozen artifacts, any previous PASS in the attempt,
+and a still-valid verifier window. Finish that window first, or use `bl run` to void
+it before recovery. After recovery, obtain a fresh `bl run`, verifier packet, and
+independent verifier; earlier runs cannot support another round. Earlier rounds,
+round budgets, attempts, and frozen checks remain unchanged. This differs from
+`bl rebaseline`, which replaces a check list before claims. It does not reset an
+exhausted attempt or recover a bad check list.
+
+Repositories with submodules may require attended recovery: the verified tree
+records their working files, whereas HEAD records a Git link. This command refuses
+entries it cannot match rather than excluding them. As with other ledger commands,
+serialize writers; its final tree, HEAD and ledger checks detect intervening changes
+but do not provide a cross-process transaction.

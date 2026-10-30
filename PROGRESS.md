@@ -837,6 +837,13 @@ Source: human
 - note: attempt 2: bl run refused under R26 because the human committed 12bc33c (scripts/bl-loop.dispatch.conf, outside I136's scope) at 16:36 while the run executed; the item's before-tree 2478c00 now differs from HEAD in a file no row covers, so R10 would refuse every round. Harness round records the run that could not complete; restart re-baselines on 12bc33c with the same code and checks.
 - note: I118 (2026-10-29): the brain hit the 3600s dispatch timeout mid-attempt, bl loop exited 5 with the association retained and I118 in flight; removing loop.json alone would leave the loop refusing 'in flight without a loop association', so recovery needed a hand rm plus bl defer and a git stash of the item's work. --cancel/resume must cover a timed-out brain with an in-flight item and a dirty tree.
 
+## I137 — a commit outside an in-flight item's scope (here the human's 12bc33c and 5909f53 to scripts/bl-loop.dispatch.conf during I136) leaves the item's before-tree behind HEAD, so R10 refuses every round over a hunk the item never wrote and each re-baseline costs a restart; R10 also refuses a row-bearing FAIL round, so a bad-check found before any PASS can only reach bl restart through a harness round. bl needs a recorded way to re-baseline the before-tree onto a new HEAD (or to exclude hunks already committed by others) without spending an attempt.
+
+Status: open
+Source: loop:I136
+
+- note: Implemented committed outside-scope baseline recovery via bl baseline ID --reason, preserving original in-scope baseline, frozen artifacts, attempt and round budgets. Earlier runs and verifier packets become ineligible; fresh run and verifier required. Full Go suite, vet and independent review completed. This addresses baseline drift only; bad-check FAIL-round recovery remains separate. No formal item verification or closure claimed.
+
 ## I138 — bl round's R10 refusal names no way forward, so the I124 a1 brain spent a harness FAIL round and a bad-check restart on a gap that bl checks --amend fixes: when R10 refuses and the attempt has no PASS round, the refusal should say that an amendment adding a blocking row that covers the named path (format 2: a test function with that @_covers inserted before the main block), then bl run, records the round; and the item-loop playbook should say the same
 
 Decision: parked — brain timeout 3600s at a2 r3 (verifier in flight, r1+r2 dispute); work in git stash 'I138 a2 brain timeout'; loop halted by user (not verified)
