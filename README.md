@@ -148,4 +148,31 @@ Producer/checks prompts exclude claims and frozen checks; verifier rendering
 retains the existing verifier-window recording. Prepare other prompts first and
 keep the backlog unchanged through verification. Optional verifier-only
 `--required-cases-file FILE` adds explicitly requested cases. Rendering never
-launches workers. Existing plain `packet` output is unchanged.
+launches workers. Plain `packet` remains available.
+
+Prepare verifier evidence without hand-writing TSV or metadata:
+
+```sh
+# After a fresh verifier packet, before investigating; use a new draft path:
+"$BL" verdicts A1 --init --output /tmp/bl-prompts/A1-judgments.json
+# The independent verifier fills summary, judge verdicts/anchors, finding and notes.
+"$BL" verdicts A1 --file /tmp/bl-prompts/A1-judgments.json --output /tmp/bl-prompts/A1-rows.tsv --report /tmp/bl-prompts/A1-report.md
+"$BL" round A1 --rows /tmp/bl-prompts/A1-rows.tsv --report /tmp/bl-prompts/A1-report.md
+```
+
+Keep the generated `binding` unchanged. It pins the item, attempt, verifier packet,
+checks and recorded run/tree; changed source or evidence requires fresh verification,
+not editing metadata. BL derives mechanical verdicts from the hash-verified run,
+orders all rows, escapes the evidence structure, and generates report-only tags,
+counts and disposition comments. The verifier supplies only judgment rows and its
+independent observations; `summary` is required even for an all-mechanical list.
+Notes use `text` and `disposition` (`fix`, `filed` with `item`, or `waived` with
+`reason`). Findings remain blocking disputes, and a `fix` note prevents PASS.
+A mechanical FAIL without a finding needs `--cause code` when recording the round.
+
+Outputs must be outside the repository, including symlink aliases. Initialization
+requires a new draft path. Conversion writes the rows and report but records no
+round and grants no PASS; existing round gates still apply independently. If an
+output I/O operation fails, do not use a partial pair: rerun conversion successfully.
+Legacy TSV input to `round` remains supported. Rendered verifier prompts include
+exact commands and artifact paths for this workflow.

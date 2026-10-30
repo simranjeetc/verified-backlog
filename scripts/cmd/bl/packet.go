@@ -25,15 +25,16 @@ var packetRuleCitation = regexp.MustCompile(`R[0-9]+`)
 // packet is one item's reading packet: what a dispatch pastes in place of the rules doc and the
 // item's files. The claims are the producer's account, so only the verifier's packet holds them.
 type packet struct {
-	item    *Item
-	role    string
-	brief   string
-	claims  string
-	cited   []packetRule
-	omitted []packetRule
-	rulesOK bool
-	run     *runFile
-	runPath string
+	item      *Item
+	role      string
+	brief     string
+	claims    string
+	cited     []packetRule
+	omitted   []packetRule
+	rulesOK   bool
+	run       *runFile
+	runPath   string
+	packetSeq int // next event sequence, used only for unique verifier output names
 }
 
 // packetRule is one rule paragraph of the rules doc: its number, its title, and its text.
@@ -67,6 +68,9 @@ func cmdPacket(root string, a args) error {
 		return refuse("%s has no recorded claims", it.ID)
 	}
 	p := packet{item: it, role: role}
+	if role == "verifier" && len(events) > 0 {
+		p.packetSeq = events[len(events)-1].Seq + 1
+	}
 	if role == "verifier" {
 		runs := it.attemptRuns()
 		if len(runs) > 0 {

@@ -139,8 +139,9 @@ blocking judge row with an anchor in the hunk; for a path-only change its comman
 name `README.md`. The new verifier must evaluate the amended list, not reuse the old verdict.
 
 ```sh
-"$BL" round A1 --verdict PASS --rows <evidence dir>/A1-verify-r1.md
-"$BL" round A1 --verdict FAIL --cause code --rows -      # table on stdin
+# Use the rows TSV and report paths generated from the verifier JSON draft.
+"$BL" round A1 --rows "$ROWS_TSV" --report "$REPORT_MD"
+"$BL" round A1 --cause code --rows "$ROWS_TSV" --report "$REPORT_MD"  # failure without a finding
 ```
 
 `--cause` is yours to set, from what you observed:

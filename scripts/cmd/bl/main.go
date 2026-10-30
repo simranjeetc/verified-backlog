@@ -104,7 +104,7 @@ func (a args) input(name string) (string, error) {
 	return string(data), nil
 }
 
-var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true, "check": true, "render": true}
+var boolFlagNames = map[string]bool{"json": true, "views": true, "due": true, "amend": true, "urgent": true, "check": true, "render": true, "init": true}
 
 // repeatableFlagNames are the flags that may be given more than once: the item's scope is a
 // set of paths, and the scope-ignored list is a set of files.
@@ -148,6 +148,7 @@ var handlers = map[string]func(string, args) error{
 	"claims":       cmdClaims,
 	"run":          cmdRun,
 	"round":        cmdRound,
+	"verdicts":     cmdVerdicts,
 	"second-check": cmdSecondCheck,
 	"close":        cmdClose,
 	"drop":         cmdDrop,
@@ -178,7 +179,7 @@ const usage = `usage: bl [--root DIR] [--json] VERB [args]
 verbs:
   init | file | open | brief | checks | rebaseline | claims | run | round | second-check | close
   drop | defer | reopen | restart | note | signoff | bump | unbump | rank | next | show | packet | status | check
-  render | schema | intake | audit | import | lint | loop
+  render | schema | intake | audit | import | lint | loop | verdicts
 
 state: .backlog/ledger.jsonl  ·  views: TODO.md, PROGRESS.md  ·  log: .backlog/run.log
 exit: 0 ok · 2 refused (nothing written) · 3 corrupt ledger`

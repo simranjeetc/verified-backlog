@@ -108,7 +108,7 @@ func TestRenderedVerifierRetainsWindowAndClaims(t *testing.T) {
 	if gotErr != nil {
 		t.Fatal(gotErr)
 	}
-	for _, want := range []string{"## Claims", "## Run", "R39", "A1-a1-verify-r1.md"} {
+	for _, want := range []string{"## Claims", "## Run", "R39", "A1-a1-verify-r1-p"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -176,7 +176,7 @@ func TestVerifierPromptOutputContractAndImportIsolation(t *testing.T) {
 	if gotErr != nil {
 		t.Fatal(gotErr)
 	}
-	for _, want := range []string{"id<TAB>row_verdict<TAB>anchor", "tree_start", "verify-r1.tsv", "verify-r1.md", "--rows <rows TSV> --report <report>", "sys.dont_write_bytecode = True", "python3 -B", "PYTHONDONTWRITEBYTECODE=1", "Report-only: 0", "empty\n   anchor", "@_covers"} {
+	for _, want := range []string{"verdicts", "--init --output", "verify-r1-p", ".json", ".tsv", ".md", "--rows <rows TSV> --report <report>", "sys.dont_write_bytecode = True", "python3 -B", "PYTHONDONTWRITEBYTECODE=1", "Do not add mechanical rows", "Do not type RO tags", "@_covers"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q", want)
 		}

@@ -16,7 +16,7 @@ import (
 var rolePrompts embed.FS
 
 type promptData struct {
-	ID, Workspace, OutputDir, Evidence, Checks, Tests, Report, BeforeTree, FrozenTests, Rows, ChecksHeader string
+	ID, Workspace, OutputDir, Evidence, Checks, Tests, Report, BeforeTree, FrozenTests, Rows, ChecksHeader, Judgments, InitVerdicts, PrepareVerdicts string
 }
 
 // renderRolePrompt validates explicit dispatch facts before cmdPacket opens the verifier window.
@@ -58,8 +58,26 @@ func renderRolePrompt(root string, a args, p packet) (string, string, error) {
 	d.Evidence = filepath.Join(out, prefix+"-evidence.md")
 	d.Checks = filepath.Join(out, prefix+"-checks.tsv")
 	d.Tests = filepath.Join(out, prefix+"-tests.py")
-	d.Rows = filepath.Join(out, fmt.Sprintf("%s-verify-r%d.tsv", prefix, len(p.item.attemptRounds())+1))
-	d.Report = filepath.Join(out, fmt.Sprintf("%s-verify-r%d.md", prefix, len(p.item.attemptRounds())+1))
+	d.Rows = filepath.Join(out, fmt.Sprintf("%s-verify-r%d-p%d.tsv", prefix, len(p.item.attemptRounds())+1, p.packetSeq))
+	d.Report = filepath.Join(out, fmt.Sprintf("%s-verify-r%d-p%d.md", prefix, len(p.item.attemptRounds())+1, p.packetSeq))
+	d.Judgments = filepath.Join(out, fmt.Sprintf("%s-verify-r%d-p%d.json", prefix, len(p.item.attemptRounds())+1, p.packetSeq))
+	if p.role == "verifier" {
+		if _, err := verdictOutputPath(root, d.Judgments); err != nil {
+			return "", "", err
+		}
+		binary, err := os.Executable()
+		if err != nil {
+			return "", "", err
+		}
+		repo, err := filepath.Abs(root)
+		if err != nil {
+			return "", "", err
+		}
+		command := supervisorQuote(binary) + " --root " + supervisorQuote(repo) + " verdicts " + supervisorQuote(p.item.ID)
+		d.InitVerdicts = command + " --init --output " + supervisorQuote(d.Judgments)
+		d.PrepareVerdicts = command + " --file " + supervisorQuote(d.Judgments) + " --output " + supervisorQuote(d.Rows) + " --report " + supervisorQuote(d.Report)
+	}
+
 	src, err := rolePrompts.ReadFile("prompts/v1/" + p.role + ".md.tmpl")
 	if err != nil {
 		return "", "", err

@@ -21,3 +21,10 @@ verifier window, so prepare other prompts first and keep the backlog unchanged u
 the verdict is recorded. Optional `--required-cases-file "$CASES"` supplies explicit
 supervisor-requested cases; it is accepted only for this role. It does not replace the
 independent verifier’s checks.
+
+The rendered verifier initializes a bound JSON draft with `bl verdicts --init`,
+fills its independent judgments, then uses `bl verdicts --file` to produce the
+rows TSV and human report. It must preserve the binding and use a new verifier
+after source, checks, run or packet changes. The supervisor records the generated
+files using `bl round --rows ... --report ...`; preparation alone is not a round.
+Use an output directory outside the repository for this workflow.

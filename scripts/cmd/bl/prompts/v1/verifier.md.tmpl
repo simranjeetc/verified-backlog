@@ -24,18 +24,33 @@ in their environment too. Alternatively import a copy under {{.OutputDir}} with 
    isolated there too; copying only the top-level module is insufficient.
 Do not delete caches in the repository after the fact; R39 remains strict.
 
-OUTPUT TWO SEPARATE FILES:
-1. Write the rows TSV to {{.Rows}}. Use literal tabs, no Markdown table or fences.
-   The header is `id<TAB>row_verdict<TAB>anchor`, followed by `run <run-id>`
-   and `tree <40-hex>` from the recorded run (tree_start). Include every frozen
-   check id exactly once, with PASS or FAIL. A decider: bl row has an empty
-   anchor (retain the trailing tab); a judge row needs an R9 source or output
-   anchor: `file:line "quoted source text"` within the changed hunk, or
-   `"quoted output text"` from the recorded run. Record an independent defect as a `# finding: <text>` comment.
-2. Write the human report to {{.Report}}: probes and observations, overall
-   verdict, and the strongest counterexample or "none found, tried X, Y, Z".
-   End with exactly one `Report-only: N` line; use `Report-only: 0` when empty.
-   Tag notes [RO1] through [ROn]. Each needs a matching disposition comment in
-   the TSV: `# report RO1: fix`, `# report RO1: filed <existing-open-ID>`, or
-   `# report RO1: waived <reason>`. Do not substitute the report for the TSV.
-The supervisor records these with `bl round {{.ID}} --rows <rows TSV> --report <report>`.
+PREPARE STRUCTURED EVIDENCE:
+Before investigating, initialize your JSON draft once using this exact command:
+{{.InitVerdicts}}
+This reads the current verifier window; it records no round. Keep its `binding`
+unchanged. Never initialize a replacement to reuse earlier judgments after the
+source, run, checks or verifier packet changes: dispatch a fresh verifier instead.
+
+Edit {{.Judgments}} with your independent decisions:
+  - `summary`: probes, observations and strongest counterexample, or "none found,
+    tried X, Y, Z". This is required even when every row is mechanical.
+  - `judgments`: exactly the supplied judge IDs, each with `verdict` PASS or FAIL
+    and an R9 `anchor`: `file:line "quoted source text"` within the changed hunk,
+    or `"quoted output text"` from the recorded run. JSON-escape quotes normally.
+    Do not add mechanical rows; BL derives them from the recorded run.
+  - `finding`: a one-line independent blocking defect, or an empty string.
+    Put detailed probes in summary. A finding forces a dispute at round time.
+  - `notes`: report-only objects, each with `text` and `disposition`:
+    `fix`; `filed` with an `item` naming an existing open backlog item; or
+    `waived` with a nonempty `reason`. Leave notes empty when there are none.
+    Do not type RO tags, counts, or disposition comments; BL generates them.
+    Use JSON arrays/objects, not Markdown. Unknown fields and duplicate keys fail.
+
+Convert the completed draft with this exact command:
+{{.PrepareVerdicts}}
+BL writes {{.Rows}} and {{.Report}}. Do not hand-edit generated evidence.
+Conversion validates the binding and evidence window but does not record a round
+or grant PASS. On refusal, report the error; do not patch metadata to force it.
+The supervisor applies the existing gates with
+`bl round {{.ID}} --rows <rows TSV> --report <report>` (and --cause code when a
+mechanical failure requires it). No separate hand-written report is needed.
