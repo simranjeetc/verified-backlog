@@ -10,12 +10,40 @@ Write the checks this item needs, before you see anyone's account of the work.
 Each check is a command with an expected result. For R10, a Python test row
 declares covered paths with `@_covers(...)`; a shell row names the covered path
 in its command; a judge row anchors the changed hunk (and names the path in
-its command for a path-only change). Coverage declarations do not prove correctness. Include the case that must still hold after the change, and the
-number you would re-derive. One assertion per row: a row's command asserts
-exactly one thing, and its expect must be reachable only through that
-assertion. A row whose expect an earlier statement in its own command can
-satisfy binds nothing, so do not write one; a second statement goes in a
-separate row.
+its command for a path-only change). Coverage declarations do not prove correctness.
+
+CHECK QUALITY — apply before freezing:
+  - Bind each item-specific blocking row to its clause's own behavior. For a
+    wording requirement, judge the named clause's body against its example;
+    a matching title or text elsewhere cannot satisfy it. Docs clauses remain
+    judge rows; code assertions exercise behavior rather than source spelling.
+  - Assert one behavioral outcome per row. Fixture preconditions are setup gates;
+    exit status and a specific diagnostic may jointly identify that one outcome.
+    A setup error must never satisfy the intended assertion.
+  - Design a mutation witness for every item-specific blocking assertion: name
+    the smallest reversion or counterexample that must make it fail. Full-suite
+    gates are regression backstops, not item-specific mutation witnesses.
+    Design this before implementation; record the planned witness in criterion
+    or fail_if. The fresh verifier executes it on an isolated copy after the
+    change exists. Do not claim a mutation ran against unseen implementation.
+  - Name the exact item/attempt artifact or fixture the row reads. Never select
+    whichever file is newest, a wildcard match, or another item's output.
+    Use the packet's frozen-test path for Python test commands.
+  - For an expected refusal, require its exit status and the specific rule or
+    diagnostic that distinguishes the intended failure. Any nonzero exit, an
+    exception, or absent output alone is insufficient: a broken wrapper or
+    missing prerequisite must fail setup, not pass the assertion. Positive
+    paths must also verify that the target operation actually succeeded.
+  - Cover relevant neighboring error classes within the recorded scope. For a
+    tool-launch case, distinguish a missing executable from a present but
+    non-executable one. Include success and boundary compatibility cases;
+    expand only where the named behavior makes the distinction relevant.
+  - Validate fixture preconditions before freezing. A compatibility check must
+    reach its target assertion on a known-working baseline, accounting for
+    generated views and expected state changes. A new-behavior check may be red
+    before implementation, but only for the intended missing behavior; report
+    unavailable baseline evidence instead of claiming it passed. Keep setup
+    failures distinct from product failures and do not widen the recorded intent.
 
 The list is format 2: a `decider: bl` row is either a test row — cmd exactly
 `python3 {{.FrozenTests}} <name>`, expect exactly `exit 0` — or a

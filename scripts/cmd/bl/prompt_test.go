@@ -176,7 +176,7 @@ func TestVerifierPromptOutputContractAndImportIsolation(t *testing.T) {
 	if gotErr != nil {
 		t.Fatal(gotErr)
 	}
-	for _, want := range []string{"verdicts", "--init --output", "verify-r1-p", ".json", ".tsv", ".md", "--rows <rows TSV> --report <report>", "sys.dont_write_bytecode = True", "python3 -B", "PYTHONDONTWRITEBYTECODE=1", "Do not add mechanical rows", "Do not type RO tags", "@_covers"} {
+	for _, want := range []string{"verdicts", "--init --output", "verify-r1-p", ".json", ".tsv", ".md", "--rows <rows TSV> --report <report>", "sys.dont_write_bytecode = True", "python3 -B", "PYTHONDONTWRITEBYTECODE=1", "Do not add mechanical rows", "Do not type RO tags", "@_covers", "planned mutation witnesses", "isolated copies after integration", "not a fixture or build error", "Full-suite gates need no per-item mutation", "construct its counterexample", "Name any witness you could not run", "one behavioral outcome per row"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -241,5 +241,42 @@ func TestChecksPromptDistinguishesCoverageAndOptionalTests(t *testing.T) {
 	}
 	if strings.Contains(out, "kept only for a whole-suite") {
 		t.Fatal("targeted amendment instruction contradicts whole-suite restriction")
+	}
+}
+
+func TestChecksPromptCarriesQualityRequirementsBeforeClaims(t *testing.T) {
+	root := openItem(t)
+	var gotErr error
+	prompt := capture(t, func() {
+		gotErr = call(t, cmdPacket, root, "A1", "--role", "checks", "--render", "--workspace", root, "--output-dir", t.TempDir())
+	})
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	requirements := []struct {
+		name     string
+		evidence []string
+	}{
+		{"clause binding", []string{"clause's own behavior", "named clause's body", "matching title or text elsewhere", "Docs clauses remain"}},
+		{"one intended outcome", []string{"one behavioral outcome per row", "Fixture preconditions are setup gates", "exit status and a specific diagnostic", "setup error must never satisfy"}},
+		{"mutation design before implementation", []string{"smallest reversion or counterexample", "record the planned witness in criterion", "fresh verifier executes it", "Do not claim a mutation ran against unseen implementation"}},
+		{"explicit artifact identity", []string{"exact item/attempt artifact", "whichever file is newest", "another item's output", "packet's frozen-test path"}},
+		{"specific negative result", []string{"exit status and the specific rule", "Any nonzero exit", "broken wrapper", "Positive\n    paths must also verify"}},
+		{"relevant error classes", []string{"relevant neighboring error classes", "missing executable", "non-executable one", "within the recorded scope"}},
+		{"baseline fixture validity", []string{"compatibility check must", "known-working baseline", "generated views", "only for the intended missing behavior", "report\n    unavailable baseline evidence"}},
+	}
+	for _, r := range requirements {
+		t.Run(r.name, func(t *testing.T) {
+			for _, want := range r.evidence {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("rendered checks prompt missing %q", want)
+				}
+			}
+		})
+	}
+	for _, bad := range []string{"## Claims", "## Run"} {
+		if strings.Contains(prompt, bad) {
+			t.Fatalf("blind checks role leaked %q", bad)
+		}
 	}
 }

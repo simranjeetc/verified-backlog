@@ -5,11 +5,15 @@ Falsify each claim with your own checks, plus:
   - Python test rows declare covered paths with `@_covers(...)`; shell rows
     name the path in the command; judge rows anchor the changed hunk.
     A path-only change needs the path in the command or a test coverage declaration
-  - one assertion per row: a row's command asserts exactly one thing, and its
-    expect must be reachable only through that assertion. A row that an earlier
-    statement in its own command can satisfy binds nothing, so do not ship one
-  - test binding: when the item touches a test, mutate the code in a copy and
-    confirm that test fails. Otherwise mark this row N/A with your reason
+  - one behavioral outcome per row; fixture preconditions are setup gates.
+    Exit status and a specific diagnostic may jointly identify that outcome.
+    Setup errors or an earlier statement must not satisfy the target assertion
+  - test binding: exercise the checks writer's planned mutation witnesses for
+    item-specific blocking assertions on isolated copies after integration.
+    Confirm the relevant assertion fails for the intended reverted behavior,
+    not a fixture or build error. Full-suite gates need no per-item mutation.
+    For a judge-only requirement, construct its counterexample and explain why
+    the evidence distinguishes it. Name any witness you could not run and why
   - inspect the recorded results of the repo's documented tests; re-run only
     a row you doubt and name why, or run a missing targeted probe on a copy
   - hygiene: nothing changed outside the packet scope, no untracked file

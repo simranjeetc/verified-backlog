@@ -865,6 +865,7 @@ Verdict: PASS — closed at 49e311aaef5c5f3d26c88c3cf2b52e6fecf749c7
 Status: open
 
 - note: Observed during I118 recovery: new compatibility probes C43-C45 failed before the intended command because a raw scratch git-status assertion counted BL-generated TODO/PROGRESS edits. Record a pre-freeze check that compatibility fixtures actually reach their assertion on expected-working behavior and treat generated views explicitly; this false failure required a documented bad-check restart. Existing old36 checks and recovered production code were already passing.
+- note: Implemented in the user-authorized lighter batch: checks guidance binds exact clause behavior, one outcome, planned mutation witnesses, explicit artifact identity, precise refusals, relevant neighboring errors, and validated baseline fixtures. Verifier instructions execute witnesses on isolated copies after integration. Rendered-prompt contract tests and independent review passed. This is guidance rather than a mechanical test-quality gate; no formal BL PASS or closure is asserted.
 
 ## I149 — Independent verifier scratch probes that import .backlog/items/<ID>/tests.py can create __pycache__ inside the frozen verifier window and invalidate it under R39. I143 a2 packet1082 passed checks but recording was refused after an import wrote tests.cpython-314.pyc. Prevent verifier-root side effects: disable Python bytecode writes or import copies outside .backlog; make rendered verifier instructions and a regression check enforce this. Preserve R39 digest protection.
 
