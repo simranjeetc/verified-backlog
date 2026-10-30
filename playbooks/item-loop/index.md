@@ -40,7 +40,9 @@ Completion: `bl status` counts the items and `bl next` names one.
 "$BL" open A1            # locks it; refuses a blocked item or a second lock
 ```
 
-Copy the item's text verbatim from the ledger (`bl show A1` prints it with its rounds).
+Copy the item's text verbatim from the ledger (`bl show A1` prints it with its rounds). Pick its
+lane with [`../lanes.md`](../lanes.md) and record it with `bl note`; a light-lane item applies that
+file's cuts to the steps below.
 
 Write each brief clause as an observable result: what a command prints, its exit code, or what the ledger holds;
 say what can be observed, never how it is built. Every clause carries at least one `Example:` with a concrete input
@@ -50,14 +52,10 @@ Name the files it may touch, and the ones it may read but not write. A file outs
 signal that the item is scoped too loosely, so tighten it before dispatching rather than discovering
 it in the diff.
 
-Record the before-state, so the verifier can tell your item's changes from everything else:
-`git status --porcelain` **and** `git diff` into a file under `.backlog/evidence/`, plus a hash of
-each file that is already dirty, or a marker file when there is no git. Pass that path into the
-verifier's brief. Without it, a file that was already modified and got modified again looks
-unchanged.
+`bl open` records the before-tree itself and refuses a dirty tree (R5), so the round's diff holds
+only this item's changes.
 
-Completion: the item is open, its intent fits one sentence, its file list is known, and the
-before-state is recorded.
+Completion: the item is open, its lane is noted, its intent fits one sentence, and its file list is known.
 
 ## Step 2: Dispatch the producer
 
@@ -92,7 +90,7 @@ run the suites separately as supervisor; the verifier reads the recorded run.
 If the producer finishes first, it waits only for this recording, not for a re-dispatch.
 
 Every list, including a docs-only list, needs at least one blocking `decider: bl` row. Use a mechanical
-backstop such as links resolving or examples running; a prior `bl signoff` also permits a judge-only list (R15).
+backstop such as links resolving or examples running (R15).
 Put every docs clause in a `decider: judge` row with a specific `fail_if`; the verifier decides it by
 reading the docs against the clause's example. Never put a docs clause in a test that greps markdown.
 A blocking test row must exercise code; an all-`.md` `@_covers` is refused under R37.

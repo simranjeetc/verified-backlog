@@ -9,8 +9,8 @@ BRIEF.md              authored: intent, constraints, the breakdown. Never parsed
 .backlog/ledger.jsonl append-only state. Only `bl` writes it.
 .backlog/evidence/    round tables, written by `bl`, hashed, re-checked by `bl check`
 .backlog/run.log      every invocation: argv, exit code, duration
-TODO.md               rendered: Queue · Blocked · Parked · Declined · Closed
-PROGRESS.md           rendered: one record per item, with its rounds and notes
+TODO.md               rendered, gitignored: Queue · Blocked · Parked · Declined · Closed
+PROGRESS.md           rendered, gitignored: one record per item, with its rounds and notes
 ```
 
 ## Why

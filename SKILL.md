@@ -48,20 +48,20 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with each row's exit code, `ms` duration and full output, and records the file's hash |
 | `bl verdicts A1 --init --output /tmp/draft.json`; `bl verdicts A1 --file /tmp/draft.json --output /tmp/rows.tsv --report /tmp/report.md` | no | prepares evidence from bound JSON judgments; derives mechanical verdicts and report numbering; outputs stay outside the repository; see [verifier preparation](playbooks/item-loop/verifier-claims.md) |
 | `bl round A1 --rows verdicts.tsv --report report.md` | yes | records one round: B0 briefs require `--report`; `bl verdicts` generates `Report-only: N` and each note's disposition (except harness rounds) |
-| `bl second-check A1 --row J1 --cmd "…" --expect "stdout matches ^two"` | yes | runs a second judge's command under the same fixed environment and records the verdict it computes; regex expects ignore one trailing newline; a disagreement refuses the round |
 | `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round whose pinned tree matches the working directory, no tracked non-artefact diff from the commit, and a real commit |
 | `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |
 | `bl defer A1 --reason "…"` | yes | parked: visible, skipped by `next` |
 | `bl reopen A1` | yes | reverses a decline or a park |
 | `bl restart A1 --reason bad-check --why "…" --change "…"` | yes | ends the item's attempt and starts the next one, carrying its scope into the next `bl open` unless scope flags are given; `--reason` is one of `bad-check`, `extra-file`, `damaged-evidence`, `wrong-premise`. It writes the attempt's failure record and leaves the item open and out of flight |
 | `bl note A1 --text "…"` | yes | one note, scoped to an item |
-| `bl signoff A1 --by <name> --note <text>` | yes | a human sign-off, before the first round; permits closing without a blocking `decider: bl` row |
 | `bl bump A3 A1` | yes | the human's priority list (tier 1), in the order given; a later bump goes in front of an earlier one; refuses an unknown, closed, dropped or repeated id |
 | `bl unbump A3` | yes | takes the id out of tier 1; a later `bl bump` puts it back |
 | `bl rank --file ranking.tsv` | yes | the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order, replacing the last ranking; refuses a tier-1, unknown, closed, dropped or repeated id and an empty reason |
-| `bl loop [--max-items N] [--max-context N] [--max-sessions N] [--poll-ms N] [--timeout SECONDS] [--dispatch-config FILE]` | yes | launches a `brain` dispatch per item (default launch budget 3); checks dispatch jobs in the repo and every `git worktree list` worktree before advancing or continuing. Each session's peak request context is input + cache creation + cache read tokens for one distinct assistant message id, capped at 130000 by default; --max-context accepts 1–130000. On overflow it cancels and waits for that job, then continues the same open item in a fresh session, up to 5 sessions per item by default. It reports peak context and cumulative input, cache creation and output usage (cache reads are printed, not counted) per session. Brain dispatch timeout is 3600 seconds; holds `.backlog/loop.lock`, atomically records the current item, token, launch count, session count and job in `.backlog/loop.json`, and resumes a saved job |
+| `bl loop [--max-items N] [--max-context N] [--max-sessions N] [--poll-ms N] [--timeout SECONDS] [--dispatch-config FILE]` | yes | **frozen since 2026-10-30**: no new loop features while its items park on timeouts and sandbox blocks; drive items with the item loop. Launches a `brain` dispatch per item (default launch budget 3); checks dispatch jobs in the repo and every `git worktree list` worktree before advancing or continuing. Each session's peak request context is input + cache creation + cache read tokens for one distinct assistant message id, capped at 130000 by default; --max-context accepts 1–130000. On overflow it cancels and waits for that job, then continues the same open item in a fresh session, up to 5 sessions per item by default. It reports peak context and cumulative input, cache creation and output usage (cache reads are printed, not counted) per session. Brain dispatch timeout is 3600 seconds; holds `.backlog/loop.lock`, atomically records the current item, token, launch count, session count and job in `.backlog/loop.json`, and resumes a saved job |
 | `bl next`, `bl show`, `bl packet <id> --role checks|producer|verifier`, `bl status`, `bl check [--views]`, `bl render`, `bl schema [--json]` | no | reads; `packet` prints an item's brief, notes, cited rules and scope, plus claims for a verifier; `render` only rewrites the views, `schema` is the single source for the fields |
 | `bl audit [--since 2d]` | report only | arithmetic over the ledger and `run.log` |
+
+Unused so far and kept out of the default flow: `bl second-check` (a second judge's command for one row) and `bl signoff` (a human sign-off that permits a judge-only list); `bl schema` lists their flags.
 
 `bl next` names the item in flight; otherwise the first eligible item of tier 1 (the bumps, newest first), then tier 2 (the latest ranking), then tier 3 (everything else: the item the most open items wait on first, then filing order). A parked, closed, dropped or blocked item is never named, whatever its tier. Bumps and unbumps record `by: human`, a ranking `by: loop`.
 
@@ -71,7 +71,7 @@ The round cap is 3 **code** failures. A `harness` failure is the wrapper's fault
 
 ## The views
 
-`TODO.md` and `PROGRESS.md` are **rendered** from the ledger after every append. They are for humans; no program reads them, and no program should. A hand edit is caught by fact, not policy:
+`TODO.md` and `PROGRESS.md` are **rendered** from the ledger after every append. They are for humans; no program reads them, and no program should. Gitignore both: `bl` already excludes them from the verified tree and the close diff, and `bl render` rebuilds them on demand. A hand edit is caught by fact, not policy:
 
 ```sh
 "$BL" check --views      # FAIL … TODO.md is stale or hand-edited
@@ -91,7 +91,7 @@ So when the human says "add an item", "note that", "this isn't worth it" — you
 
 ## Playbooks
 
-Open the file, copy its steps into your task list verbatim, then work them. A step you skip stays in the list with a one-line reason, so the record shows the choice.
+Pick the item's lane first with [`playbooks/lanes.md`](playbooks/lanes.md): a typo needs no item, a small fix runs the light lane, a refusal rule or a migration gets the full loop. Then open the file, copy its steps into your task list verbatim, and work them. A step you skip stays in the list with a one-line reason, so the record shows the choice.
 
 | playbook | for |
 |---|---|
@@ -114,8 +114,8 @@ BRIEF.md            authored: intent, constraints, the breakdown. Never parsed.
 .backlog/ledger.jsonl   append-only state. Only bl writes it.
 .backlog/evidence/      round tables, written by bl, hashed, re-checked by `bl check`
 .backlog/run.log        every invocation: argv, exit code, duration
-TODO.md             rendered: Queue · Blocked · Parked · Declined · Closed
-PROGRESS.md         rendered: one record per item, with its rounds and notes
+TODO.md             rendered, gitignored: Queue · Blocked · Parked · Declined · Closed
+PROGRESS.md         rendered, gitignored: one record per item, with its rounds and notes
 ```
 
 Ids are short and unique, case-insensitively: `A1`, `E13`, `C8a`, `PROJ-12`. A duplicate is refused, because two entries on one id collapse into one and an open item disappears.
