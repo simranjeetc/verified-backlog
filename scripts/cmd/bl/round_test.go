@@ -299,7 +299,57 @@ func TestR10AnUncoveredHunkIsRefused(t *testing.T) {
 	}
 	writeFile(t, dir, "f.txt", "two\n")
 	rows := runAndVerdicts(t, dir, "S1\tPASS\t")
-	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", rows), "R10")
+	err := call(t, cmdRound, dir, "A1", "--rows", rows)
+	wantRule(t, err, "R10")
+	for _, want := range []string{"bl checks A1 --amend", "f.txt", "blocking row", "bl run A1", "round"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("R10 refusal %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestR10RecoveryHintAccountsForVerifierWindowAndPathKind(t *testing.T) {
+	it := &Item{ID: "A1", Attempt: 1, ChecksFormat: 2, TestsSHA: "frozen"}
+	hint := coverageRecoveryHint(it, nil, "main.go")
+	for _, want := range []string{"bl checks A1 --amend", "--tests", `@_covers("main.go")`, "before the main block", "bl run A1"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not contain %q", hint, want)
+		}
+	}
+	packet := []Event{{T: "packet", ID: "A1", Seq: 1}}
+	hint = coverageRecoveryHint(it, packet, "main.go")
+	ordered := []string{"verifier window", "bl run A1", "bl checks A1 --amend", "bl packet A1 --role verifier", "new verifier"}
+	last := -1
+	for _, want := range ordered {
+		at := strings.Index(hint, want)
+		if at < 0 || at <= last {
+			t.Fatalf("hint %q should contain %q after offset %d", hint, want, last)
+		}
+		last = at
+	}
+	hint = coverageRecoveryHint(it, nil, "README.md")
+	if !strings.Contains(hint, "decider: judge") || !strings.Contains(hint, "judge") || strings.Contains(hint, "--tests") || strings.Contains(hint, "@_covers") {
+		t.Fatalf("Markdown recovery hint = %q", hint)
+	}
+	it.Rounds = []Event{{T: "round", Verdict: "PASS", Seq: 1}}
+	if hint := coverageRecoveryHint(it, nil, "main.go"); hint != "" {
+		t.Fatalf("hint after PASS = %q", hint)
+	}
+}
+
+func TestR10RecoveryHintWithoutFrozenTestsNamesShellRow(t *testing.T) {
+	it := &Item{ID: "A1", Attempt: 1, ChecksFormat: 2}
+	hint := coverageRecoveryHint(it, nil, "main.go")
+	for _, want := range []string{"blocking row", "command names main.go"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not contain %q", hint, want)
+		}
+	}
+	for _, absent := range []string{"--tests", "@_covers"} {
+		if strings.Contains(hint, absent) {
+			t.Errorf("hint %q unexpectedly contains %q", hint, absent)
+		}
+	}
 }
 
 // R12: the verdict is derived from the blocking rows. A supplied --verdict that differs from
@@ -1132,5 +1182,38 @@ func TestR6VerdictsHelpCanBeUsedWithoutGuessing(t *testing.T) {
 	}
 	if vf.run != "run1" || !treeHashRe.MatchString(vf.tree) {
 		t.Fatalf("missing run metadata: %s", example)
+	}
+}
+
+// Exercise the recovery sequence against real guards, not only its wording.
+func TestR10RecoveryWithoutTestFileCanRecordFreshRound(t *testing.T) {
+	dir := gitItem(t)
+	list := checksHeader + "S1\tbl\tblocking\tB1\techo hi\texit 0\t\t\tbaseline\n"
+	checksOK(t, dir, list)
+	if err := call(t, cmdClaims, dir, "A1", "--file", writeFile(t, t.TempDir(), "claims.md", "CLAIMS:\n- done\n")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "f.txt", "two\n")
+	old := runAndVerdicts(t, dir, "S1\tPASS\t")
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", old), "R10")
+	amended := list + "S2\tbl\tblocking\tB1\tcat f.txt\texit 0\t\t\tread changed file\n"
+	next := writeFile(t, t.TempDir(), "next.tsv", amended)
+	wantRule(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", next), "R39")
+	if err := call(t, cmdRun, dir, "A1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdChecks, dir, "A1", "--amend", "--file", next); err != nil {
+		t.Fatal(err)
+	}
+	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", old), "R39")
+	fresh := runAndVerdicts(t, dir, "S1\tPASS\t", "S2\tPASS\t")
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", fresh); err != nil {
+		t.Fatal(err)
 	}
 }

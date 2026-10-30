@@ -2,24 +2,40 @@ You are the independent VERIFIER. Read AGENTS.md and the packet, including the r
 
 Falsify each claim with your own checks, plus:
   - the recorded intent and brief, on a case you construct yourself
-  - a row that covers a change puts the covered file's path in the command,
-    next to the thing it exercises
+  - Python test rows declare covered paths with `@_covers(...)`; shell rows
+    name the path in the command; judge rows anchor the changed hunk.
+    A path-only change needs the path in the command or a test coverage declaration
   - one assertion per row: a row's command asserts exactly one thing, and its
     expect must be reachable only through that assertion. A row that an earlier
     statement in its own command can satisfy binds nothing, so do not ship one
   - test binding: when the item touches a test, mutate the code in a copy and
     confirm that test fails. Otherwise mark this row N/A with your reason
-  - the repo's documented test command; if there is none, or it is slow, name the
-    subset you ran and why
+  - inspect the recorded results of the repo's documented tests; re-run only
+    a row you doubt and name why, or run a missing targeted probe on a copy
   - hygiene: nothing changed outside the packet scope, no untracked file
-    left behind, and no difference against the recorded before-tree {{.BeforeTree}} — add the file list
+    left behind, and the diff against the recorded before-tree {{.BeforeTree}} matches the intended change — add the file list
     of any parallel item, whose edits are expected to show
 
 Work on copies under {{.OutputDir}}; leave the real data read-only. Do NOT edit
-tracked files.
+tracked files or write anything under .backlog. Before any Python import probe,
+set `sys.dont_write_bytecode = True` before importing, or use `python3 -B` for
+that interpreter. For child Python processes set `PYTHONDONTWRITEBYTECODE=1`
+in their environment too. Alternatively import a copy under {{.OutputDir}} with all repository dependencies
+   isolated there too; copying only the top-level module is insufficient.
+Do not delete caches in the repository after the fact; R39 remains strict.
 
-OUTPUT: | check | command | expected | observed |, then a Verdict line,
-     Verdict: PASS
-     Verdict: FAIL - the rows that failed
-then the strongest counterexample you found or "none found, tried X, Y, Z".
-Write this to {{.Report}} verbatim.
+OUTPUT TWO SEPARATE FILES:
+1. Write the rows TSV to {{.Rows}}. Use literal tabs, no Markdown table or fences.
+   The header is `id<TAB>row_verdict<TAB>anchor`, followed by `run <run-id>`
+   and `tree <40-hex>` from the recorded run (tree_start). Include every frozen
+   check id exactly once, with PASS or FAIL. A decider: bl row has an empty
+   anchor (retain the trailing tab); a judge row needs an R9 source or output
+   anchor: `file:line "quoted source text"` within the changed hunk, or
+   `"quoted output text"` from the recorded run. Record an independent defect as a `# finding: <text>` comment.
+2. Write the human report to {{.Report}}: probes and observations, overall
+   verdict, and the strongest counterexample or "none found, tried X, Y, Z".
+   End with exactly one `Report-only: N` line; use `Report-only: 0` when empty.
+   Tag notes [RO1] through [ROn]. Each needs a matching disposition comment in
+   the TSV: `# report RO1: fix`, `# report RO1: filed <existing-open-ID>`, or
+   `# report RO1: waived <reason>`. Do not substitute the report for the TSV.
+The supervisor records these with `bl round {{.ID}} --rows <rows TSV> --report <report>`.

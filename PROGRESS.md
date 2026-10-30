@@ -848,6 +848,7 @@ Source: loop:I135
 - note: Candidate: append to both R10 refusal messages in scripts/cmd/bl/rules.go checkCoverage a hint naming bl checks --amend (and --tests for format 2), conditioned on no PASS round in the attempt (R4 refuses an amend after one). Playbook: one paragraph under Step 3 in playbooks/item-loop/index.md. Evidence that the path works: note on I135.
 - note: a2 checks: supervisor rewrote the cmd path .backlog/items/I138/tests.py -> .backlog/items/I138/a2/tests.py in 24 test rows (R37 refusal; the checks prompt named a2/tests.py); no other change; original kept at I138-a2-checks.orig.tsv in the loop dir
 - note: a2 fix round: producer fixed the r2 finding (format-2 list with no frozen test file gets a shell-row hint, gated on TestsSHA); diff I138-a2-fix-producer.diff applied to main. The checks writer, given intent only, appended B9a-B9d.
+- note: Implemented through the user-authorized lighter first batch: R10 guidance distinguishes frozen Python tests, no-test-file command rows, and Markdown path-only anchors; recovery requires a fresh run, packet and verifier. Corrected examples live in playbooks/item-loop/index.md. Existing frozen attempt wording and previous verdicts remain historical; no formal BL PASS or closure is asserted.
 
 ## I143 — One I118 round cost three verifier dispatches and five refused bl round calls (about 25 min of the 3600s brain budget; loop job 20261029-193503-brain-46a7): the brain ran bl checks --amend and then bl file inside an open verifier window, R39 voided the window each time, and bl round's refusals named no verdicts-row or disposition format, so the brain read verdicts.go and round.go to learn them. Fix in bl: R39's refusal and the supervisor startup packet state the order (record the round before any other ledger write; amend and file after it); bl round's format refusals print the exact verdicts row and disposition line expected; bl checks --amend and bl file warn or refuse while the item's verifier window is open and no round has been recorded since. Done when a round can be recorded on the first try from the refusal text alone and an amend or file inside an open window is caught before the verifier is dispatched again.
 
@@ -864,4 +865,11 @@ Verdict: PASS — closed at 49e311aaef5c5f3d26c88c3cf2b52e6fecf749c7
 Status: open
 
 - note: Observed during I118 recovery: new compatibility probes C43-C45 failed before the intended command because a raw scratch git-status assertion counted BL-generated TODO/PROGRESS edits. Record a pre-freeze check that compatibility fixtures actually reach their assertion on expected-working behavior and treat generated views explicitly; this false failure required a documented bad-check restart. Existing old36 checks and recovered production code were already passing.
+
+## I149 — Independent verifier scratch probes that import .backlog/items/<ID>/tests.py can create __pycache__ inside the frozen verifier window and invalidate it under R39. I143 a2 packet1082 passed checks but recording was refused after an import wrote tests.cpython-314.pyc. Prevent verifier-root side effects: disable Python bytecode writes or import copies outside .backlog; make rendered verifier instructions and a regression check enforce this. Preserve R39 digest protection.
+
+Status: open
+Source: verifier:I143/a2
+
+- note: Implemented instruction-based prevention in plain and rendered verifier packets: disable Python bytecode writes in parent and child interpreters or isolate copied dependencies. Regression probes import frozen-path modules and confirm R39 remains valid; arbitrary worker commands are not OS-sandboxed. Implemented outside the BL dispatch cycle; no formal BL PASS or closure is asserted.
 

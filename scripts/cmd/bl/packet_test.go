@@ -14,7 +14,7 @@ func TestVerifierPacketLeadsWithPurposeB0(t *testing.T) {
 	var out bytes.Buffer
 	p.printTo(&out)
 	text := out.String()
-	if !strings.HasPrefix(text, "# A1 packet (role verifier)\nRun every bl probe in a scratch directory: cd \"$(mktemp -d)\" before bl init, never in this repository. bl round refuses under R39 when the ledger or .backlog/ changed since this packet.\n\n## Purpose (B0)\nB0: purpose. Example: x.\nA defect that breaks this purpose is a failure, not report-only.\n") {
+	if !strings.HasPrefix(text, "# A1 packet (role verifier)\n") || !strings.Contains(text, "\n\n## Purpose (B0)\nB0: purpose. Example: x.\nA defect that breaks this purpose is a failure, not report-only.\n") || strings.Index(text, "## Purpose (B0)") > strings.Index(text, "## Intent") {
 		t.Fatalf("verifier packet does not lead with B0 purpose:\n%s", text)
 	}
 }

@@ -283,7 +283,9 @@ func cmdRound(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := checkCoverage(vf, frozen, hunks, bare, covers); err != nil {
+	if err := checkCoverage(vf, frozen, hunks, bare, covers, func(path string) string {
+		return coverageRecoveryHint(it, events, path)
+	}); err != nil {
 		return err
 	}
 	// R16: a second check that disagrees with the row's recorded verdict.
@@ -405,6 +407,26 @@ func cmdRound(root string, a args) error {
 		fmt.Printf("bl: %s r%d %s\n", it.ID, len(it.Rounds)+1, derived)
 	}
 	return nil
+}
+
+// coverageRecoveryHint explains the amendment path only while it is still available in the
+// attempt. An open verifier packet must be voided by a run before checks can be amended.
+func coverageRecoveryHint(it *Item, events []Event, path string) string {
+	if it.passRounds() > 0 {
+		return ""
+	}
+	rowHint := ""
+	if strings.HasSuffix(path, ".md") {
+		rowHint = fmt.Sprintf("; add a blocking decider: judge row whose command names %s, anchored in the changed hunk when one exists, or using a quoted output anchor for a path-only change", path)
+	} else if it.ChecksFormat == 2 && it.TestsSHA != "" {
+		rowHint = fmt.Sprintf("; add a blocking row with --tests: add a test function carrying @_covers(%q) before the main block", path)
+	} else {
+		rowHint = fmt.Sprintf("; add a blocking row whose command names %s", path)
+	}
+	if openVerifierPacket(events, it) != 0 {
+		return fmt.Sprintf(". The verifier window is open. Run `bl run %s` first to void it, then amend with `bl checks %s --amend`%s, run `bl run %s`, issue `bl packet %s --role verifier`, and dispatch a new verifier before the round.", it.ID, it.ID, rowHint, it.ID, it.ID)
+	}
+	return fmt.Sprintf(". Recover with `bl checks %s --amend`%s, then `bl run %s`, issue `bl packet %s --role verifier`, and dispatch a new verifier before the round.", it.ID, rowHint, it.ID, it.ID)
 }
 
 func withVerdictsHelp(err error, root string, it *Item) error {

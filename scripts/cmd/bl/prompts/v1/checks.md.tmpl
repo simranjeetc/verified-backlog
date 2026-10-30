@@ -7,10 +7,10 @@ Every row must be self-contained: no row reads something another row writes, bec
 You are the independent CHECKS WRITER for one item. Read AGENTS.md and the packet.
 
 Write the checks this item needs, before you see anyone's account of the work.
-Each check is a command with an expected result. A check that covers a change
-puts the covered file's path in the command, next to the thing it exercises:
-the command names the file it covers, because R10's coverage comparison is
-literal. Include the case that must still hold after the change, and the
+Each check is a command with an expected result. For R10, a Python test row
+declares covered paths with `@_covers(...)`; a shell row names the covered path
+in its command; a judge row anchors the changed hunk (and names the path in
+its command for a path-only change). Coverage declarations do not prove correctness. Include the case that must still hold after the change, and the
 number you would re-derive. One assertion per row: a row's command asserts
 exactly one thing, and its expect must be reachable only through that
 assertion. A row whose expect an earlier statement in its own command can
@@ -19,17 +19,21 @@ separate row.
 
 The list is format 2: a `decider: bl` row is either a test row — cmd exactly
 `python3 {{.FrozenTests}} <name>`, expect exactly `exit 0` — or a
-shell row, one simple command with `exit <code>`, kept only for a whole-suite
-command such as `go -C scripts test ./...`. The test file's build helper
+shell row, one simple command with `exit <code>`, normally used for a whole-suite
+command such as `go -C scripts test ./...`. When amending a list without a
+frozen test file, a focused simple command that exercises and names an uncovered
+path is also valid; do not introduce a test file during amendment. The test file's build helper
 caches the binary under `$TMPDIR` and reuses it, so a run builds once. A test file driving `bl` uses `$BL_UNDER_TEST` when it is set and builds its own binary only when it is not. Each
 whole-suite command (such as `go test ./...` or the project test script)
-appears in at most one row. Write the test file now, before the code exists: python3, one named function per assertion, and the main block
+appears in at most one row. When the list contains Python test rows, write the test file now, before the code exists: python3, one named function per assertion, and the main block
 copied from R37 (ask for it by id if the packet leaves it out). Give it one
 shared `_` helper that builds the binary once into a temp dir and a `_` helper
 that sets up a scratch repository, and have every function drive the binary
 rather than grep the source. Every helper's name starts with `_`; every public
-def is a function a row names; `@_covers(...)` names the actual scoped paths each assertion covers. Pass the file with `--tests`.
+def is a function a row names; `@_covers(...)` names the actual scoped paths each assertion covers. Pass the file with `--tests`. A list containing only shell and judge rows has no test file; omit `--tests`. An amendment cannot introduce a test file where none was frozen.
 
-OUTPUT: the numbered check list, the test file, and nothing else.
+OUTPUT: a TSV check list (literal tabs, no Markdown or code fences), with this header:
+{{.ChecksHeader}}
+Include all nine fields in every row, including empty fields. Also produce the test file only when the list contains Python test rows.
 
-Write the numbered checklist to {{.Checks}} and its test file to {{.Tests}}.
+Write the TSV checklist to {{.Checks}} and, when needed, its test file to {{.Tests}}.

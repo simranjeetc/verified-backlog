@@ -16,7 +16,7 @@ import (
 var rolePrompts embed.FS
 
 type promptData struct {
-	ID, Workspace, OutputDir, Evidence, Checks, Tests, Report, BeforeTree, FrozenTests string
+	ID, Workspace, OutputDir, Evidence, Checks, Tests, Report, BeforeTree, FrozenTests, Rows, ChecksHeader string
 }
 
 // renderRolePrompt validates explicit dispatch facts before cmdPacket opens the verifier window.
@@ -54,9 +54,11 @@ func renderRolePrompt(root string, a args, p packet) (string, string, error) {
 	if d.BeforeTree == "" {
 		d.BeforeTree = "unavailable (not recorded; reconcile baseline before asserting hygiene)"
 	}
+	d.ChecksHeader = strings.Join(checkColumns, "\t")
 	d.Evidence = filepath.Join(out, prefix+"-evidence.md")
 	d.Checks = filepath.Join(out, prefix+"-checks.tsv")
 	d.Tests = filepath.Join(out, prefix+"-tests.py")
+	d.Rows = filepath.Join(out, fmt.Sprintf("%s-verify-r%d.tsv", prefix, len(p.item.attemptRounds())+1))
 	d.Report = filepath.Join(out, fmt.Sprintf("%s-verify-r%d.md", prefix, len(p.item.attemptRounds())+1))
 	src, err := rolePrompts.ReadFile("prompts/v1/" + p.role + ".md.tmpl")
 	if err != nil {

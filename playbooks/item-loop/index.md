@@ -123,6 +123,21 @@ and dispatch a new verifier. Exception: filing a follow-up for a filed dispositi
 An amendment is blocked while a usable verifier window is open. An already void window does not
 block amendment, but the amended checks need a new run, packet and independent verifier.
 
+An R10 refusal before any PASS round can be recovered without a FAIL round or restart. If the
+verifier window is open, run `bl run <ID>` first to void it, then `bl checks <ID> --amend` adding
+a blocking row that covers the named path (when the format-2 list has a frozen test file, use
+`--tests` with a test function carrying `@_covers("<path>")` inserted before the main block;
+otherwise add a shell row whose command names the path. For a `.md` path, add a judge row.)
+Then run `bl run <ID>`, issue a fresh `bl packet <ID> --role verifier`, dispatch a new verifier,
+and record the round. With no open window, amend first, then run, issue a fresh packet and dispatch a new verifier before recording the round.
+
+Examples: for `main.go`, a list with frozen Python tests adds a function decorated with
+`@_covers("main.go")` before the frozen main block and passes the extended file via `--tests`.
+A list without frozen tests instead adds a blocking simple-command row that exercises
+`main.go` and names that path; omit `--tests`. For a changed `README.md` hunk, add a
+blocking judge row with an anchor in the hunk; for a path-only change its command must
+name `README.md`. The new verifier must evaluate the amended list, not reuse the old verdict.
+
 ```sh
 "$BL" round A1 --verdict PASS --rows <evidence dir>/A1-verify-r1.md
 "$BL" round A1 --verdict FAIL --cause code --rows -      # table on stdin

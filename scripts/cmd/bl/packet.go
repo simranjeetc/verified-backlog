@@ -189,7 +189,7 @@ func packetRules(root string, it *Item, brief string) (cited, omitted []packetRu
 func (p packet) printTo(w io.Writer) {
 	fmt.Fprintf(w, "# %s packet (role %s)\n", p.item.ID, p.role)
 	if p.role == "verifier" {
-		fmt.Fprintln(w, "Run every bl probe in a scratch directory: cd \"$(mktemp -d)\" before bl init, never in this repository. bl round refuses under R39 when the ledger or .backlog/ changed since this packet.")
+		fmt.Fprintln(w, "Disable Python bytecode writes before importing frozen tests: use python3 -B or set sys.dont_write_bytecode = True before import; set PYTHONDONTWRITEBYTECODE=1 for child interpreters, or import scratch copies. Never write caches under .backlog. Run every bl probe in a scratch directory: cd \"$(mktemp -d)\" before bl init, never in this repository. bl round refuses under R39 when the ledger or .backlog/ changed since this packet.")
 		if clause := packetClause(p.brief, "B0"); clause != "" {
 			fmt.Fprint(w, "\n## Purpose (B0)\n")
 			writePacketText(w, clause)

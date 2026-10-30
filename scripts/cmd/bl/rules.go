@@ -164,18 +164,18 @@ func testCovers(root string, it *Item, frozen []checkRow) (map[string]map[string
 // A format-2 test row covers a hunk only through its function's `@_covers(...)` (I89, B7):
 // its cmd is `python3 <test file> <name>`, which names no repository file, and it is never
 // read as a path by substring. Advisory rows do not count.
-func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string, covers map[string]map[string]bool) error {
+func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string, covers map[string]map[string]bool, recoveryHint func(string) string) error {
 	for _, h := range hunks {
 		if coveredHunk(vf, frozen, h, covers) {
 			continue
 		}
-		return refuseRule("R10", "the hunk in %s at line %d is covered by no blocking row", h.file, h.start)
+		return refuseRule("R10", "the hunk in %s at line %d is covered by no blocking row%s", h.file, h.start, recoveryHint(h.file))
 	}
 	for _, f := range bare {
 		if coveredPath(frozen, f, covers) {
 			continue
 		}
-		return refuseRule("R10", "the change in %s is covered by no blocking row", f)
+		return refuseRule("R10", "the change in %s is covered by no blocking row%s", f, recoveryHint(f))
 	}
 	return nil
 }
