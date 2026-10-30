@@ -96,6 +96,7 @@ Pick the item's lane first with [`playbooks/lanes.md`](playbooks/lanes.md): a ty
 | playbook | for |
 |---|---|
 | [`playbooks/item-loop/index.md`](playbooks/item-loop/index.md) | the default: one item through producer, blind verifier, fix rounds, close, commit. Its Step 0 initialises the ledger or imports a prose backlog |
+| [`playbooks/loop.md`](playbooks/loop.md) | monitoring, cancellation and exit-code recovery for existing loop runs; I140 is authorized for documentation only, while new loop launches remain frozen |
 | [`playbooks/irreversible-op.md`](playbooks/irreversible-op.md) | a rewrite of real state: migration, re-key, deletion, deploy |
 | [`playbooks/design-doc.md`](playbooks/design-doc.md) | a decision other work will be built on, where being wrong is expensive |
 

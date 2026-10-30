@@ -203,6 +203,9 @@ but do not provide a cross-process transaction.
 
 ### Cancel a supervised loop
 
+Use the [operator runbook](playbooks/loop.md) for monitoring and exit-code recovery.
+This recovery guide does not unfreeze new launches or authorize a pilot.
+
 Run `scripts/bl loop --cancel --reason "why you stopped it"` from the repository.
 It requests a running loop to yield its lock, cancels the brain first, then cancels
 registered workers and dispatch jobs in the repository and its worktrees. It parks
