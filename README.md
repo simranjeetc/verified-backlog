@@ -90,6 +90,10 @@ cd scripts && go test ./...     # 11 unit tests
 The gate suite asserts two things per refusal: the exit code, and that the ledger is byte-identical
 afterwards. A refusal that quietly wrote a line would still look like a refusal in a transcript.
 
+## Developing `bl`
+
+**Parse others' text through a closed format.** Code that reads text someone else wrote (verifier reports, claims, verdicts) must require a closed, fail-closed format: exact lines, everything else refused. Never parse free-form Markdown; I115's first attempt lost three rounds to new Markdown shapes.
+
 ## Migrating a prose backlog
 
 ```sh

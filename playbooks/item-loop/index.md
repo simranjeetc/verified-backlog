@@ -6,30 +6,7 @@ One backlog item, from "pick it up" to "closed and committed".
 
 ## Step 0: Bootstrap, when there is no ledger yet
 
-```sh
-"$BL" init              # .backlog/ + empty views; refuses over a foreign TODO.md
-```
-
-Write `BRIEF.md` first with the human: intent, constraints, what "done" means, and whether this
-backlog may push. Then research the repo, write the breakdown back into `BRIEF.md` as prose, and
-file the items it describes — one call each:
-
-```sh
-"$BL" file --id A1 --text "wellfound remote sweep alongside the location sweep" --source human
-"$BL" file --id A2 --text "pagination flags wiring test" --after A1 --source human
-```
-
-`--after` records a dependency: the item exists now, `bl next` skips it until A1 closes.
-
-If a prose backlog already exists, do not rewrite it by hand:
-
-```sh
-"$BL" lint TODO.md PROGRESS.md      # read-only: what parses, what does not
-"$BL" import TODO.md PROGRESS.md    # one pass, fresh ledger only
-```
-
-An imported close is a claim, not a proof: the ledger records that the prose said PASS and which
-commit it named, and a note says so. Treat imported items as untrusted until a real round runs.
+Work through [bootstrap.md](bootstrap.md): `bl init`, `BRIEF.md`, then file or import the items.
 
 Completion: `bl status` counts the items and `bl next` names one.
 
@@ -105,36 +82,10 @@ when needed, and send its prompt file as dispatch 2.
 Completion: the checks are frozen, the producer claims are recorded, and `bl run` has completed; the
 verifier has returned a verdict with a command behind every row.
 
-### The verifier of a later attempt
-
-The fresh verifier of attempt *n* receives the attempt's brief, which carries the failure records
-of every earlier attempt, and never an earlier attempt's claims: those describe a tree that no
-longer exists. Pass the attempt's own `checks.tsv`, `claims.md` and run file, and name the failure
-records as the record of why the attempt exists.
-
 ### Record the round — you set the cause, not the verifier
 
-After the verifier reports, record the round before any other ledger write. Amend checks, run and file
-after it by default. If an R39 refusal says the verifier window is void, correct the invalidating state first,
-then issue a fresh verifier packet
-and dispatch a new verifier. Exception: filing a follow-up for a filed disposition is allowed inside the window and does not void it.
-An amendment is blocked while a usable verifier window is open. An already void window does not
-block amendment, but the amended checks need a new run, packet and independent verifier.
-
-An R10 refusal before any PASS round can be recovered without a FAIL round or restart. If the
-verifier window is open, run `bl run <ID>` first to void it, then `bl checks <ID> --amend` adding
-a blocking row that covers the named path (when the format-2 list has a frozen test file, use
-`--tests` with a test function carrying `@_covers("<path>")` inserted before the main block;
-otherwise add a shell row whose command names the path. For a `.md` path, add a judge row.)
-Then run `bl run <ID>`, issue a fresh `bl packet <ID> --role verifier`, dispatch a new verifier,
-and record the round. With no open window, amend first, then run, issue a fresh packet and dispatch a new verifier before recording the round.
-
-Examples: for `main.go`, a list with frozen Python tests adds a function decorated with
-`@_covers("main.go")` before the frozen main block and passes the extended file via `--tests`.
-A list without frozen tests instead adds a blocking simple-command row that exercises
-`main.go` and names that path; omit `--tests`. For a changed `README.md` hunk, add a
-blocking judge row with an anchor in the hunk; for a path-only change its command must
-name `README.md`. The new verifier must evaluate the amended list, not reuse the old verdict.
+After the verifier reports, record the round before any other ledger write; amend checks, run and file
+after it. For an R39 or R10 refusal, or a void verifier window, use [recovery.md](recovery.md).
 
 ```sh
 # Use the rows TSV and report paths generated from the verifier JSON draft.
@@ -155,7 +106,7 @@ an item. `bl` refuses a 4th code round: hand the defect table to the human.
 The rows are written to `.backlog/evidence/<id>-r<N>.txt`, hashed, and recorded. An empty table is
 refused — a verdict exists only after commands have run.
 
-### Getting the verifier out of your own family
+### Set the stopping bar
 
 State the stopping bar in the brief, once, at the start of the item: findings below it belong under
 a `Filed` heading, not as failing rows. That matters more than it looks. A verifier that returns
@@ -163,15 +114,8 @@ PASS with filed findings gives you an outcome you can record; a verifier that re
 cosmetic rows leaves you choosing between editing a verdict you are not allowed to edit and running
 a round the bar exists to prevent.
 
-A verifier on the same model as the producer shares its blind spots. Where a second model or a
-second harness is reachable, dispatch the verifier through it: the invariant, the invocations for
-the harnesses known to work, and the caveats are in
-[`references/second-harness.md`](../../references/second-harness.md).
-
-Two of those caveats bite every time, so they are worth repeating here. Write the brief to a file and
-pass the file (`"$(cat <brief>)"`) rather than an inline prompt, because a multi-line brief does not
-survive shell quoting. And record which model or harness produced the verdict: if only one family
-was reachable, say so, because a single-family pass is a weaker claim than a corroborated one.
+Dispatch the verifier through a second model or harness where one is reachable, and record which one
+produced the verdict: [`references/second-harness.md`](../../references/second-harness.md).
 
 ## Step 4: Fix rounds
 
@@ -185,36 +129,11 @@ Two rounds that fail on the same premise are one premise that is wrong. Stop fix
 premise directly. After three code FAIL rounds `bl` itself refuses the fourth, so escalation is the
 only path left: hand the defect table to the human, or `bl drop`/`bl defer` the item with a reason.
 
+A frozen row that cannot pass, a file outside scope, damaged evidence or a false premise calls for a
+restart, not a fix round: [recovery.md](recovery.md). A later attempt's verifier is covered there too.
+
 Completion: PASS, or an explicit decision that the item's premise needs re-baselining, or the defect
 table handed over.
-
-### When to restart instead of fixing
-
-A FAIL round is a defect in the work. A restart is a defect in the attempt's own premise or in
-its record, and only the four classes are reasons for one:
-
-| class | when |
-|---|---|
-| `bad-check` | a frozen row cannot pass on correct code — it asserts the wrong thing, or its command cannot reach its assertion |
-| `extra-file` | the producer wrote a file the item's scope did not name, so the record is of the wrong change |
-| `damaged-evidence` | a run file, a round's evidence or another artefact no longer matches its hash, so the record no longer describes what ran |
-| `wrong-premise` | the item's own premise is false, so no fix round can converge |
-
-```sh
-"$BL" restart A1 --reason bad-check --why "row R3 expects ^ok$ and cannot match the newline echo prints" \
-                --change "stdout patterns allow a trailing newline"
-```
-
-The restart writes the failure record of the attempt it ends and leaves the item open and out of
-flight. Its scope and ignored-scope lists carry into the next `bl open` unless either scope flag is
-given; explicit scope flags replace both. `bl open A1` starts attempt 2 with its own brief (which carries that record), its own list
-and its own claims, under `.backlog/items/A1/a2/`. The rounds of the attempt it ended are void: the
-code-round cap starts again, `bl show` marks them ` void`, and its runs can no longer be cited. Two
-restarts, three attempts; a third is refused and parks the item for the human.
-
-A row that cannot pass is a `bad-check`. A fix round is for code that can pass. Do not restart to
-escape a row you could fix, and do not run a fourth fix round after two rounds failed on the same
-premise: that premise is wrong, and a restart is the recorded way to say so.
 
 ## Step 5: Close
 
@@ -226,7 +145,7 @@ git add <explicit paths> && git commit -m "<item id>: <what changed>"
 "$BL" close A1 --commit HEAD
 ```
 
-1. Re-run one of the verifier's rows, whichever outcome surprised you most, and note the match.
+1. Re-run one of the verifier's rows, whichever outcome surprised you most, and note the match. One command, and it catches a fabricated table.
 2. Commit with explicit paths. Never `git add -A`; an artefact you did not notice becomes part of the
    commit. Push only if `BRIEF.md` authorises it.
 3. `bl close <id> --commit <sha>` writes the record and advances the pointer in the same call.
@@ -254,9 +173,3 @@ Completion: `bl check --views` exits 0, `bl next` names an open item or `none`, 
 
 `bl status` for the counts, the one number that proves the item, what was filed, and what is parked.
 Then the next item, or hand back.
-
-For supervised-loop workers, launch through `scripts/dispatch.sh` in the assigned
-workspace so the inherited loop ownership registers a dispatch job. Create the
-producer worktree inside the session directory named by the supervisor packet.
-Use `bl loop --cancel --reason "..."` for operator cancellation; recovery behavior
-and preserved artifacts are described in README.md, “Cancel a supervised loop”.

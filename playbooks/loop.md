@@ -90,6 +90,7 @@ cancellation after it yields. Staged/committed edits and lost workers require
 attended reconciliation, not a force reset or process-name kill.
 
 Managed workers must use `scripts/dispatch.sh` from their assigned workspace.
+Create the producer worktree inside the session directory named by the supervisor packet.
 Direct runtimes without dispatch metadata are outside reliable discovery. While
 the monitor is alive, terminal brains and wait timeouts trigger managed-worker
 cleanup. Killing the monitor itself installs no watchdog; recover with the CLI.

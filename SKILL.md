@@ -1,6 +1,6 @@
 ---
 name: verified-backlog
-description: Drive a list of work items to done, one at a time, each gated by an independent blind verifier that re-derives the evidence. Use when the work is a backlog rather than one task: working through a TODO or PROGRESS file, resuming from PROGRESS.md, "pick up where we left off", a batch of three or more items to get through, review comments or failing tests or lint errors to clear, a queue of issues to address, or any change the user wants proven rather than asserted (backfill, re-key, drop, migrate, deploy). Not for a single edit, or for a plan whose steps share one verification.
+description: Drive a backlog to done, one item at a time, each gated by an independent blind verifier that re-derives the evidence. Use for a TODO or PROGRESS file, "pick up where we left off", a batch of three or more items, review comments or failing tests or lint errors to clear, a queue of issues, or any change the user wants proven rather than asserted (backfill, re-key, drop, migrate, deploy). Not for a single edit, or a plan whose steps share one verification.
 ---
 
 # verified-backlog
@@ -23,7 +23,6 @@ The producer optimises for finishing. That instinct is what the verifier exists 
 6. **Findings are filed, never fixed in place.** A verifier that finds something outside the current item's blast radius reports it; you file it as a new item with `bl file … --source verifier:<id>/r<N>`. Fixing it inside the item conflates two verdicts.
 7. **Irreversible work stops for a human.** State rewrites, migrations, deploys and deletions run the `irreversible-op` playbook.
 8. **Commit locally; push only when the backlog says it may push.** Record that authorisation in `BRIEF.md` when the work starts. A protected branch, no remote, and no git at all are normal conditions: `bl close` refuses without a commit, so say so and use `bl drop`/`bl defer` with a reason instead of faking one.
-9. **Compact on every 250k crossing, and only between steps.** Whenever a session's token consumption crosses a multiple of 250k, you trigger the compaction — every crossing, not only the first, so a long session is compacted repeatedly instead of never. The compaction waits until the logical step that crossed the threshold is complete: finish the step you are in (the edit you are making, the round you are recording, the command you are running) and only then compact. Never compact in the middle of a step.
 
 ## The binary
 
@@ -33,61 +32,32 @@ BL=~/.config/opencode/skills/verified-backlog/scripts/bl
 "$BL" next                         # one line: the item to work on
 ```
 
-Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside the skill dir). It is stdlib-only Go: no runtime, no dependencies, ~5 ms per call over a few hundred events.
+Resume with `bl next` and `bl show <id>`; the views are for humans.
 
-| verb | writes | does |
-|---|---|---|
-| `bl init` | – | creates `.backlog/` and renders empty views; refuses over a foreign `TODO.md` |
-| `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
-| `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock; after a restart, carries the ended attempt's scope unless either scope flag is given |
-| `bl brief A1 --file brief.md` | yes | records or amends the brief; B0 purpose is required, every numbered clause needs an `Example:` (R2), and verifiers declare `Report-only: N` |
-| `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
-| `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
-| `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
-| `bl intake --check|--render --file <intake.jsonl>`; `bl schema intake` | no | validates an intake without writing, or renders it for approval; schema lists source, decision, item and clause records; filing is I111 |
-| `bl run A1` | yes | runs every row of the frozen check list under a fixed environment, writes `.backlog/evidence/A1-run1.json` with each row's exit code, `ms` duration and full output, and records the file's hash |
-| `bl verdicts A1 --init --output /tmp/draft.json`; `bl verdicts A1 --file /tmp/draft.json --output /tmp/rows.tsv --report /tmp/report.md` | no | prepares evidence from bound JSON judgments; derives mechanical verdicts and report numbering; outputs stay outside the repository; see [verifier preparation](playbooks/item-loop/verifier-claims.md) |
-| `bl round A1 --rows verdicts.tsv --report report.md` | yes | records one round: B0 briefs require `--report`; `bl verdicts` generates `Report-only: N` and each note's disposition (except harness rounds) |
-| `bl close A1 --commit 6742cf6` | yes | verified close; needs a PASS round whose pinned tree matches the working directory, no tracked non-artefact diff from the commit, and a real commit |
-| `bl drop A1 --reason "…"` | yes | the human's veto: declined, never a PASS |
-| `bl defer A1 --reason "…"` | yes | parked: visible, skipped by `next` |
-| `bl reopen A1` | yes | reverses a decline or a park |
-| `bl restart A1 --reason bad-check --why "…" --change "…"` | yes | ends the item's attempt and starts the next one, carrying its scope into the next `bl open` unless scope flags are given; `--reason` is one of `bad-check`, `extra-file`, `damaged-evidence`, `wrong-premise`. It writes the attempt's failure record and leaves the item open and out of flight |
-| `bl note A1 --text "…"` | yes | one note, scoped to an item |
-| `bl bump A3 A1` | yes | the human's priority list (tier 1), in the order given; a later bump goes in front of an earlier one; refuses an unknown, closed, dropped or repeated id |
-| `bl unbump A3` | yes | takes the id out of tier 1; a later `bl bump` puts it back |
-| `bl rank --file ranking.tsv` | yes | the loop's ranking (tier 2): one `id<TAB>reason` line per item, in rank order, replacing the last ranking; refuses a tier-1, unknown, closed, dropped or repeated id and an empty reason |
-| `bl loop [--max-items N] [--max-context N] [--max-sessions N] [--poll-ms N] [--timeout SECONDS] [--dispatch-config FILE]` | yes | **frozen since 2026-10-30**: no new loop features while its items park on timeouts and sandbox blocks; drive items with the item loop. Launches a `brain` dispatch per item (default launch budget 3); checks dispatch jobs in the repo and every `git worktree list` worktree before advancing or continuing. Each session's peak request context is input + cache creation + cache read tokens for one distinct assistant message id, capped at 130000 by default; --max-context accepts 1–130000. On overflow it cancels and waits for that job, then continues the same open item in a fresh session, up to 5 sessions per item by default. It reports peak context and cumulative input, cache creation and output usage (cache reads are printed, not counted) per session. Brain dispatch timeout is 3600 seconds; holds `.backlog/loop.lock`, atomically records the current item, token, launch count, session count and job in `.backlog/loop.json`, and resumes a saved job |
-| `bl next`, `bl show`, `bl packet <id> --role checks|producer|verifier`, `bl status`, `bl check [--views]`, `bl render`, `bl schema [--json]` | no | reads; `packet` prints an item's brief, notes, cited rules and scope, plus claims for a verifier; `render` only rewrites the views, `schema` is the single source for the fields |
-| `bl audit [--since 2d]` | report only | arithmetic over the ledger and `run.log` |
+Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside the skill dir).
 
-Unused so far and kept out of the default flow: `bl second-check` (a second judge's command for one row) and `bl signoff` (a human sign-off that permits a judge-only list); `bl schema` lists their flags.
+Verbs: `init` `file` `open` `brief` `checks` `rebaseline` `claims` `run` `verdicts` `round` `close` · `drop` `defer` `reopen` `restart` `note` · `bump` `unbump` `rank` · `next` `show` `packet` `status` `check` `render` `schema` `audit` · `intake` `import` `lint` `loop` `second-check` `signoff`.
 
-`bl next` names the item in flight; otherwise the first eligible item of tier 1 (the bumps, newest first), then tier 2 (the latest ranking), then tier 3 (everything else: the item the most open items wait on first, then filing order). A parked, closed, dropped or blocked item is never named, whatever its tier. Bumps and unbumps record `by: human`, a ranking `by: loop`.
+The playbooks carry the flow commands. For a verb outside them, or an unclear refusal, read [`references/verbs.md`](references/verbs.md).
 
 Exit status is the contract: **0** ok, **2** refused and nothing written, **3** the ledger is corrupt. A refusal prints `bl: refused: …` to stderr; read it, fix the argument, call again. A refusal is not a failed round — it never reaches the ledger and never counts against the round cap.
 
-The round cap is 3 **code** failures. A `harness` failure is the wrapper's fault, not the item's, so it does not consume a round. At the cap, `bl` refuses further code rounds: hand the defect table to the human.
+## The files
 
-## The views
+`TODO.md` and `PROGRESS.md` are rendered from the ledger after every append, and gitignored. So when the human says "add an item", "note that", "this isn't worth it" — you run the verb. `bl check --views` catches a hand edit; `bl render` rebuilds them.
 
-`TODO.md` and `PROGRESS.md` are **rendered** from the ledger after every append. They are for humans; no program reads them, and no program should. Gitignore both: `bl` already excludes them from the verified tree and the close diff, and `bl render` rebuilds them on demand. A hand edit is caught by fact, not policy:
+`BRIEF.md` is authored, plain markdown, and never parsed: intent, constraints, and the breakdown you wrote after researching the repo.
 
-```sh
-"$BL" check --views      # FAIL … TODO.md is stale or hand-edited
-```
+`.backlog/` holds `ledger.jsonl` (append-only; only `bl` writes it), `evidence/` (round tables, hashed, re-checked by `bl check`) and `run.log` (every invocation).
 
-So when the human says "add an item", "note that", "this isn't worth it" — you run the verb. You never type into a view.
-
-`BRIEF.md` is the exception: it is authored, plain markdown, and never parsed. It holds intent, constraints, and the breakdown you wrote after researching the repo. Nothing reads it back.
+Ids are short and unique, case-insensitively: `A1`, `E13`, `C8a`, `PROJ-12`. A duplicate is refused, because two entries on one id collapse into one and an open item disappears.
 
 ## Subagents
 
 - **Producer**: the item's text verbatim plus the rules, and not your plan for how to do it, or you will get the plan back as the result.
 - **Verifier**: the intent first, then the producer's claims to falsify. Have it write the checks it thinks the item needs *before* it reads the claims, and report both lists. Otherwise the producer's framing becomes the verifier's rubric, which is the one thing that must not leak.
-- **Independence comes from the context, and better still from the model.** A fresh session separates the verifier from the producer's reasoning. A *different model*, or a different harness entirely, separates it from the whole family's blind spots: the same brief against a second model is a second opinion, and agreement between two is the strongest signal available. Where a second model or harness is reachable, dispatch the verifier through it — [`references/second-harness.md`](references/second-harness.md) has the invocations and the caveats. If only one family is available, say so in the record, so a single-family verdict is not read as a corroborated one.
-- The verifier fills the bound JSON draft and converts it with `bl verdicts` into rows TSV and a report. **You** pass those files to `bl round --rows ... --report ...`, and you set `--cause` from what you observed: `code` when the commands ran and the item failed them, `harness` when the verifier itself could not run (timeout, missing tool, killed session). Never let the model choose the cause for a verdict it also issued.
-- Re-run one of the verifier's rows yourself, whichever outcome you would find most surprising, and note the match. One command, and it catches a fabricated table.
+- **Independence comes from the context, and better still from the model.** A fresh session separates the verifier from the producer's reasoning; a different model or harness separates it from the whole family's blind spots. Where one is reachable, dispatch the verifier through it: [`references/second-harness.md`](references/second-harness.md). If only one family is available, say so in the record.
+- The verifier fills the bound JSON draft and converts it with `bl verdicts` into rows TSV and a report. **You** pass those files to `bl round --rows ... --report ...` and set the cause from what you observed, because the model never chooses the cause for a verdict it also issued.
 
 ## Playbooks
 
@@ -104,32 +74,5 @@ Pick the item's lane first with [`playbooks/lanes.md`](playbooks/lanes.md): a ty
 
 - **Sequence into verifiable units.** A unit that ends in "and then the next unit will tell us" has no completion criterion, so it cannot be verified.
 - **Prove it on the real artifact.** A green test over a fixture the producer also wrote is a tautology. Prefer the number a third party could reproduce.
-- **Parse others' text through a closed format.** Code that reads text someone else wrote (verifier reports, claims, verdicts) must require a closed, fail-closed format: exact lines, everything else refused. Never parse free-form Markdown; I115's first attempt lost three rounds to new Markdown shapes.
 - **Re-baseline a wrong premise; do not drop it.** When an item's own premise turns out false, correct it in place with the measurement that overturned it.
 - **Stop when the marginal finding stops being worth its fix.** A round that can only report cosmetics or deliberately malformed input is the end of the loop. Agree that bar with the verifier before the first round, so a strict reviewer cannot extend the loop on reflex; then stopping is a decision you both already made — and the human's answer to a low-value item is `bl drop <id> --reason "…"`, recorded, not argued.
-
-## The files
-
-```
-BRIEF.md            authored: intent, constraints, the breakdown. Never parsed.
-.backlog/ledger.jsonl   append-only state. Only bl writes it.
-.backlog/evidence/      round tables, written by bl, hashed, re-checked by `bl check`
-.backlog/run.log        every invocation: argv, exit code, duration
-TODO.md             rendered, gitignored: Queue · Blocked · Parked · Declined · Closed
-PROGRESS.md         rendered, gitignored: one record per item, with its rounds and notes
-```
-
-Ids are short and unique, case-insensitively: `A1`, `E13`, `C8a`, `PROJ-12`. A duplicate is refused, because two entries on one id collapse into one and an open item disappears.
-
-`bl check` re-hashes every evidence file, so a tampered table is a FAIL rather than a footnote.
-
-## Migrating a prose backlog
-
-One release of `scripts/check-backlog.py` remains, as a bridge:
-
-```sh
-"$BL" lint TODO.md PROGRESS.md     # what would import, and what it cannot read
-"$BL" import TODO.md PROGRESS.md   # one pass into a fresh ledger
-```
-
-The import is a claim, not a proof: a closed item becomes a PASS round and a close carrying `legacy:unknown`, with a note saying it was taken on the prose record's word. It runs once, refuses a non-empty ledger, and refuses to overwrite a `TODO.md` it did not render. After that, `check-backlog.py` is deleted.

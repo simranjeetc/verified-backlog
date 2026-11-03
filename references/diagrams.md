@@ -19,7 +19,7 @@ diagram is where to check it when the two disagree.
                      FAIL ─► fix round (≤3 code rounds, R19) ─► produce
 ```
 
-Check against: `SKILL.md` (command rows), `scripts/cmd/bl/round.go:678` (round cap), `scripts/cmd/bl/ledger.go:26`.
+Check against: `references/verbs.md` (command rows), `scripts/cmd/bl/round.go:678` (round cap), `scripts/cmd/bl/ledger.go:26`.
 
 ## Item status
 
