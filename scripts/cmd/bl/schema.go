@@ -20,7 +20,7 @@ func schemaJSON() map[string]any {
 		"round_cap":  roundCap,
 		"statuses":   []string{"open", "blocked", "closed", "declined", "parked"},
 		"events": map[string]map[string][]string{
-			"file":          {"required": {"id", "text"}, "optional": {"after", "source", "urgent", "by"}},
+			"file":          {"required": {"id", "text"}, "optional": {"after", "source", "proof", "bucket", "urgent", "by"}},
 			"open":          {"required": {"id"}, "optional": {"brief", "brief_sha", "scope", "scope_ignored", "before_tree", "ignored_before"}},
 			"brief":         {"required": {"id", "brief", "brief_sha"}, "optional": {}},
 			"checks":        {"required": {"id", "checks", "checks_sha"}, "optional": {"prev_checks_sha", "format", "tests", "tests_sha"}},

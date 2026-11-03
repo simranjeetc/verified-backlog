@@ -307,6 +307,44 @@ def file_refuses_bad_id():
     refused(root, "file", "--id", "not an id", "--text", "x", match="does not match")
 
 
+@test
+def agent_file_requires_proof_and_bucket_and_parks_inbox_entries():
+    root = fresh()
+    refused(root, "file", "--id", "D1", "--text", "finding", "--source", "Verifier:A1/r1",
+            match="--proof")
+    refused(root, "file", "--id", "D1", "--text", "finding", "--source", "Verifier:A1/r1",
+            "--proof", "", "--bucket", "later", match="--proof")
+    refused(root, "file", "--id", "D1", "--text", "finding", "--source", "producer:A1",
+            "--proof", "go test -> reproduced", match="fix-now, batch or later")
+    refused(root, "file", "--id", "D1", "--text", "finding", "--source", "loop-run",
+            "--proof", "go test -> reproduced", "--bucket", "soon", match="fix-now, batch or later")
+    ok(root, "file", "--id", "D1", "--text", "finding", "--source", "verifier:A1/r1",
+       "--proof", "go test -> reproduced", "--bucket", "later")
+    assert ok(root, "next").stdout.strip() == "none"
+    assert "items 1 · parked 1" in ok(root, "status").stdout
+    shown = ok(root, "show", "D1").stdout
+    assert "proof: go test -> reproduced" in shown and "bucket: later" in shown
+    ok(root, "reopen", "D1")
+    assert "D1" in ok(root, "next").stdout
+    ok(root, "drop", "D1", "--reason", "declined after triage")
+
+
+@test
+def agent_fix_now_file_stays_open():
+    root = fresh()
+    ok(root, "file", "--id", "D1", "--text", "urgent finding", "--source", "supervisor:run",
+       "--proof", "bl check -> corrupt ledger reproduced", "--bucket", "fix-now")
+    assert "D1" in ok(root, "next").stdout
+    assert "items 1 · open 1" in ok(root, "status").stdout
+
+
+@test
+def non_agent_file_keeps_optional_proof_and_bucket():
+    root = fresh()
+    ok(root, "file", "--id", "H1", "--text", "human item", "--source", "human")
+    assert "H1" in ok(root, "next").stdout
+
+
 # ── open ─────────────────────────────────────────────────────────────────────
 
 

@@ -10,7 +10,7 @@
 // Usage:
 //
 //	bl init
-//	bl file --id A1 --text "..." [--after B2] [--source human] [--urgent]
+//	bl file --id A1 --text "..." [--after B2] [--source human] [--proof "command and result"] [--bucket fix-now|batch|later] [--urgent]
 //	bl open A1                                            (writes .backlog/items/A1/brief.md)
 //	bl brief A1 --file brief.md                           (amends the brief; a new event)
 //	bl checks A1 [--file checks.tsv] [--tests tests.py] [--amend]  (list from stdin without --file)

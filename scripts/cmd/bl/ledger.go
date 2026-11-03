@@ -64,6 +64,8 @@ type Event struct {
 	Note         string   `json:"note,omitempty"`
 	After        string   `json:"after,omitempty"`
 	Source       string   `json:"source,omitempty"`
+	Proof        string   `json:"proof,omitempty"`
+	Bucket       string   `json:"bucket,omitempty"`
 	Verdict      string   `json:"verdict,omitempty"`
 	Cause        string   `json:"cause,omitempty"`
 	ReportSHA    string   `json:"report_sha,omitempty"`
@@ -144,6 +146,8 @@ type Item struct {
 	Text      string
 	After     string
 	Source    string
+	Proof     string
+	Bucket    string
 	Status    string // open, closed, declined, parked
 	BlockedBy string
 	Rounds    []Event
@@ -437,8 +441,11 @@ func derive(events []Event) ([]*Item, map[string]*Item, error) {
 				return nil, nil, corrupt("duplicate file event for %s", ev.ID)
 			}
 			it := &Item{
-				ID: ev.ID, Text: ev.Text, After: ev.After, Source: ev.Source,
+				ID: ev.ID, Text: ev.Text, After: ev.After, Source: ev.Source, Proof: ev.Proof, Bucket: ev.Bucket,
 				Status: "open", FiledAt: ev.At, Attempt: 1,
+			}
+			if ev.Bucket == "batch" || ev.Bucket == "later" {
+				it.Status, it.Reason = "parked", ev.Bucket
 			}
 			byID[key] = it
 			order = append(order, it)

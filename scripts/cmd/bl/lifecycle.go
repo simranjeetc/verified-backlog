@@ -16,9 +16,12 @@ func cmdDrop(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	it, err := liveItem(byID, a.pos(0))
+	it, err := lookup(byID, a.pos(0))
 	if err != nil {
 		return err
+	}
+	if it.Status != "open" && it.Status != "parked" {
+		return refuse("%s is %s, not open", it.ID, it.Status)
 	}
 	reason, err := cleanText(a.get("reason"), "reason")
 	if err != nil {
