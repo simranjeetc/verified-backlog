@@ -43,9 +43,12 @@ func packetSnapshot(root, id string) (Event, error) {
 }
 
 func backlogDigest(root string) (string, error) {
-	base := filepath.Join(root, backlogDir)
+	base, err := resolvedBacklogBase(root)
+	if err != nil {
+		return "", err
+	}
 	var entries []backlogEntry
-	err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -57,6 +60,12 @@ func backlogDigest(root string) (string, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if rel == "audit" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if rel == ledgerName || rel == runlogName {
 			return nil
 		}
@@ -103,6 +112,10 @@ func backlogDigest(root string) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func resolvedBacklogBase(root string) (string, error) {
+	return filepath.EvalSymlinks(filepath.Join(root, backlogDir))
 }
 
 func verifyPacketWindow(root string, events []Event, it *Item) error {
