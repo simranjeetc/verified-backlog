@@ -1,2 +1,17 @@
 # built artifact: cd scripts && go build -o bl ./cmd/bl
 scripts/bl
+
+# lavish review artifacts (local, not part of the skill)
+.lavish/
+
+# the skill dogfooding itself: its own ledger, and the two views bl renders from it
+.backlog/
+/TODO.md
+/PROGRESS.md
+
+# BMAD / OpenSpec: installer output and generated artifacts
+_bmad-output/
+skills/test-artifacts/
+
+# agent worktrees created by the harness inside .claude/
+.claude/worktrees/

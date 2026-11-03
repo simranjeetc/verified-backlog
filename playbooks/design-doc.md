@@ -2,7 +2,7 @@
 
 For a decision other work will be built on: the shape of a key, a wire format, a state machine, a migration policy. Being wrong here is expensive, so the artifact is a document and the verifier re-implements it rather than reads it.
 
-A design doc is one backlog item, and it closes through `item-loop.md` Step 5 like any other.
+A design doc is one backlog item, and it closes through [item loop](item-loop/index.md#step-5-close) Step 5 like any other.
 
 ## Step 1: Write rules a stranger can implement
 

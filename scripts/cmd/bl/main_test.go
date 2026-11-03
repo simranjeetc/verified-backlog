@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,7 +193,107 @@ func TestSchemaIsJSON(t *testing.T) {
 		t.Errorf("version = %v", s["version"])
 	}
 	events := s["events"].(map[string]map[string][]string)
-	if len(events) != 8 {
-		t.Errorf("want 8 event kinds, got %d", len(events))
+	if len(events) != 22 {
+		t.Errorf("want 22 event kinds, got %d", len(events))
+	}
+	for _, kind := range []string{"checks", "claims", "packet"} {
+		if _, ok := events[kind]; !ok {
+			t.Errorf("schema is missing event kind %q", kind)
+		}
+	}
+	for _, kind := range []string{"baseline", "brief", "rebaseline", "run", "second-check", "misclassified", "restart", "signoff"} {
+		if _, ok := events[kind]; !ok {
+			t.Errorf("schema is missing event kind %q", kind)
+		}
+	}
+}
+
+// capture runs fn with stdout redirected and returns what it printed.
+func capture(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	fn()
+	w.Close()
+	os.Stdout = old
+	out := <-done
+	r.Close()
+	return out
+}
+
+// captureStderr runs fn with stderr redirected and returns what it printed.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		io.Copy(&b, r)
+		done <- b.String()
+	}()
+	fn()
+	w.Close()
+	os.Stderr = old
+	out := <-done
+	r.Close()
+	return out
+}
+
+func TestSchemaListsEveryKind(t *testing.T) {
+	var err error
+	out := capture(t, func() { err = call(t, cmdSchema, t.TempDir()) })
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	kinds := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[1] == "required:" {
+			kinds[f[0]] = true
+		}
+	}
+	if len(kinds) != 22 {
+		t.Errorf("want 22 event kinds in the schema output, got %d: %v", len(kinds), kinds)
+	}
+	for _, kind := range []string{"baseline", "brief", "rebaseline", "run", "second-check", "misclassified", "restart", "signoff", "packet"} {
+		if !kinds[kind] {
+			t.Errorf("the schema output is missing event kind %q", kind)
+		}
+	}
+}
+
+// The schema output reports how many event kinds it lists, so a reader (and a grep) can tell
+// 15 from 14 without counting the lines.
+func TestSchemaReportsTheNumberOfEventKinds(t *testing.T) {
+	var err error
+	out := capture(t, func() { err = call(t, cmdSchema, t.TempDir()) })
+	if err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	listed := 0
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[1] == "required:" {
+			listed++
+		}
+	}
+	want := fmt.Sprintf("%d event kinds", listed)
+	if !strings.Contains(out, want) {
+		t.Fatalf("the schema output must report its count (%q):\n%s", want, out)
 	}
 }

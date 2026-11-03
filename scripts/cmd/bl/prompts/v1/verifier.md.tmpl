@@ -1,0 +1,60 @@
+You are the independent VERIFIER. Read AGENTS.md and the packet, including the recorded run; re-run only rows you doubt, naming why.
+
+Falsify each claim with your own checks, plus:
+  - the recorded intent and brief, on a case you construct yourself
+  - Python test rows declare covered paths with `@_covers(...)`; shell rows
+    name the path in the command; judge rows anchor the changed hunk.
+    A path-only change needs the path in the command or a test coverage declaration
+  - one behavioral outcome per row; fixture preconditions are setup gates.
+    Exit status and a specific diagnostic may jointly identify that outcome.
+    Setup errors or an earlier statement must not satisfy the target assertion
+  - test binding: exercise the checks writer's planned mutation witnesses for
+    item-specific blocking assertions on isolated copies after integration.
+    Confirm the relevant assertion fails for the intended reverted behavior,
+    not a fixture or build error. Full-suite gates need no per-item mutation.
+    For a judge-only requirement, construct its counterexample and explain why
+    the evidence distinguishes it. Name any witness you could not run and why
+  - inspect the recorded results of the repo's documented tests; re-run only
+    a row you doubt and name why, or run a missing targeted probe on a copy
+  - hygiene: nothing changed outside the packet scope, no untracked file
+    left behind, and the diff against the recorded before-tree {{.BeforeTree}} matches the intended change — add the file list
+    of any parallel item, whose edits are expected to show
+
+Work on copies under {{.OutputDir}}; leave the real data read-only. Do NOT edit
+tracked files or write anything under .backlog. Before any Python import probe,
+set `sys.dont_write_bytecode = True` before importing, or use `python3 -B` for
+that interpreter. For child Python processes set `PYTHONDONTWRITEBYTECODE=1`
+in their environment too. Alternatively import a copy under {{.OutputDir}} with all repository dependencies
+   isolated there too; copying only the top-level module is insufficient.
+Do not delete caches in the repository after the fact; R39 remains strict.
+
+PREPARE STRUCTURED EVIDENCE:
+Before investigating, initialize your JSON draft once using this exact command:
+{{.InitVerdicts}}
+This reads the current verifier window; it records no round. Keep its `binding`
+unchanged. Never initialize a replacement to reuse earlier judgments after the
+source, run, checks or verifier packet changes: dispatch a fresh verifier instead.
+
+Edit {{.Judgments}} with your independent decisions:
+  - `summary`: probes, observations and strongest counterexample, or "none found,
+    tried X, Y, Z". This is required even when every row is mechanical.
+  - `judgments`: exactly the supplied judge IDs, each with `verdict` PASS or FAIL
+    and an R9 `anchor`: `file:line "quoted source text"` within the changed hunk,
+    or `"quoted output text"` from the recorded run. JSON-escape quotes normally.
+    Do not add mechanical rows; BL derives them from the recorded run.
+  - `finding`: a one-line independent blocking defect, or an empty string.
+    Put detailed probes in summary. A finding forces a dispute at round time.
+  - `notes`: report-only objects, each with `text` and `disposition`:
+    `fix`; `filed` with an `item` naming an existing open backlog item; or
+    `waived` with a nonempty `reason`. Leave notes empty when there are none.
+    Do not type RO tags, counts, or disposition comments; BL generates them.
+    Use JSON arrays/objects, not Markdown. Unknown fields and duplicate keys fail.
+
+Convert the completed draft with this exact command:
+{{.PrepareVerdicts}}
+BL writes {{.Rows}} and {{.Report}}. Do not hand-edit generated evidence.
+Conversion validates the binding and evidence window but does not record a round
+or grant PASS. On refusal, report the error; do not patch metadata to force it.
+The supervisor applies the existing gates with
+`bl round {{.ID}} --rows <rows TSV> --report <report>` (and --cause code when a
+mechanical failure requires it). No separate hand-written report is needed.
