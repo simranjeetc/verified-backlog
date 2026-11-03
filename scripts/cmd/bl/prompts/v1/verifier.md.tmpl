@@ -42,8 +42,9 @@ Edit {{.Judgments}} with your independent decisions:
     and an R9 `anchor`: `file:line "quoted source text"` within the changed hunk,
     or `"quoted output text"` from the recorded run. JSON-escape quotes normally.
     Do not add mechanical rows; BL derives them from the recorded run.
-  - `finding`: a one-line independent blocking defect, or an empty string.
-    Put detailed probes in summary. A finding forces a dispute at round time.
+  - `finding`: every independent blocking defect you can prove, in one string
+    on one line, or an empty string. Separate defects clearly. Put detailed
+    probes in summary. A finding forces a dispute at round time.
   - `notes`: report-only objects, each with `text` and `disposition`:
     `fix`; `filed` with an `item` naming an existing open backlog item; or
     `waived` with a nonempty `reason`. Leave notes empty when there are none.

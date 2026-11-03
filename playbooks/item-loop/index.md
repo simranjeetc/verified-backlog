@@ -55,6 +55,17 @@ it in the diff.
 `bl open` records the before-tree itself and refuses a dirty tree (R5), so the round's diff holds
 only this item's changes.
 
+Before dispatching a producer, reproduce any reported defect on the opened tree. Record the red
+result with `bl note A1 --text "reproduced: <command> exits 1; <diagnostic>"`. If the reported
+command does not reproduce the defect (for example, it exits 0), defer the item with a reason
+starting `could not reproduce` and do not dispatch a producer:
+
+```sh
+"$BL" defer A1 --reason "could not reproduce: <command> exits 0"
+```
+
+An item that adds a feature rather than reports a defect skips this reproduction gate.
+
 Completion: the item is open, its lane is noted, its intent fits one sentence, and its file list is known.
 
 ## Step 2: Dispatch the producer
