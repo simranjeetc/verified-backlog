@@ -2,8 +2,9 @@
 
 Pick the lane before `bl open`, from the size and the risk of the change. The process scales with the
 item; the guarantees `bl` enforces do not. Every lane that uses the ledger still gets a B0 brief with
-an `Example:` per clause (R2), a frozen check list with a blocking `decider: bl` row (R15) naming every
-changed path (R10), a fresh blind verifier, and a close on a real commit.
+an `Example:` per clause (R2), a frozen check list with a blocking `decider: bl` row (R15), derived
+coverage for changed code paths (R10), judge rows for green reverts and documentation, a fresh blind
+verifier, and a close on a real commit.
 
 A **contract** below is anything another party depends on: a public API, a schema, a file or wire
 format, CLI flags, auth and permissions, money or persisted data, concurrency, the build or test setup.

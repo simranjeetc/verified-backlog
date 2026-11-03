@@ -283,9 +283,9 @@ func cmdRound(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	if err := checkCoverage(vf, frozen, hunks, bare, covers, func(path string) string {
+	if err := checkCoverage(it.ID, vf, frozen, hunks, bare, covers, func(path string) string {
 		return coverageRecoveryHint(it, events, path)
-	}); err != nil {
+	}, rf.Derived); err != nil {
 		return err
 	}
 	// R16: a second check that disagrees with the row's recorded verdict.
