@@ -192,6 +192,9 @@ func ignoredUnderScope(root string, scope []string) ([]string, error) {
 	}
 	var out []string
 	for path := range b.ignored {
+		if isRenderedView(path) {
+			continue
+		}
 		if !inScope(scope, path) {
 			continue
 		}
@@ -203,6 +206,11 @@ func ignoredUnderScope(root string, scope []string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// isRenderedView reports whether path is one of the root-level views rewritten by ledger events.
+func isRenderedView(path string) bool {
+	return path == "TODO.md" || path == "PROGRESS.md"
 }
 
 // treesMatch reports whether two trees are the same tree, ignoring the ledger's own

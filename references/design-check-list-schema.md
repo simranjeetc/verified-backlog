@@ -575,9 +575,10 @@ amendment removes a clause that a frozen row cites in its `brief_ref`, `bl round
 criterion no longer exists in the brief it was written against.
 
 **R28 — an ignored file under the scope may not change.** The before-state records the path and hash of every ignored
-file under the item's scope paths (§2). A round is refused if any of those hashes changed, unless the file was named
-in the item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that
-the scope did not declare is therefore refused, not silently dropped from the record.
+file under the item's scope paths (§2), except for root-level `TODO.md` and `PROGRESS.md`, which are rendered views
+rewritten by ledger events. A round is refused if any other recorded hash changed, unless the file was named in the
+item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that the
+scope did not declare is therefore refused, not silently dropped from the record.
 
 **R29 — the anchor names a checkpoint in the chain, and the sequence number makes truncation visible.** A chain that
 verifies is not enough, because an attacker who can rewrite the file can also truncate its tail and leave a shorter
