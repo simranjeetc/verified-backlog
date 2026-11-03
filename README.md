@@ -170,6 +170,13 @@ Notes use `text` and `disposition` (`fix`, `filed` with `item`, or `waived` with
 `reason`). Findings remain blocking disputes, and a `fix` note prevents PASS.
 A mechanical FAIL without a finding needs `--cause code` when recording the round.
 
+`bl run` also records derived coverage for each changed code path by running the
+passed blocking binary checks against scratch copies with that path reverted. A
+red revert covers the path; a green or unusable result needs a blocking judge row
+that explains it. Added paths whose removal turns a check red are recorded as
+weak evidence. Derivation adds one control pass plus up to one check pass per
+changed code path; documentation paths keep judge-row coverage.
+
 Outputs must be outside the repository, including symlink aliases. Initialization
 requires a new draft path. Conversion writes the rows and report but records no
 round and grants no PASS; existing round gates still apply independently. If an

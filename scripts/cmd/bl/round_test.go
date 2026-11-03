@@ -301,7 +301,7 @@ func TestR10AnUncoveredHunkIsRefused(t *testing.T) {
 	rows := runAndVerdicts(t, dir, "S1\tPASS\t")
 	err := call(t, cmdRound, dir, "A1", "--rows", rows)
 	wantRule(t, err, "R10")
-	for _, want := range []string{"bl checks A1 --amend", "f.txt", "blocking row", "bl run A1", "round"} {
+	for _, want := range []string{"bl checks A1 --amend", "f.txt", "blocking judge", "bl run A1", "fresh packet"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("R10 refusal %q does not contain %q", err, want)
 		}
@@ -1199,7 +1199,7 @@ func TestR10RecoveryWithoutTestFileCanRecordFreshRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", old), "R10")
-	amended := list + "S2\tbl\tblocking\tB1\tcat f.txt\texit 0\t\t\tread changed file\n"
+	amended := list + "J2\tjudge\tblocking\tB1\tcat f.txt\t\tif the output is not two, FAIL\twhy the green revert is acceptable\tthe output is two\n"
 	next := writeFile(t, t.TempDir(), "next.tsv", amended)
 	wantRule(t, call(t, cmdChecks, dir, "A1", "--amend", "--file", next), "R39")
 	if err := call(t, cmdRun, dir, "A1"); err != nil {
@@ -1209,7 +1209,7 @@ func TestR10RecoveryWithoutTestFileCanRecordFreshRound(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantRule(t, call(t, cmdRound, dir, "A1", "--rows", old), "R39")
-	fresh := runAndVerdicts(t, dir, "S1\tPASS\t", "S2\tPASS\t")
+	fresh := runAndVerdicts(t, dir, "S1\tPASS\t", "J2\tPASS\t\"two\"")
 	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
 		t.Fatal(err)
 	}

@@ -68,6 +68,10 @@ the verifier writes the checks.
 
 Completion: the producer has reported, and a command in its report shows the property holding.
 
+`bl checks` runs declared baseline rows against the item's before-tree before freezing, one row at a time. Budget one
+row timeout per baseline row. `new` rows must be red and `keep` rows green; lists without the optional column retain
+legacy behavior and print a no-baseline warning.
+
 ## Step 3: Dispatch the blind verifier
 
 Two dispatches to the same verifier, in this order. One prompt carrying both defeats the purpose: a
@@ -122,19 +126,17 @@ An amendment is blocked while a usable verifier window is open. An already void 
 block amendment, but the amended checks need a new run, packet and independent verifier.
 
 An R10 refusal before any PASS round can be recovered without a FAIL round or restart. If the
-verifier window is open, run `bl run <ID>` first to void it, then `bl checks <ID> --amend` adding
-a blocking row that covers the named path (when the format-2 list has a frozen test file, use
-`--tests` with a test function carrying `@_covers("<path>")` inserted before the main block;
-otherwise add a shell row whose command names the path. For a `.md` path, add a judge row.)
+refusal names a green, unusable, or lone exempt code path, add a blocking `decider: judge` row with
+`bl checks <ID> --amend` that records why reverting that path stays green. For a `.md` path, retain
+the existing judge-row coverage rule. A red derived code path needs no hand-written path row.
+If the verifier window is open, run `bl run <ID>` first to void it, then amend the check list.
 Then run `bl run <ID>`, issue a fresh `bl packet <ID> --role verifier`, dispatch a new verifier,
 and record the round. With no open window, amend first, then run, issue a fresh packet and dispatch a new verifier before recording the round.
 
-Examples: for `main.go`, a list with frozen Python tests adds a function decorated with
-`@_covers("main.go")` before the frozen main block and passes the extended file via `--tests`.
-A list without frozen tests instead adds a blocking simple-command row that exercises
-`main.go` and names that path; omit `--tests`. For a changed `README.md` hunk, add a
-blocking judge row with an anchor in the hunk; for a path-only change its command must
-name `README.md`. The new verifier must evaluate the amended list, not reuse the old verdict.
+Examples: a `red` derived row for `main.go` needs no hand-written path row. If `format.sh` is
+`green`, amend with a blocking judge row that names the path in its command or anchors a source
+location in its changed hunk. A changed `README.md` hunk still uses a blocking judge row anchored
+in that hunk. The new verifier must evaluate the amended list, not reuse the old verdict.
 
 ```sh
 # Use the rows TSV and report paths generated from the verifier JSON draft.

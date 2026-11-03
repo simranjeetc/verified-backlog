@@ -46,6 +46,13 @@ write it, and what the binary refuses.
 
 ## 2. Artifacts, and the definitions every rule leans on
 
+The optional tenth check-list column `baseline` may be appended after the nine required columns. In such a list,
+each `decider: bl` row declares `new` or `keep`; judge rows leave the cell empty. `new` rows must be red against the
+item's before-tree and `keep` rows green. `bl checks` tests these declarations in a before copy, sequentially and
+before freezing; `--amend` tests only appended rows, while `bl rebaseline` tests every baseline row. A root without
+Git or an item without a before-tree skips the pass and warns `no baseline check`. Old nine-column lists continue to
+freeze without a pass.
+
 All paths are relative to the repository root.
 
 | artifact | path | written by | hashed into the ledger |
@@ -107,6 +114,8 @@ evaluated against it, and the judge reads it. The excerpt (4096 bytes per stream
 a human to read.
 
 The run file is named by a run id of the form `run<N>` for the item.
+
+When the before-tree and Git repository are available, the run file also carries `derived`: a `control` result (`PASS`, `FAIL` with `failed_row`, or `none`) and sorted `paths` with IDs `D1...`. Each path records `path`, `kind` (`modified`, `added`, `deleted`), `verdict` (`red`, `green`, `unusable`, `exempt`), `weak`, `killed_by`, `exit`, `timed_out` and `ms`; a mutated-copy build failure also records `build_output`. Archive/setup failure records control `FAIL` with a reason and makes non-exempt paths unusable. Test paths (test basenames or a `tests` directory segment) are exempt without mutation. When the before-tree cannot be resolved, the key is omitted for legacy R10 compatibility. A diff with no code paths records control `none` and an empty path list.
 
 **Verifier packet run section.** When the current attempt has a run, `bl packet <id> --role verifier`
 prints a `## Run` section immediately after `## Intent`: the latest run file path, one `<row id> exit
@@ -228,7 +237,9 @@ is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repos
 The two rendered views, `TODO.md` and `PROGRESS.md`, are artefacts as well: every event in the ledger rewrites
 them, so they are excluded from the verified tree and from the round's diff. The audit report is an artefact as
 well: `bl audit` writes it under `.backlog/audit/`, inside the artefact directory, so a report of the ledger is never
-a file of the work and never lands in an item's diff. Without that, a tree pin would
+a file of the work and never lands in an item's diff. Its JSON report includes `refusals_by_rule`; the Markdown report
+lists those counts highest first, with ties by rule name. New refusal lines record their rule, while older lines count
+as `unrecorded`. Without that, a tree pin would
 refuse every round after the ledger moved — and the ledger moves in the item's own flow, because R14 files the
 advisory items between the run and the round.
 
@@ -416,24 +427,23 @@ An anchor of the wrong shape for its form — a source anchor whose file is not 
 or whose quoted text is not at that line, or which lies in no hunk; an output anchor whose quoted text is not in the
 command's output — is a refusal.
 
-**R10 — hunk coverage.** Every hunk in the round's diff must be covered by at least one **blocking** row, of either
-decider. A row covers a hunk if either:
+**R10 — hunk coverage.** A run file with a `derived` object records one derived row per changed non-artefact code path. For a code path, coverage is satisfied when its row is `red`, or when it is `exempt` and another path in that run is `red`. A `green`, `unusable`, or lone `exempt` path requires a blocking `decider: judge` row whose command names the path or whose source anchor lies in any changed hunk of that path; that anchor covers the whole path. A `decider: bl` row and `@_covers` do not satisfy code-path coverage. A run file without `derived` keeps the legacy rule below. `.md` paths also keep the legacy rule:
 - it is a `decider: judge` row whose source anchor lies in that hunk's new-side range; or
 - its `cmd` contains the hunk's file path as a literal substring; or
 - (format 2) it is a test row whose function carries `@_covers("<path>", ...)` with a string-literal argument equal
   to that file's path as a whole string.
 
-The comparison is literal: a row that exercises a file without naming it covers nothing. A check list written to
+Under the legacy rule, the comparison is literal: a row that exercises a file without naming it covers nothing. A check list written to
 drive a binary never names a source file, so on its own it leaves every hunk uncovered and no round can be recorded
 at all. The path belongs in the command, next to the thing it exercises — or, for a format-2 test row, in the
 `@_covers` decorator, because its cmd names only the test file and its function (R37). A test row covers nothing
 through its cmd, so a repository file whose path is a substring of the cmd is covered only by `_covers` or by another
 row.
 
-A file that is added, deleted, or mode-changed without any textual hunk (a binary file, an empty file) is covered
+Under the legacy rule, a file that is added, deleted, or mode-changed without any textual hunk (a binary file, an empty file) is covered
 only by a blocking row whose `cmd` names that path, or by a test row's `@_covers` naming it.
 
-An uncovered hunk refuses the round. Advisory rows do not count towards coverage.
+An uncovered hunk refuses the round. Advisory rows do not count towards coverage. Derivation rows are stored in the hashed run file, in frozen-row order, and run against a scratch copy. The control first runs all blocking `decider: bl` rows that passed in the run. A failing control, no eligible rows, or setup failure makes paths unusable; no code mutation is tested. Modified paths restore before-tree content and mode, added paths are removed, and deleted paths are restored. Test paths are exempt. Added paths that turn a suite red are marked weak. Each path stops at the first non-PASS row. `bl run` performs one control pass plus up to one pass per changed code path; derivation does not change the run exit code. Scratch copies include only the verified tree and the item's own `.backlog/items/<id>/` directory and are removed after the run.
 
 A docs clause is covered by a blocking `decider: judge` row. The verifier reads the documentation
 against the clause's example and places its `<path>:<line>` anchor in the changed hunk; R10 then
@@ -1188,7 +1198,7 @@ Computed with the rules above.
 | dispute rounds an item may have | 3 | R19, R13 |
 | rounds an item may have in total, of any cause | 6 | R19 |
 | blocking rows an item needs to close | at least 1, of which at least 1 must be `decider: bl` — or 0 with a human sign-off, and only then if the diff has no hunks and no ignored file under the scope changed (R10, R28) | R15, R10, R22, R28 |
-| the minimum number of blocking rows for an item with a diff | at least one per hunk, and at least one `decider: bl` row; a single row may cover several hunks if it names their file | R10, R15 |
+| the minimum number of blocking rows for an item with a diff | at least one `decider: bl` row. A run with `derived` needs no row per code path, only a judge row for a path that is not covered by derivation; `.md` hunks and a run with no `derived` need one row per hunk, and a single row may cover several hunks if it names their file | R10, R15 |
 
 **Sensitivities, not headlines.** The figures below describe the loop as it exists today and are *not* a property of
 this design; nothing here changes them. They are recorded so that a future claim of a cost win can be checked against
@@ -1374,3 +1384,13 @@ A usable open verifier window (a packet with no later round or restart, whose re
 An intake JSONL file contains `source` records (`t`, `id`, `path`, `lines`, `sha`), `decision` records (`t`, `id`, `text`, `by`), `item` records (`t`, `id`, `title` required; `after`, `scope`, `source`, `decisions` optional), and `clause` records (`t`, `item`, `id`, `observe`, `expect`, `example`). `bl schema intake` prints their JSON Schemas. `bl intake --check` and `bl intake --render` use the same contract. A field a record type does not list is refused as `unknown field for a <type> record`. A wrong field type, including `null` or a `null` array element, is reported once as `must be a string` or `must be an array of strings`; a non-object line is `json: not a JSON object`. Every string, including array elements, must be one line. Every id, item, after and decisions value must match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. A non-empty item source must name a source record. A reference is not checked while a record it could name is itself bad, so one mistake is reported once, at its own field. Errors use `<path>:<line>: <field>: <reason>`.
 
 `--render` escapes `&`, `<` and `>` in every printed value; U+0085, U+2028 and U+2029 count as line breaks.
+
+**R40 — baseline declarations hold before a list freezes.** The optional tenth header column `baseline` is appended
+after the nine required columns. Its value is `new` or `keep` for every `decider: bl` row and empty for judge rows;
+other values are refused under R1, while a missing declaration is refused under R40. `bl checks` runs the proposed
+baseline rows, one at a time, in a scratch copy of the item's before-tree with the item's own backlog directory.
+`new` must be red and `keep` green under the same expectation logic used by `bl run`. A timeout, exit 126 or 127,
+failed binary build, or frozen test row with an exit other than 0 or 1 or without its `bl-test: <name>` line is a
+setup error and refuses under R40. A refusal writes no list, test file, or event. Successful lists print the counts
+of new red and keep green rows. `--amend` evaluates only rows it adds; `rebaseline` evaluates every baseline row.
+Without the column, outside Git, or without a before-tree, no baseline executes and stderr warns `no baseline check`.

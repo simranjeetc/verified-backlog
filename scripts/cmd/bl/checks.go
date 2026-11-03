@@ -107,8 +107,20 @@ func cmdChecks(root string, a args) error {
 	}
 	// R37: the test file and the format-2 rows. The existing rules keep their place; this block
 	// runs after all of them, and its probe runs immediately before the write (I89, B5).
+	oldTests, oldTestsErr := os.ReadFile(filepath.Join(root, testPath(it.ID, it.Attempt)))
 	tests, err := validateR37(root, it, rows, format, supplied, suppliedSet, amend, amend && suppliedSet)
 	if err != nil {
+		return err
+	}
+	if _, err := validateBaselineRows(root, it, rows, amend, tests.data, tests.set); err != nil {
+		if tests.set {
+			path := filepath.Join(root, testPath(it.ID, it.Attempt))
+			if oldTestsErr != nil {
+				_ = os.Remove(path)
+			} else {
+				_ = atomicWrite(path, string(oldTests))
+			}
+		}
 		return err
 	}
 	if err := checkR15Rows(events, it, rows); err != nil {
@@ -218,8 +230,20 @@ func cmdRebaseline(root string, a args) error {
 		return refuseRule("R4", "%s has no check list to re-baseline", it.ID)
 	}
 	// R37's block runs after every existing rule, and its probe immediately before the write.
+	oldTests, oldTestsErr := os.ReadFile(filepath.Join(root, testPath(it.ID, it.Attempt)))
 	tests, err := validateR37(root, it, rows, format, supplied, suppliedSet, true, false)
 	if err != nil {
+		return err
+	}
+	if _, err := validateBaselineRows(root, it, rows, false, tests.data, tests.set); err != nil {
+		if tests.set && suppliedSet {
+			path := filepath.Join(root, testPath(it.ID, it.Attempt))
+			if oldTestsErr != nil {
+				_ = os.Remove(path)
+			} else {
+				_ = atomicWrite(path, string(oldTests))
+			}
+		}
 		return err
 	}
 	rel := attemptFile(it.ID, it.Attempt, checksName)

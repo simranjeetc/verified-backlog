@@ -58,20 +58,22 @@ type runFile struct {
 	TreeEnd   string            `json:"tree_end"`
 	Env       map[string]string `json:"env"`
 	Rows      []runRow          `json:"rows"`
+	Derived   *derivedRun       `json:"derived,omitempty"`
 }
 
 // cmdRun executes every row of the frozen check list under the fixed environment (§2, R21),
-// writes the run file, and records the run event (R7).
+// runs derivation, verifies the tree and backlog stayed unchanged, writes the run file, and
+// records the run event (R7).
 //
 // The order is P3's: R35 (the item is the one in flight) → R20 (the frozen artefacts are what
 // they were) → R1 (the list still parses) → R7 (every row ran and its row-verdict was computed;
-// R8, the expectation's form, is refused inside it) → R26 (the tree did not move) →
-// R27 (the backlog state did not move). A run is refused on the first of these that fails, and no run
-// file is written.
+// R8, the expectation's form, is refused inside it) → derivation → R26 (the tree did not move)
+// → R27 (the backlog state did not move). A run is refused on the first of these that fails,
+// and no run file is written.
 //
-// R26 and R27 are comparisons, so they are made once the rows have run; the list is parsed
-// before them, because the rows come out of the list and a list that does not parse cannot be
-// run at all.
+// R26 and R27 are compared after derivation too, since a derivation command may write through an
+// absolute path into the real tree or backlog. The list must be parsed before execution because
+// the rows come out of it.
 func cmdRun(root string, a args) error {
 	jobs := runtime.NumCPU()
 	if values := a.list("jobs"); len(values) > 0 {
@@ -221,14 +223,9 @@ func cmdRun(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	// R26: the tree did not move under the run. A row's command changed the tree, so the rows
-	// were verified against a state that no longer exists.
 	if treeEnd != treeStart {
 		return refuseRule("R26", "the tree moved under the run: %s before, %s after — a row's command changed the tree the rows ran against", treeStart, treeEnd)
 	}
-	// R27: the ledger did not move under the run. A row's command wrote to the ledger, the
-	// evidence or the item files, and the run's own record would have been written by the thing
-	// it is recording.
 	if ledgerAfter != ledgerBefore {
 		return refuseRule("R27", "the %s directory changed under the run: %s before, %s after — a row's command wrote to the ledger, the evidence or the item files", backlogDir, ledgerBefore, ledgerAfter)
 	}
@@ -243,6 +240,38 @@ func cmdRun(root string, a args) error {
 			"PATH": path, "HOME": home, "TMPDIR": tmpdir, "LANG": "C", "TZ": "UTC",
 		},
 		Rows: records,
+	}
+	derived, deriveErr := deriveCoverage(root, it, rows, records, env, it.BeforeTree, treeEnd)
+	if deriveErr != nil {
+		return deriveErr
+	}
+	rf.Derived = derived
+	// Derivation executes rows in scratch trees, but a row can still write through an absolute
+	// path. Recheck both protected states after the entire derivation pass before recording it.
+	treeEnd, err = verifiedTreeWriting(root)
+	if err != nil {
+		return err
+	}
+	ledgerAfter, err = backlogHash(root)
+	if err != nil {
+		return err
+	}
+	if treeEnd != treeStart {
+		return refuseRule("R26", "the tree moved under derivation: %s before, %s after — a derivation row changed the real tree through an absolute path", treeStart, treeEnd)
+	}
+	if ledgerAfter != ledgerBefore {
+		return refuseRule("R27", "the %s directory changed under derivation: %s before, %s after — a derivation row wrote to the ledger, the evidence or the item files", backlogDir, ledgerBefore, ledgerAfter)
+	}
+	if derived != nil {
+		for _, p := range derived.Paths {
+			if p.Verdict != "exempt" {
+				fmt.Printf("bl: %s %s %s %s", it.ID, p.ID, p.Path, p.Verdict)
+				if p.KilledBy != "" {
+					fmt.Printf(" killed_by %s", p.KilledBy)
+				}
+				fmt.Println()
+			}
+		}
 	}
 	if blUnderTest != "" {
 		rf.Env["BL_UNDER_TEST"] = blUnderTest

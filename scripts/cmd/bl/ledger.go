@@ -397,7 +397,7 @@ func appendEvent(root string, ev Event) (Event, error) {
 	return ev, render(root, all)
 }
 
-func logRun(root string, argv []string, code int, started time.Time) {
+func logRun(root, verb string, argv []string, code int, rule string, started time.Time) {
 	p := newPaths(root)
 	if st, err := os.Stat(p.base); err != nil || !st.IsDir() {
 		return
@@ -405,8 +405,12 @@ func logRun(root string, argv []string, code int, started time.Time) {
 	rec := map[string]any{
 		"at":   now(),
 		"argv": argv,
+		"verb": verb,
 		"exit": code,
 		"ms":   time.Since(started).Milliseconds(),
+	}
+	if code == 2 {
+		rec["rule"] = rule
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {

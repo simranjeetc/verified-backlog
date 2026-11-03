@@ -54,7 +54,7 @@ func renderRolePrompt(root string, a args, p packet) (string, string, error) {
 	if d.BeforeTree == "" {
 		d.BeforeTree = "unavailable (not recorded; reconcile baseline before asserting hygiene)"
 	}
-	d.ChecksHeader = strings.Join(checkColumns, "\t")
+	d.ChecksHeader = strings.Join(checkColumnsWithBaseline, "\t")
 	d.Evidence = filepath.Join(out, prefix+"-evidence.md")
 	d.Checks = filepath.Join(out, prefix+"-checks.tsv")
 	d.Tests = filepath.Join(out, prefix+"-tests.py")

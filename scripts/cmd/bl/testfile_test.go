@@ -307,10 +307,11 @@ func TestR37CoverageComesFromTheCoversDecorator(t *testing.T) {
 		rows := runAndVerdicts(t, dir, "T1\tPASS\t")
 		return call(t, cmdRound, dir, "A1", "--rows", rows)
 	}
-	if err := roundWith(t, "main.go", "main.go"); err != nil {
-		t.Fatalf("a covered hunk refused the round: %v", err)
+	r := wantRefusal(t, roundWith(t, "main.go", "main.go"))
+	if r.rule != "R10" || !strings.Contains(r.msg, "green") {
+		t.Fatalf("a test decorator alone must not cover a green code path: %+v", r)
 	}
-	r := wantRefusal(t, roundWith(t, "other.go", "main.go"))
+	r = wantRefusal(t, roundWith(t, "other.go", "main.go"))
 	if r.rule != "R10" {
 		t.Fatalf("want R10, got %s: %s", r.rule, r.msg)
 	}
@@ -329,8 +330,9 @@ func TestR37CoversAnAddedEmptyFile(t *testing.T) {
 	}
 	writeFile(t, dir, "e.txt", "")
 	rows := runAndVerdicts(t, dir, "T1\tPASS\t")
-	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
-		t.Fatalf("a covered added file refused the round: %v", err)
+	r := wantRefusal(t, call(t, cmdRound, dir, "A1", "--rows", rows))
+	if r.rule != "R10" {
+		t.Fatalf("a test decorator alone must not cover a green added path: %+v", r)
 	}
 }
 

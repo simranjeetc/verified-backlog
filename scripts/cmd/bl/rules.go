@@ -164,20 +164,98 @@ func testCovers(root string, it *Item, frozen []checkRow) (map[string]map[string
 // A format-2 test row covers a hunk only through its function's `@_covers(...)` (I89, B7):
 // its cmd is `python3 <test file> <name>`, which names no repository file, and it is never
 // read as a path by substring. Advisory rows do not count.
-func checkCoverage(vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string, covers map[string]map[string]bool, recoveryHint func(string) string) error {
+func checkCoverage(id string, vf *verdictsFile, frozen []checkRow, hunks []hunk, bare []string, covers map[string]map[string]bool, recoveryHint func(string) string, derived *derivedRun) error {
 	for _, h := range hunks {
+		if derived != nil && !strings.HasSuffix(h.file, ".md") {
+			if derivedCovers(vf, frozen, h.file, hunks, derived) {
+				continue
+			}
+			return refuseRule("R10", "the changed code path %s has derived verdict %s and no blocking judge row justifies its green revert%s", h.file, derivedVerdict(derived, h.file), derivedRecovery(id, h.file))
+		}
 		if coveredHunk(vf, frozen, h, covers) {
 			continue
 		}
 		return refuseRule("R10", "the hunk in %s at line %d is covered by no blocking row%s", h.file, h.start, recoveryHint(h.file))
 	}
 	for _, f := range bare {
+		if derived != nil && !strings.HasSuffix(f, ".md") {
+			if derivedCovers(vf, frozen, f, hunks, derived) {
+				continue
+			}
+			return refuseRule("R10", "the changed code path %s has derived verdict %s and no blocking judge row justifies its green revert%s", f, derivedVerdict(derived, f), derivedRecovery(id, f))
+		}
 		if coveredPath(frozen, f, covers) {
 			continue
 		}
 		return refuseRule("R10", "the change in %s is covered by no blocking row%s", f, recoveryHint(f))
 	}
 	return nil
+}
+
+func derivedVerdict(d *derivedRun, path string) string {
+	for _, p := range d.Paths {
+		if p.Path == path {
+			return p.Verdict
+		}
+	}
+	return "missing"
+}
+func derivedRecovery(id, path string) string {
+	return fmt.Sprintf(". Recover by adding a blocking `decider: judge` row naming %s with `bl checks %s --amend` that records why the revert stays green, then run `bl run %s`, issue a fresh packet, and dispatch a new verifier", path, id, id)
+}
+func derivedCovers(vf *verdictsFile, frozen []checkRow, path string, hunks []hunk, d *derivedRun) bool {
+	entry := ""
+	red := false
+	for _, p := range d.Paths {
+		if p.Verdict == "red" {
+			red = true
+		}
+		if p.Path == path {
+			entry = p.Verdict
+		}
+	}
+	if entry == "red" || (entry == "exempt" && red) {
+		return true
+	}
+	for _, row := range frozen {
+		if row.f["severity"] != "blocking" || row.f["decider"] != "judge" {
+			continue
+		}
+		if cmdNamesPath(row.f["cmd"], path) {
+			return true
+		}
+		a, e := parseAnchor(row.f["id"], vf.rows[row.f["id"]].anchor)
+		// A judge anchor in any hunk of the path justifies the path as a whole (B5); an anchor
+		// outside every changed hunk justifies nothing.
+		if e == nil && a.form == anchorSource && a.file == path && anchorInHunks(hunks, path, a.line) {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdNamesPath reports whether a command names the path as a whole word, so `inspect data.go`
+// does not name `a.go`. A path holding a space cannot be split into words, so it is compared
+// inside the quotes a shell command must give it.
+func cmdNamesPath(cmd, path string) bool {
+	if strings.ContainsAny(path, " \t") {
+		return strings.Contains(cmd, `"`+path+`"`) || strings.Contains(cmd, `'`+path+`'`)
+	}
+	for _, word := range strings.Fields(cmd) {
+		if strings.TrimPrefix(strings.Trim(word, `"'`), "./") == path {
+			return true
+		}
+	}
+	return false
+}
+
+func anchorInHunks(hunks []hunk, path string, line int) bool {
+	for _, h := range hunks {
+		if h.file == path && h.contains(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // coveredHunk reports whether a blocking row covers a hunk. covers holds, for each test row,
