@@ -616,6 +616,8 @@ def run_log_records_every_call():
     assert log[-1]["exit"] == 2, "a refusal must be logged"
     assert log[-2]["exit"] == 0
     assert all("argv" in r and "ms" in r and "at" in r for r in log)
+    assert log[-2]["verb"] == "file" and "rule" not in log[-2]
+    assert log[-1]["verb"] == "file" and log[-1]["rule"] == ""
 
 
 # ── audit ────────────────────────────────────────────────────────────────────
@@ -636,6 +638,26 @@ def audit_writes_report_and_json():
     files = sorted(p.name for p in audit_dir.iterdir())
     assert any(f.endswith(".md") for f in files) and any(f.endswith(".json") for f in files)
     assert str(audit_dir) not in (root / "PROGRESS.md").read_text()
+
+
+@test
+def audit_reports_refusal_rules_and_legacy_lines():
+    root = fresh()
+    ok(root, "file", "--id", "A1", "--text", "first")
+    refused(root, "file", "--id", "A1", "--text", "duplicate")
+    refused(root, "round", "A1", "--verdict", "PASS", "--rows", "-")
+    log = root / ".backlog" / "run.log"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    old = json.loads(lines[0])
+    lines[0] = json.dumps({"at": old["at"], "argv": [], "exit": 2, "ms": 0})
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = ok(root, "audit", "--since", "2d", "--json")
+    report = json.loads(result.stdout)
+    assert report["refused_calls"] == 3, report
+    assert report["refusals_by_rule"] == {"unnamed": 1, "unrecorded": 1, "R35": 1}, report
+    markdown = next((root / ".backlog" / "audit").glob("*.md")).read_text(encoding="utf-8")
+    section = markdown.split("## refusals by rule\n\n", 1)[1].split("\n\n", 1)[0]
+    assert section.splitlines() == ["- R35: 1", "- unnamed: 1", "- unrecorded: 1"], section
 
 
 @test

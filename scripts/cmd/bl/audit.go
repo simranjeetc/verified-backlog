@@ -32,6 +32,8 @@ func parseSince(value string) (time.Duration, error) {
 type runRecord struct {
 	At   string   `json:"at"`
 	Argv []string `json:"argv"`
+	Verb string   `json:"verb"`
+	Rule *string  `json:"rule"`
 	Exit int      `json:"exit"`
 	MS   int64    `json:"ms"`
 }
@@ -53,6 +55,38 @@ func readRunlog(root string) []runRecord {
 		}
 	}
 	return out
+}
+
+func refusalRuleCounts(records []runRecord) map[string]int {
+	counts := map[string]int{}
+	for _, record := range records {
+		if record.Exit != 2 {
+			continue
+		}
+		rule := "unrecorded"
+		if record.Rule != nil {
+			rule = *record.Rule
+			if rule == "" {
+				rule = "unnamed"
+			}
+		}
+		counts[rule]++
+	}
+	return counts
+}
+
+func sortedRefusalRules(counts map[string]int) []string {
+	rules := make([]string, 0, len(counts))
+	for rule := range counts {
+		rules = append(rules, rule)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if counts[rules[i]] == counts[rules[j]] {
+			return rules[i] < rules[j]
+		}
+		return counts[rules[i]] > counts[rules[j]]
+	})
+	return rules
 }
 
 const auditCadence = 48 * time.Hour
@@ -153,16 +187,19 @@ func cmdAudit(root string, a args) error {
 	}
 	var runs []runRecord
 	refusals := 0
+	var windowRecords []runRecord
 	var slowest []int64
 	for _, r := range readRunlog(root) {
 		if inWindow(r.At) {
 			runs = append(runs, r)
+			windowRecords = append(windowRecords, r)
 			if r.Exit == 2 {
 				refusals++
 			}
 			slowest = append(slowest, r.MS)
 		}
 	}
+	refusalsByRule := refusalRuleCounts(windowRecords)
 	sort.Slice(slowest, func(i, j int) bool { return slowest[i] > slowest[j] })
 	if len(slowest) > 5 {
 		slowest = slowest[:5]
@@ -203,6 +240,7 @@ func cmdAudit(root string, a args) error {
 		"code_fails":               counts["fail_code"],
 		"harness_fails":            counts["fail_harness"],
 		"refused_calls":            refusals,
+		"refusals_by_rule":         refusalsByRule,
 		"rounds_per_item":          roundsPerItem,
 		"checks_that_never_failed": neverFailed,
 		"verdict_flips":            flips,
@@ -223,6 +261,14 @@ func cmdAudit(root string, a args) error {
 	fmt.Fprintf(&md, "# audit — %s (last %s)\n\n## arithmetic over the ledger\n\n", stamp, a.get("since"))
 	for _, key := range []string{"events", "items_filed", "items_closed", "rounds", "code_fails", "harness_fails", "refused_calls", "declined", "parked"} {
 		fmt.Fprintf(&md, "- %s: %v\n", strings.ReplaceAll(key, "_", " "), report[key])
+	}
+	md.WriteString("\n## refusals by rule\n\n")
+	if len(refusalsByRule) == 0 {
+		md.WriteString("- none\n")
+	} else {
+		for _, rule := range sortedRefusalRules(refusalsByRule) {
+			fmt.Fprintf(&md, "- %s: %d\n", rule, refusalsByRule[rule])
+		}
 	}
 	md.WriteString("\n## candidates for review\n\n")
 	any := false

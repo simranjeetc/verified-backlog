@@ -237,7 +237,9 @@ is in `.gitignore`. If `.backlog/` is tracked in the repository, that is a repos
 The two rendered views, `TODO.md` and `PROGRESS.md`, are artefacts as well: every event in the ledger rewrites
 them, so they are excluded from the verified tree and from the round's diff. The audit report is an artefact as
 well: `bl audit` writes it under `.backlog/audit/`, inside the artefact directory, so a report of the ledger is never
-a file of the work and never lands in an item's diff. Without that, a tree pin would
+a file of the work and never lands in an item's diff. Its JSON report includes `refusals_by_rule`; the Markdown report
+lists those counts highest first, with ties by rule name. New refusal lines record their rule, while older lines count
+as `unrecorded`. Without that, a tree pin would
 refuse every round after the ledger moved — and the ledger moves in the item's own flow, because R14 files the
 advisory items between the run and the round.
 

@@ -230,7 +230,12 @@ verb:
 		code = report(err)
 	}
 	if verb != "intake" && !(verb == "schema" && len(rest) > 1 && rest[1] == "intake") {
-		logRun(abs, rest[1:], code, started)
+		rule := ""
+		var refusal Refusal
+		if errors.As(err, &refusal) {
+			rule = refusal.rule
+		}
+		logRun(abs, verb, rest[1:], code, rule, started)
 	}
 	return code
 }
