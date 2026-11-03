@@ -10,6 +10,7 @@ import (
 // ── check list ───────────────────────────────────────────────────────────────
 
 var checkColumns = []string{"id", "decider", "severity", "brief_ref", "cmd", "expect", "fail_if", "why_not_mech", "criterion"}
+var checkColumnsWithBaseline = append(append([]string{}, checkColumns...), "baseline")
 
 var placeholderReasons = map[string]bool{
 	"tbd": true, "todo": true, "n/a": true, "none": true, "because": true, "because it is judgment": true,
@@ -31,22 +32,30 @@ func parseChecks(text string) ([]checkRow, error) {
 	lines := strings.Split(text, "\n")
 	header := strings.Split(strings.TrimRight(lines[0], "\r"), "\t")
 	known := map[string]bool{}
-	for _, c := range checkColumns {
+	for _, c := range checkColumnsWithBaseline {
 		known[c] = true
 	}
 	seen := map[string]bool{}
 	for _, h := range header {
 		switch {
 		case !known[h]:
-			return nil, refuseRule("R1", "the header names an unknown column %q; it must name exactly: %s", h, strings.Join(checkColumns, ", "))
+			return nil, refuseRule("R1", "the header names an unknown column %q; it must name exactly the nine required columns, optionally followed by baseline", h)
 		case seen[h]:
 			return nil, refuseRule("R1", "the header names column %q twice", h)
 		}
 		seen[h] = true
 	}
-	if len(seen) != len(checkColumns) {
+	baselineColumn := seen["baseline"]
+	if baselineColumn && (len(header) != len(checkColumnsWithBaseline) || header[len(header)-1] != "baseline") {
+		return nil, refuseRule("R1", "the optional baseline column must be tenth")
+	}
+	wantColumns := checkColumns
+	if baselineColumn {
+		wantColumns = checkColumnsWithBaseline
+	}
+	if len(seen) != len(wantColumns) {
 		var missing []string
-		for _, c := range checkColumns {
+		for _, c := range wantColumns {
 			if !seen[c] {
 				missing = append(missing, c)
 			}
@@ -78,7 +87,8 @@ func parseChecks(text string) ([]checkRow, error) {
 
 // validateChecks applies the LIST's own rules to every row, in the order §4 gives: R1 (the
 // schema), then R34 (the command's dialect), then R4 (the amend scope), then R2 (the brief
-// clause), then R3 (the judge's justification), then R8 (the expectation form). A rule is
+// clause), then R3 (the judge's justification), then R8 (the expectation form), then R40's
+// baseline declaration-presence check. A rule is
 // evaluated over the whole list before the next rule is, so the refusal names the earliest
 // broken rule and not the first broken row.
 //
@@ -132,6 +142,9 @@ func validateChecks(root string, it *Item, rows []checkRow, amend bool, format i
 	if err := validateR8(rows, format); err != nil {
 		return "", err
 	}
+	if err := validateBaselinePresence(rows); err != nil {
+		return "", err
+	}
 	return prevSHA, nil
 }
 
@@ -166,6 +179,9 @@ func validateR1(rows []checkRow) error {
 				return refuseRule("R1", "row %s: a decider bl row must have empty fail_if and why_not_mech", id)
 			}
 		case "judge":
+			if v := r.f["baseline"]; v != "" {
+				return refuseRule("R1", "row %s: judge row must have an empty baseline", id)
+			}
 			if r.f["expect"] != "" {
 				return refuseRule("R1", "row %s: a decider judge row must have an empty expect", id)
 			}
@@ -176,6 +192,25 @@ func validateR1(rows []checkRow) error {
 			}
 		default:
 			return refuseRule("R1", "row %s: decider %q must be bl or judge", id, r.f["decider"])
+		}
+		if r.f["decider"] == "bl" {
+			switch r.f["baseline"] {
+			case "new", "keep":
+			case "": // Presence is R40's list-wide rule, checked after all R1 rows.
+			default:
+				return refuseRule("R1", "row %s: baseline %q must be new or keep", id, r.f["baseline"])
+			}
+		}
+	}
+	return nil
+}
+
+func validateBaselinePresence(rows []checkRow) error {
+	for _, row := range rows {
+		if row.f["decider"] == "bl" {
+			if _, columnPresent := row.f["baseline"]; columnPresent && row.f["baseline"] == "" {
+				return refuseRule("R40", "row %s: baseline declaration is required", row.f["id"])
+			}
 		}
 	}
 	return nil
@@ -346,7 +381,7 @@ func checkAmendment(old, next []checkRow) (bool, error) {
 			return false, refuseRule("R4", "row %d: an amendment never changes or reorders ids (%s, was %s)", i+1, n["id"], o["id"])
 		}
 		id := o["id"]
-		for _, col := range []string{"severity", "cmd", "criterion"} {
+		for _, col := range []string{"severity", "cmd", "criterion", "baseline"} {
 			if o[col] != n[col] {
 				return false, refuseRule("R4", "row %s: an amendment never changes %s", id, col)
 			}

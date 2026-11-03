@@ -46,6 +46,13 @@ write it, and what the binary refuses.
 
 ## 2. Artifacts, and the definitions every rule leans on
 
+The optional tenth check-list column `baseline` may be appended after the nine required columns. In such a list,
+each `decider: bl` row declares `new` or `keep`; judge rows leave the cell empty. `new` rows must be red against the
+item's before-tree and `keep` rows green. `bl checks` tests these declarations in a before copy, sequentially and
+before freezing; `--amend` tests only appended rows, while `bl rebaseline` tests every baseline row. A root without
+Git or an item without a before-tree skips the pass and warns `no baseline check`. Old nine-column lists continue to
+freeze without a pass.
+
 All paths are relative to the repository root.
 
 | artifact | path | written by | hashed into the ledger |
@@ -1375,3 +1382,13 @@ A usable open verifier window (a packet with no later round or restart, whose re
 An intake JSONL file contains `source` records (`t`, `id`, `path`, `lines`, `sha`), `decision` records (`t`, `id`, `text`, `by`), `item` records (`t`, `id`, `title` required; `after`, `scope`, `source`, `decisions` optional), and `clause` records (`t`, `item`, `id`, `observe`, `expect`, `example`). `bl schema intake` prints their JSON Schemas. `bl intake --check` and `bl intake --render` use the same contract. A field a record type does not list is refused as `unknown field for a <type> record`. A wrong field type, including `null` or a `null` array element, is reported once as `must be a string` or `must be an array of strings`; a non-object line is `json: not a JSON object`. Every string, including array elements, must be one line. Every id, item, after and decisions value must match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`. A non-empty item source must name a source record. A reference is not checked while a record it could name is itself bad, so one mistake is reported once, at its own field. Errors use `<path>:<line>: <field>: <reason>`.
 
 `--render` escapes `&`, `<` and `>` in every printed value; U+0085, U+2028 and U+2029 count as line breaks.
+
+**R40 — baseline declarations hold before a list freezes.** The optional tenth header column `baseline` is appended
+after the nine required columns. Its value is `new` or `keep` for every `decider: bl` row and empty for judge rows;
+other values are refused under R1, while a missing declaration is refused under R40. `bl checks` runs the proposed
+baseline rows, one at a time, in a scratch copy of the item's before-tree with the item's own backlog directory.
+`new` must be red and `keep` green under the same expectation logic used by `bl run`. A timeout, exit 126 or 127,
+failed binary build, or frozen test row with an exit other than 0 or 1 or without its `bl-test: <name>` line is a
+setup error and refuses under R40. A refusal writes no list, test file, or event. Successful lists print the counts
+of new red and keep green rows. `--amend` evaluates only rows it adds; `rebaseline` evaluates every baseline row.
+Without the column, outside Git, or without a before-tree, no baseline executes and stderr warns `no baseline check`.

@@ -41,7 +41,7 @@ Build it once if it is missing (`cd scripts && go build -o bl ./cmd/bl` inside t
 | `bl file --id A1 --text "…" [--after B2] [--source X] [--urgent]` | yes | adds one item; refuses a duplicate id or an unknown dependency; `--urgent` also puts it at the front of the human's priority list, as a `bl bump A1` would |
 | `bl open A1` | yes | locks the item in flight; refuses a blocked item or a second lock; after a restart, carries the ended attempt's scope unless either scope flag is given |
 | `bl brief A1 --file brief.md` | yes | records or amends the brief; B0 purpose is required, every numbered clause needs an `Example:` (R2), and verifiers declare `Report-only: N` |
-| `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | freezes the verifier's check list — format 2, whose rows are test calls or one simple command each — and the test file the rows call; written once, and `--amend` may only add a row or grow the test file by an insertion |
+| `bl checks A1 --file checks.tsv [--tests tests.py]` | yes | runs optional `new`/`keep` baseline declarations one at a time against the before-tree, then freezes the check list and test file; `--amend` runs only added rows |
 | `bl rebaseline A1 --file checks.tsv --reason "…" [--tests tests.py]` | yes | replaces the frozen list (and, with `--tests`, the test file) with a new premise and the reason for it; refused once claims exist |
 | `bl claims A1 --file claims.md` | yes | records the producer's report; once, and only after the list is frozen |
 | `bl intake --check|--render --file <intake.jsonl>`; `bl schema intake` | no | validates an intake without writing, or renders it for approval; schema lists source, decision, item and clause records; filing is I111 |

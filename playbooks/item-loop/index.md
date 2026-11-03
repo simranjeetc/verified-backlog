@@ -68,6 +68,10 @@ the verifier writes the checks.
 
 Completion: the producer has reported, and a command in its report shows the property holding.
 
+`bl checks` runs declared baseline rows against the item's before-tree before freezing, one row at a time. Budget one
+row timeout per baseline row. `new` rows must be red and `keep` rows green; lists without the optional column retain
+legacy behavior and print a no-baseline warning.
+
 ## Step 3: Dispatch the blind verifier
 
 Two dispatches to the same verifier, in this order. One prompt carrying both defeats the purpose: a

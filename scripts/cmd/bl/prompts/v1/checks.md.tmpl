@@ -3,6 +3,9 @@ backstop such as links resolving or examples running (R15).
 Include the repository's full test suites as blocking `decider: bl` shell rows (gate rows), such as
 `go -C scripts test ./...`; `bl run` must execute them as part of the frozen run.
 Every row must be self-contained: no row reads something another row writes, because rows run concurrently.
+For each `decider: bl` row, set the tenth `baseline` field to `new` or `keep`: `new` means the row must be red
+against the item's before-tree; `keep` means it must be green. Judge rows leave the field empty. `bl checks`
+runs these rows one at a time before freezing, so budget one row timeout per row.
 
 You are the independent CHECKS WRITER for one item. Read AGENTS.md and the packet.
 
@@ -62,6 +65,6 @@ def is a function a row names; `@_covers(...)` names the actual scoped paths eac
 
 OUTPUT: a TSV check list (literal tabs, no Markdown or code fences), with this header:
 {{.ChecksHeader}}
-Include all nine fields in every row, including empty fields. Also produce the test file only when the list contains Python test rows.
+Include all ten fields in every row, including empty fields. Also produce the test file only when the list contains Python test rows.
 
 Write the TSV checklist to {{.Checks}} and, when needed, its test file to {{.Tests}}.
