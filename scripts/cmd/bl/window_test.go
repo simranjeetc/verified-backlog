@@ -204,3 +204,210 @@ func TestBacklogDigestCountsLoopFilesByPresence(t *testing.T) {
 		t.Fatalf("loop.json contents changed the digest: %s != %s", second, first)
 	}
 }
+
+func TestBacklogDigestThroughSymlinkedBacklog(t *testing.T) {
+	realRoot := t.TempDir()
+	target := filepath.Join(realRoot, backlogDir)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "item.md"), []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkedRoot := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(linkedRoot, backlogDir)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		linked, err := backlogDigest(linkedRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		real, err := backlogDigest(realRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if linked != real {
+			t.Fatalf("symlink digest %s != real-directory contents digest %s", linked, real)
+		}
+		if i == 0 {
+			if err := os.WriteFile(filepath.Join(target, "item.md"), []byte("second"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			changed, err := backlogDigest(linkedRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed == linked {
+				t.Fatal("changing target file did not change symlink digest")
+			}
+		}
+	}
+}
+
+func TestBacklogHashThroughSymlinkedBacklog(t *testing.T) {
+	target := t.TempDir()
+	file := filepath.Join(target, "item.md")
+	if err := os.WriteFile(file, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(root, backlogDir)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := backlogHash(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := backlogHash(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("changing target file did not change backlog hash")
+	}
+}
+
+func TestBacklogDigestThroughSymlinkIgnoresAuditReport(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "item.md"), []byte("state"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(root, backlogDir)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := backlogDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(target, "audit")
+	if err := os.MkdirAll(audit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audit, "report.md"), []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := backlogDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("audit report changed digest: %s != %s", after, before)
+	}
+}
+
+func TestBacklogDigestExcludesAuditDirectoryOnly(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, backlogDir)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := backlogDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(base, "audit")
+	if err := os.MkdirAll(audit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audit, "report.md"), []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withReport, err := backlogDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withReport != initial {
+		t.Fatalf("audit report changed digest: %s != %s", withReport, initial)
+	}
+	if err := os.RemoveAll(audit); err != nil {
+		t.Fatal(err)
+	}
+	afterDelete, err := backlogDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterDelete != initial {
+		t.Fatalf("deleting audit directory changed digest: %s != %s", afterDelete, initial)
+	}
+
+	for _, rel := range []string{"audit.md", "audit-old/x.md", "items/A1/audit/x.md"} {
+		path := filepath.Join(base, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("counts"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := backlogDigest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed == initial {
+			t.Errorf("path %q did not change digest", rel)
+		}
+		if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestBacklogDigestAuditFileKeepsLaterEntries(t *testing.T) {
+	for _, kind := range []string{"regular file", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			base := filepath.Join(dir, backlogDir)
+			items := filepath.Join(base, "items", "A1", "work.md")
+			if err := os.MkdirAll(filepath.Dir(items), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(items, []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			audit := filepath.Join(base, "audit")
+			if kind == "regular file" {
+				if err := os.WriteFile(audit, []byte("ignored"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink("missing-target", audit); err != nil {
+				t.Fatal(err)
+			}
+			before, err := backlogDigest(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(items, []byte("after"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			after, err := backlogDigest(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after == before {
+				t.Fatalf("changing %s did not change digest", items)
+			}
+		})
+	}
+}
+
+func TestRoundAllowsAuditReportAfterVerifierPacket(t *testing.T) {
+	dir := roundItem(t, roundList)
+	rows := runAndVerdicts(t, dir, roundPass...)
+	if err := call(t, cmdPacket, dir, "A1", "--role", "verifier"); err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(dir, backlogDir, "audit")
+	if err := os.MkdirAll(audit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audit, "report.md"), []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdRound, dir, "A1", "--rows", rows); err != nil {
+		t.Fatalf("audit report voided verifier window: %v", err)
+	}
+}

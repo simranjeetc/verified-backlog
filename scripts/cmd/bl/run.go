@@ -491,9 +491,15 @@ func inside(root, path string) bool {
 // row that writes to the ledger, the evidence or the item files is caught (R27). P10 defines
 // run.log as the log of every call, not state.
 func backlogHash(root string) (string, error) {
-	base := filepath.Join(root, backlogDir)
+	base, err := resolvedBacklogBase(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
 	var files []string
-	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
