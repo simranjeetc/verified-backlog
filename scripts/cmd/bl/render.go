@@ -24,7 +24,7 @@ func atomicWrite(path, text string) error {
 		f.Close()
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	if err := flushFile(f); err != nil {
 		f.Close()
 		return err
 	}

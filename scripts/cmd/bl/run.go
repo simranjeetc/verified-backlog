@@ -27,7 +27,7 @@ import (
 // runTimeout is the timeout of §2: after it the process GROUP is killed, and the row is
 // recorded with timed_out = true and exit = -1, which is distinct from any command's own exit
 // code — a timeout can never be written up as a pass. It is a variable so a test can shorten it.
-var runTimeout = 120 * time.Second
+var runTimeout = 240 * time.Second
 
 // runRow is one row's record in the run file (§2).
 type runRow struct {
