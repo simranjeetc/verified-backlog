@@ -8,6 +8,142 @@ import (
 	"testing"
 )
 
+func TestAgentFileRequiresProofAndBucket(t *testing.T) {
+	dir := t.TempDir()
+	if err := call(t, cmdInit, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--id", "D1", "--text", "x", "--source", "Verifier:A1/r1", "--bucket", "later"}, "--proof"},
+		{[]string{"--id", "D1", "--text", "x", "--source", "producer:A1", "--proof", "go test"}, "fix-now, batch or later"},
+	} {
+		err := call(t, cmdFile, dir, tc.args...)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("error = %v, want %q", err, tc.want)
+		}
+		if events, readErr := readLedger(dir); readErr != nil || len(events) != 0 {
+			t.Fatalf("refusal appended events: %v, %v", events, readErr)
+		}
+	}
+	if err := call(t, cmdFile, dir, "--id", "D1", "--text", "x", "--source", "loop-run", "--proof", "bl round A1 -> exit 0", "--bucket", "later"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := byID["d1"]; it.Status != "parked" || it.Reason != "later" || it.Proof != "bl round A1 -> exit 0" || it.Bucket != "later" {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+func TestDropParkedItems(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		park func(*testing.T, string)
+	}{
+		{"defer", func(t *testing.T, dir string) {
+			if err := call(t, cmdFile, dir, "--id", "A1", "--text", "x", "--source", "human"); err != nil {
+				t.Fatal(err)
+			}
+			if err := call(t, cmdDefer, dir, "A1", "--reason", "later"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"file later", func(t *testing.T, dir string) {
+			if err := call(t, cmdFile, dir, "--id", "A1", "--text", "x", "--source", "human", "--bucket", "later"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := call(t, cmdInit, dir); err != nil {
+				t.Fatal(err)
+			}
+			tc.park(t, dir)
+			if err := call(t, cmdDrop, dir, "A1", "--reason", "declined"); err != nil {
+				t.Fatalf("drop: %v", err)
+			}
+			out := capture(t, func() { _ = call(t, cmdStatus, dir) })
+			if !strings.Contains(out, "declined 1") {
+				t.Fatalf("status = %q, want declined count", out)
+			}
+			if err := call(t, cmdCheck, dir); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+		})
+	}
+}
+
+func TestDropRefusesClosedAndDeclined(t *testing.T) {
+	for _, status := range []string{"closed", "declined"} {
+		t.Run(status, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := call(t, cmdInit, dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := call(t, cmdFile, dir, "--id", "A1", "--text", "x", "--source", "human"); err != nil {
+				t.Fatal(err)
+			}
+			if status == "closed" {
+				if _, err := appendEvent(dir, Event{T: "close", ID: "A1", Commit: "abcdef0"}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := call(t, cmdDrop, dir, "A1", "--reason", "first decline"); err != nil {
+				t.Fatal(err)
+			}
+			err := call(t, cmdDrop, dir, "A1", "--reason", "again")
+			if err == nil || !strings.Contains(err.Error(), "A1 is "+status+", not open") {
+				t.Fatalf("drop error = %v", err)
+			}
+		})
+	}
+}
+
+func TestNonAgentFileCanOmitProofAndBucket(t *testing.T) {
+	dir := t.TempDir()
+	if err := call(t, cmdInit, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdFile, dir, "--id", "A1", "--text", "x", "--source", "human"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := readLedger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, byID, err := derive(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := byID["a1"]; it.Status != "open" {
+		t.Fatalf("status = %s, want open", it.Status)
+	}
+}
+
+func TestAgentFileProofAndBucketPassCheck(t *testing.T) {
+	dir := t.TempDir()
+	if err := call(t, cmdInit, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdFile, dir, "--id", "D1", "--text", "recover the failed job", "--source", "producer:A1", "--proof", "go test ./... -> identified failed job A1", "--bucket", "fix-now"); err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{{}, {"--views"}} {
+		if err := call(t, cmdCheck, dir, argv...); err != nil {
+			t.Fatalf("bl check %v: %v", argv, err)
+		}
+	}
+}
+
 func openResumeItem(t *testing.T) string {
 	t.Helper()
 	dir := openItem(t)

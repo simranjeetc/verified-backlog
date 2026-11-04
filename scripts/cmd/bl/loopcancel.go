@@ -193,7 +193,7 @@ func cmdLoopCancel(root string, a args) error {
 		if err != nil {
 			return err
 		}
-		if err := cmdFile(root, args{flags: map[string]string{"id": id, "text": text, "source": "loop-cancel"}}); err != nil {
+		if err := cmdFile(root, args{flags: map[string]string{"id": id, "text": text, "source": "loop-cancel", "proof": "bl loop --cancel identified recovery targets: " + strings.Join(left, "; "), "bucket": "fix-now"}}); err != nil {
 			return loopExit(5, "cannot record leftovers; association retained: %v; %s", err, text)
 		}
 		fmt.Printf("filed %s: %s\n", id, text)

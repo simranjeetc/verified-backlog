@@ -39,6 +39,33 @@ func cmdInit(root string, a args) error {
 }
 
 func cmdFile(root string, a args) error {
+	source := ""
+	if a.get("source") != "" {
+		clean, err := cleanText(a.get("source"), "source")
+		if err != nil {
+			return err
+		}
+		source = clean
+	}
+	agentSource := isAgentSource(source)
+	bucket := strings.TrimSpace(a.get("bucket"))
+	if bucket != "" && bucket != "fix-now" && bucket != "batch" && bucket != "later" {
+		return refuseRule("R41", "--bucket must be fix-now, batch or later")
+	}
+	proof := ""
+	if strings.TrimSpace(a.get("proof")) != "" {
+		clean, err := cleanText(a.get("proof"), "proof")
+		if err != nil {
+			return err
+		}
+		proof = clean
+	}
+	if agentSource && proof == "" {
+		return refuseRule("R41", "agent findings require --proof with the command run and what it showed")
+	}
+	if agentSource && bucket == "" {
+		return refuseRule("R41", "agent findings require --bucket: fix-now, batch or later")
+	}
 	if err := requireLedger(root); err != nil {
 		return err
 	}
@@ -68,7 +95,7 @@ func cmdFile(root string, a args) error {
 	if err != nil {
 		return err
 	}
-	ev := Event{T: "file", ID: id, Text: text}
+	ev := Event{T: "file", ID: id, Text: text, Bucket: bucket, Proof: proof, Source: source}
 	if after := a.get("after"); after != "" {
 		dep, err := checkID(after)
 		if err != nil {
@@ -81,13 +108,6 @@ func cmdFile(root string, a args) error {
 			return refuse("--after %s names no item", dep)
 		}
 		ev.After = dep
-	}
-	if src := a.get("source"); src != "" {
-		s, err := cleanText(src, "source")
-		if err != nil {
-			return err
-		}
-		ev.Source = s
 	}
 	// --urgent is a bump of the new item, recorded on its own file event: one call, one append.
 	if a.flag("urgent") {
@@ -105,6 +125,16 @@ func cmdFile(root string, a args) error {
 		fmt.Printf("bl: filed %s\n", id)
 	}
 	return nil
+}
+
+func isAgentSource(source string) bool {
+	s := strings.ToLower(strings.TrimSpace(source))
+	for _, prefix := range []string{"verifier:", "producer:", "supervisor:", "loop"} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func cmdOpen(root string, a args) error {

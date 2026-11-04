@@ -46,6 +46,12 @@ func cmdShow(root string, a args) error {
 	if it.Source != "" {
 		fmt.Printf("source: %s\n", it.Source)
 	}
+	if it.Proof != "" {
+		fmt.Printf("proof: %s\n", it.Proof)
+	}
+	if it.Bucket != "" {
+		fmt.Printf("bucket: %s\n", it.Bucket)
+	}
 	if it.Commit != "" {
 		fmt.Printf("commit: %s\n", it.Commit)
 	}

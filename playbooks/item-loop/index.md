@@ -55,6 +55,17 @@ it in the diff.
 `bl open` records the before-tree itself and refuses a dirty tree (R5), so the round's diff holds
 only this item's changes.
 
+Before dispatching a producer, reproduce any reported defect on the opened tree. Record the red
+result with `bl note A1 --text "reproduced: <command> exits 1; <diagnostic>"`. If the reported
+command does not reproduce the defect (for example, it exits 0), defer the item with a reason
+starting `could not reproduce` and do not dispatch a producer:
+
+```sh
+"$BL" defer A1 --reason "could not reproduce: <command> exits 0"
+```
+
+An item that adds a feature rather than reports a defect skips this reproduction gate.
+
 Completion: the item is open, its lane is noted, its intent fits one sentence, and its file list is known.
 
 ## Step 2: Dispatch the producer
@@ -232,15 +243,30 @@ git add <explicit paths> && git commit -m "<item id>: <what changed>"
 2. Commit with explicit paths. Never `git add -A`; an artefact you did not notice becomes part of the
    commit. Push only if `BRIEF.md` authorises it.
 3. `bl close <id> --commit <sha>` writes the record and advances the pointer in the same call.
-4. File every finding the verifier reported and you did not fix, before you forget the provenance:
+4. Triage every finding the verifier reported and you did not fix, in this order; the first matching rule wins:
+
+   1. No reproduction or stated consequence: leave it in the round report; do not file it.
+   2. Already filed: add `bl note` to that item as a recurrence; do not file it again.
+   3. It can fake a PASS or coverage, or corrupt the ledger: `fix-now`.
+   4. It blocks work or has already cost real work: `fix-now`.
+   5. It is small and in the same area as another fix: `batch`.
+   6. It occurs only in an unusual setup, or has a workaround: `later`, naming what would reopen it.
+   7. Anything else: `later`.
+
+   Agent findings need a one-line proof (the command run and what it showed) and a bucket. `fix-now`
+   stays open; `batch` and `later` enter the parked inbox, which `bl next` skips and `bl status`
+   counts as parked. The human can promote an inbox item with `bl reopen` or decline it with `bl drop`.
 
    ```sh
    "$BL" file --id D9 --text "tab leak when two scans overlap" \
-              --source verifier:A1/r2 --after A1
+              --source verifier:A1/r2 --proof "go test ./... -> overlap reproduced" --bucket later
    ```
 
-   Use `--after` when the defect cannot be worked until the item closes; omit it when it can wait in
-   the queue on its own.
+   A recurrence is a note on the existing item, not a new filed item:
+
+   ```sh
+   "$BL" note D9 --text "recurrence in verifier:A1/r2; go test reproduced it"
+   ```
 5. If the remaining defects are not worth fixing, say so in the record instead of pretending:
 
    ```sh

@@ -575,9 +575,10 @@ amendment removes a clause that a frozen row cites in its `brief_ref`, `bl round
 criterion no longer exists in the brief it was written against.
 
 **R28 — an ignored file under the scope may not change.** The before-state records the path and hash of every ignored
-file under the item's scope paths (§2). A round is refused if any of those hashes changed, unless the file was named
-in the item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that
-the scope did not declare is therefore refused, not silently dropped from the record.
+file under the item's scope paths (§2), except for root-level `TODO.md` and `PROGRESS.md`, which are rendered views
+rewritten by ledger events. A round is refused if any other recorded hash changed, unless the file was named in the
+item's scope as an ignored file the item may write (`--scope-ignored`). A file that the item changed and that the
+scope did not declare is therefore refused, not silently dropped from the record.
 
 **R29 — the anchor names a checkpoint in the chain, and the sequence number makes truncation visible.** A chain that
 verifies is not enough, because an attacker who can rewrite the file can also truncate its tail and leave a shorter
@@ -1378,6 +1379,24 @@ round of wording.
 **R39 — a round stays inside the verifier packet's recorded window.** A verifier `bl packet <id> --role verifier` appends a `packet` event carrying the byte length and sha256 of the ledger and `.backlog/run.log` just before the append (an absent run log has length 0 and the empty-input sha256), and a digest of sorted paths under `.backlog/`: regular-file contents are hashed, directories are named, symlinks record their targets, and `loop.json` and `loop.lock` count by presence; `ledger.jsonl`, `run.log` and the `audit/` directory are excluded. A symlinked `.backlog` is read through to the directory it points at. Checks and producer packets do not append this event. For `bl round`, the baseline is the latest packet event for the item after its latest restart. After `verifyTests` and before either round path, the command refuses under R39 without writing a round if the ledger prefix no longer matches or is shorter than the recorded prefix, any later event is not `packet`, `note`, `second-check` or `file` (the refusal names its seq and type), the run log is shorter than or differs within its recorded prefix, or the `.backlog/` digest changed (naming the packet seq). A ledger truncated below the packet event loses the baseline, so this check cannot detect that truncation.
 
 A usable open verifier window (a packet with no later round or restart, whose recorded window still verifies) blocks `bl checks --amend` before reading the replacement list. An already void window permits amendment for recovery; the amended checks require a new run, packet and independent verifier. `bl file` warns when an item has an unrounded packet but does not void the window, allowing report dispositions to name newly filed follow-ups. R39 refusals describe the round-first order and fresh-packet recovery; R6 shape refusals show a verdict-file example and R38 disposition refusals show accepted lines with the affected note number.
+
+## Filing agent findings (I86)
+
+An agent source is a `--source` value beginning case-insensitively with `verifier:`, `producer:`,
+`supervisor:`, or `loop`. Every `bl file` call with an agent source requires `--proof` and
+`--bucket`. Proof is one line containing the command run and what it showed. The bucket is exactly
+`fix-now`, `batch`, or `later`. `fix-now` creates an open item. `batch` and `later` create a parked
+item with that bucket as its reason; `bl next` skips it and `bl status` counts it as parked. The
+human may promote it with `bl reopen` or decline it with `bl drop`. `bl show` displays the proof
+and bucket. Sources outside those agent prefixes may omit both flags; any supplied bucket has the
+same state effect. Existing ledger entries retain their recorded state.
+
+**R41 — agent findings carry proof and triage.** A `--source` beginning case-insensitively with
+`verifier:`, `producer:`, `supervisor:`, or `loop` requires both `--proof` and `--bucket` on
+`bl file`. Proof names the command run and what it showed. `--bucket` is `fix-now`, `batch`, or
+`later`; `fix-now` starts open, while `batch` and `later` start parked with the bucket as the
+reason. Other sources keep today's behaviour: they may omit both flags, and any supplied bucket
+has its existing state effect.
 
 ## 9. Intake
 

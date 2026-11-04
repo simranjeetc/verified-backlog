@@ -411,6 +411,9 @@ func checkR28(root string, it *Item) error {
 		}
 	}
 	for path, sha := range want {
+		if isRenderedView(path) {
+			continue
+		}
 		if got[path] == sha {
 			continue
 		}

@@ -643,6 +643,55 @@ func TestR28AnIgnoredFileTheItemMayWriteIsAccepted(t *testing.T) {
 	}
 }
 
+func TestR28ExcludesRootRenderedViewsFromOpenBeforeState(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	writeFile(t, dir, ".gitignore", "TODO.md\nPROGRESS.md\n")
+	commitSeed(t, dir)
+	for _, argv := range [][]string{{"init"}, {"file", "--id", "A1", "--text", "item"}} {
+		if code := run(append([]string{"--root", dir}, argv...)); code != 0 {
+			t.Fatalf("bl %v: exit %d", argv, code)
+		}
+	}
+	writeFile(t, dir, "TODO.md", "todo\n")
+	writeFile(t, dir, "PROGRESS.md", "progress\n")
+	if err := call(t, cmdOpen, dir, "A1"); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := readLedger(dir)
+	open := events[len(events)-1]
+	for _, entry := range open.IgnoredBefore {
+		if isRenderedView(strings.SplitN(entry, "\t", 2)[0]) {
+			t.Fatalf("rendered view recorded in ignored before-state: %q", entry)
+		}
+	}
+}
+
+func TestR28IgnoresLegacyRenderedViewAndStillChecksOtherPaths(t *testing.T) {
+	dir := gitItemWith(t, map[string]string{".gitignore": "TODO.md\nPROGRESS.md\nbuild.log\nsub/PROGRESS.md\n"})
+	writeFile(t, dir, "TODO.md", "new todo\n")
+	writeFile(t, dir, "PROGRESS.md", "new progress\n")
+	writeFile(t, dir, "build.log", "changed\n")
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "sub/PROGRESS.md", "changed\n")
+	item := &Item{IgnoredBefore: []string{
+		"TODO.md\told", "PROGRESS.md\told", "build.log\told", "sub/PROGRESS.md\told",
+	}}
+	err := checkR28(dir, item)
+	if err == nil || !strings.Contains(err.Error(), "build.log") {
+		t.Fatalf("R28 error = %v, want refusal naming build.log", err)
+	}
+	item.IgnoredBefore = []string{"TODO.md\told", "PROGRESS.md\told", "sub/PROGRESS.md\told"}
+	err = checkR28(dir, item)
+	if err == nil || !strings.Contains(err.Error(), "sub/PROGRESS.md") {
+		t.Fatalf("R28 error = %v, want refusal naming sub/PROGRESS.md", err)
+	}
+}
+
 // ── I3, round 2: a harness round carries no finding ──────────────────────────
 
 // R23: a harness round carries no finding. The verifier did not run, so it found nothing, and
