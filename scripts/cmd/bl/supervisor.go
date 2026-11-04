@@ -31,6 +31,7 @@ func loopSupervisorPacket(root, id, config, out string, continuation bool) (stri
 		return "", err
 	}
 	stage, next := supervisorNext(it)
+	reproductionGate := supervisorReproductionGate(it.ID)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Supervisor startup: %s\nWrite your final report to %s; a report printed only to stdout is lost.\n", it.ID, out)
 	fmt.Fprintf(&b, "Repository and supervisor cwd: %s\nProducer workspace: unknown (not recorded in ledger); inspect git worktree list and live jobs before assigning or recovering a workspace.\n", root)
@@ -66,12 +67,16 @@ func loopSupervisorPacket(root, id, config, out string, continuation bool) (stri
 		fmt.Fprintf(&b, "prior failure record: %s\n", r.Record)
 	}
 	fmt.Fprintf(&b, "\nRouting authority: brain launch config %s. Worker roles resolve through dispatch configuration and scripts/dispatch.sh (CHAIN when set); inspect those actual settings, never infer model assignments from handoff prose.\n", config)
-	fmt.Fprintln(&b, "Supervisor coordinates, resolves routine architecture choices and records evidence; do not write producer code. Producer implements only scoped work. Independent checks writer gets intent, never producer claims or implementation; producer never receives frozen checks. Start producer and checks writer together. Launch each worker through scripts/dispatch.sh from its assigned workspace; inherited loop ownership registers its dispatch job for cleanup. Direct runtime launches cannot be managed by loop cancellation. Fresh verifier gets the verifier packet only after checks, claims and run are recorded; never reuse the producer as verifier.")
+	fmt.Fprintf(&b, "Supervisor coordinates, resolves routine architecture choices and records evidence; do not write producer code. Producer implements only scoped work. Independent checks writer gets intent, never producer claims or implementation; producer never receives frozen checks. %s Then start producer and checks writer together. Launch each worker through scripts/dispatch.sh from its assigned workspace; inherited loop ownership registers its dispatch job for cleanup. Direct runtime launches cannot be managed by loop cancellation. Fresh verifier gets the verifier packet only after checks, claims and run are recorded; never reuse the producer as verifier.\n", reproductionGate)
 	fmt.Fprintln(&b, "After the verifier reports, record the round before any other ledger write; amend checks, run and file after it. Exception: filing a follow-up for a filed disposition is allowed inside the window and does not void it. An already void window permits checks --amend for recovery; correct the checks and run them before generating a fresh packet and dispatching a new verifier.")
 	fmt.Fprintf(&b, "Render complete prompts, rather than rewriting boilerplate: bl packet %s --role producer --render --workspace <existing-producer-worktree> --output-dir %s > /dev/null; bl packet %s --role checks --render --workspace %s --output-dir %s > /dev/null; bl packet %s --role verifier --render --workspace %s --output-dir %s > /dev/null (only after checks, claims and run; records verifier window). Each command writes its prompt file; suppress stdout so full worker prompts stay out of supervisor context. Files are named ITEM-aATTEMPT-ROLE-prompt.md in the selected output directory. Prepare other prompts before the verifier window. Optional --required-cases-file is verifier-only. Dispatch the resulting files; no extra role packet is needed.\n", it.ID, supervisorQuote(filepath.Dir(out)), it.ID, supervisorQuote(root), supervisorQuote(filepath.Dir(out)), it.ID, supervisorQuote(root), supervisorQuote(filepath.Dir(out)))
 	fmt.Fprintln(&b, "Use this packet for startup. Consult only the relevant section of playbooks/item-loop/index.md and the producer.md, verifier-checks.md or verifier-claims.md template when preparing that role. Do not read whole directories or prior sessions without a specific missing fact. Inspect existing worker jobs before resuming. Keep prompts, outputs and workspace ownership explicit. Use bl run for frozen checks and suites; do not bypass gates or run suites separately as supervisor. Record verdict rows unchanged; supervisor sets observed cause. Commit explicit paths locally; never push. Exit after this item is closed or parked; park questions only the human can answer.")
 	fmt.Fprintln(&b, "Recovery: checks --amend never removes/reorders rows; after claims only added rows are allowed, and no amendment follows PASS. A command/setup defect in a frozen check calls for bad-check assessment, not a producer code fix. Restart only for bad-check, extra-file, damaged-evidence or wrong-premise, with --why and --change; preserve failure records, then reopen the item for its new attempt. Two restarts maximum; code FAIL cap is three per attempt. Stop after repeated failures on the same premise and assess it directly. Refresh only the current item with bl show "+it.ID+" --json on resume, external changes or a CLI refusal; never dump the ledger or full history. These instructions do not waive CLI refusals.")
 	return b.String(), nil
+}
+
+func supervisorReproductionGate(id string) string {
+	return "Before dispatch, classify the item: if it reports a defect, reproduce it on the opened tree. On reproduction, record the red result with bl note " + id + " --text \"reproduced: <command> exits 1; <diagnostic>\". If it does not reproduce, do not dispatch a producer; park the item with bl defer " + id + " --reason \"could not reproduce: <command> exits 0\". A feature item skips this gate."
 }
 
 func supervisorQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
@@ -91,7 +96,7 @@ func supervisorNext(it *Item) (string, string) {
 	case it.Brief == "":
 		return "brief", "Record the attempt brief with bl brief " + id + " --file <brief.md> before dispatch."
 	case it.Checks == "":
-		return "checks", "Reconcile worker jobs; dispatch producer and independent checks writer together if absent, then bl checks " + id + " --file <checks.tsv> --tests <tests.py> for a format-2 list (omit --tests only for a format-1 list). Record claims only after checks."
+		return "checks", supervisorReproductionGate(id) + " Then reconcile worker jobs; dispatch producer and independent checks writer together if absent, then bl checks " + id + " --file <checks.tsv> --tests <tests.py> for a format-2 list (omit --tests only for a format-1 list). Record claims only after checks."
 	case it.Claims == "":
 		return "claims", "Collect producer output, then bl claims " + id + " --file <claims.md>; keep the frozen checks away from producer."
 	case it.passRounds() > 0:

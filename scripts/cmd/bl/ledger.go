@@ -48,6 +48,8 @@ var (
 	treeHashRe   = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
+var flushFile = func(f *os.File) error { return f.Sync() }
+
 var (
 	verdicts = []string{"PASS", "FAIL"}
 	causes   = []string{"code", "harness", "dispute"}
@@ -390,7 +392,7 @@ func appendEvent(root string, ev Event) (Event, error) {
 		f.Close()
 		return ev, err
 	}
-	if err := f.Sync(); err != nil {
+	if err := flushFile(f); err != nil {
 		f.Close()
 		return ev, err
 	}

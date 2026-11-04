@@ -214,7 +214,7 @@ the judge's for a `decider: judge` row.
   under `HOME` cannot write into the tree;
 - stdin = `/dev/null`;
 - rows executed **sequentially**, in the order of the frozen list;
-- a 120-second timeout, after which the process **group** is killed; the row is recorded with `timed_out = true` and
+- a 240-second timeout, after which the process **group** is killed; the row is recorded with `timed_out = true` and
   `exit = -1`, which is distinct from any command's own exit code;
 - stdout and stderr captured separately, each truncated to 4096 bytes for the excerpt, each hashed in full (sha256 of
   the raw bytes) for the record;

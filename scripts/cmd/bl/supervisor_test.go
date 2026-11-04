@@ -23,6 +23,19 @@ func TestSupervisorPacketReadOnlyAndRestart(t *testing.T) {
 				t.Errorf("packet missing %q", want)
 			}
 		}
+		lowerPacket := strings.ToLower(packet)
+		for _, want := range []string{"reproduced:", "could not reproduce", "bl defer s1"} {
+			if !strings.Contains(lowerPacket, want) {
+				t.Errorf("unopened supervisor packet missing %q", want)
+			}
+		}
+		start := strings.Index(lowerPacket, "start producer and checks writer together")
+		for _, marker := range []string{"reproduced:", "could not reproduce", "bl defer s1"} {
+			gate := strings.Index(lowerPacket, marker)
+			if gate < 0 || start < 0 || gate >= start {
+				t.Fatalf("always-printed reproduction marker %q does not precede worker dispatch instruction", marker)
+			}
+		}
 		if strings.Contains(packet, "HANDOFF") || strings.Contains(packet, "playbooks/item-loop.md") {
 			t.Fatal("stale discovery guidance")
 		}
@@ -67,6 +80,34 @@ func TestSupervisorNextCurrentAttempt(t *testing.T) {
 		if stage != tc.stage || !strings.Contains(next, tc.command) {
 			t.Errorf("%s: %s %s", tc.stage, stage, next)
 		}
+	}
+}
+
+func TestSupervisorChecksPacketIncludesReproductionGate(t *testing.T) {
+	root, _ := loopFixture(t)
+	if err := cmdFile(root, argsWith(map[string]string{"id": "D1", "text": "reported defect"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, cmdOpen, root, "D1", "--scope", "code.go"); err != nil {
+		t.Fatal(err)
+	}
+	brief := writeFile(t, t.TempDir(), "brief.md", "B0: Purpose: fix the reported defect. Example: input produces expected output.\n")
+	if err := call(t, cmdBrief, root, "D1", "--file", brief); err != nil {
+		t.Fatal(err)
+	}
+	packet, err := loopSupervisorPacket(root, "D1", "conf", "out", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reproduce it on the opened tree", "bl note D1 --text \"reproduced:", "could not reproduce", "bl defer D1 --reason", "A feature item skips this gate", "dispatch producer and independent checks writer together"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("packet missing %q", want)
+		}
+	}
+	gate := strings.Index(packet, "reproduce it on the opened tree")
+	dispatch := strings.Index(packet, "dispatch producer and independent checks writer together")
+	if gate < 0 || dispatch < 0 || gate >= dispatch {
+		t.Fatalf("reproduction gate does not precede dispatch instruction")
 	}
 }
 
