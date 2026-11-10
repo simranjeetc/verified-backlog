@@ -1,0 +1,27 @@
+# A signal for readers, not a gate: bl's own refusals are the guards (README: "Why CI is not a gate").
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: scripts/go.mod
+      - name: git identity (tests make commits)
+        run: git config --global user.name ci && git config --global user.email ci@example.invalid
+      - name: gofmt check
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...

@@ -15,3 +15,11 @@ skills/test-artifacts/
 
 # agent worktrees created by the harness inside .claude/
 .claude/worktrees/
+
+# Agent dev tooling: installed locally (npx bmad-method install, openspec init), not vendored
+/.claude/skills/
+/.claude/commands/
+/.opencode/
+/_bmad/
+/.agents/
+/openspec/

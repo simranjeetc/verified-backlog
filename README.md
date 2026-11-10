@@ -1,5 +1,9 @@
 # verified-backlog
 
+[![tests](https://github.com/simranjeetc/verified-backlog/actions/workflows/test.yml/badge.svg)](https://github.com/simranjeetc/verified-backlog/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/simranjeetc/verified-backlog)](https://github.com/simranjeetc/verified-backlog/releases/latest)
+[![License](https://img.shields.io/github/license/simranjeetc/verified-backlog)](LICENSE)
+
 A backlog where the state is a **ledger**, not prose. One item at a time goes through a producer, a
 blind verifier, and a commit; a small binary owns every write, refuses anything that would make the
 record lie, and renders the two human views from the ledger.
@@ -25,14 +29,29 @@ A refusal exits `2` and writes nothing. That is the whole design in one sentence
 $ bl round A1 --verdict PASS --rows -
 bl: refused: --rows is empty: a verdict exists only after commands have run
 $ bl close A1 --commit HEAD
-bl: refused: working tree is dirty — commit or stash before closing: M jobscan.py
+bl: refused: working tree is dirty — commit or stash before closing: M app.py
 $ bl check --views
 FAIL TODO.md is stale or hand-edited
 ```
 
+## The loop
+
+```
+  bl next ─► bl open A1 ─► producer agent ─► blind verifier ─► bl round A1
+                               ▲             (re-derives the       │
+                               │              evidence, never      │
+                               └── FAIL ──── sees the producer's) ─┤
+                                  (≤3 code rounds, then escalate)  │ PASS
+                                                                   ▼
+   TODO.md / PROGRESS.md ◄── rendered by bl ◄── ledger.jsonl ◄── bl close A1 --commit <sha>
+```
+
+Every arrow into the ledger goes through `bl`; every refusal exits `2` and writes nothing.
+
 ## Install
 
-Requires Go 1.24+ to build; the binary itself needs nothing.
+Prebuilt `bl` binaries (linux/darwin, amd64/arm64) are attached to each
+[release](https://github.com/simranjeetc/verified-backlog/releases/latest). To build from source, you need Go 1.24+; the binary itself needs nothing.
 
 ```sh
 git clone git@github.com:simranjeetc/verified-backlog.git ~/codebase/verified-backlog
@@ -84,11 +103,24 @@ The loop itself — producer prompt, blind verifier with two dispatches, fix rou
 
 ```sh
 python3 scripts/bl.test.py      # BL unset builds from the working tree; BL set uses that binary
-cd scripts && go test ./...     # 11 unit tests
+cd scripts && go test ./...     # 362 unit tests
 ```
 
 The gate suite asserts two things per refusal: the exit code, and that the ledger is byte-identical
 afterwards. A refusal that quietly wrote a line would still look like a refusal in a transcript.
+
+### Why CI is not a gate
+
+The [tests workflow](.github/workflows/test.yml) runs `go test` on every push. That is a signal for
+readers, not a guard. The guards are `bl`'s own refusals, so they hold wherever `bl` runs: no CI
+service, git hook, or harness hook has to be present for the ledger to stay honest.
+
+## Repository notes
+
+- Commit subjects start with the ledger item they close (`I161: …`); this repo runs its own backlog
+  through `bl`.
+- Agent tooling used while developing (BMAD, OpenSpec skills and commands) is installed locally and
+  gitignored, not vendored. Reinstall it with `npx bmad-method install` and `openspec init`.
 
 ## Migrating a prose backlog
 
@@ -100,10 +132,6 @@ afterwards. A refusal that quietly wrote a line would still look like a refusal 
 An imported close is a claim, not a proof: the ledger records that the prose said PASS and which
 commit it named, and a note says so. Import runs once, refuses a non-empty ledger, and refuses to
 overwrite a `TODO.md` it did not render.
-
-## Licence
-
-MIT.
 
 Loop usage reports `peak-context` separately from cumulative `processed-tokens`
 (input + cache writes + cache reads + output). These counts describe processing,
@@ -243,3 +271,7 @@ Errors name the worker jobs that could not be confirmed stopped. A timeout of th
 loop wait also cancels its brain. Killing the monitor itself does not install an
 external watchdog: resume it or run `--cancel` to recover. Legacy direct runtime
 processes without dispatch jobs cannot be identified safely by this command.
+
+## Licence
+
+MIT.
